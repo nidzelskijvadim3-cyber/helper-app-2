@@ -3,9 +3,10 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const AREA = { study: 'Навчання', work: 'Робота' };
-const TABS = [['today', 'Сьогодні'], ['tasks', 'Задачі'], ['plan', 'План'], ['notes', 'Нотатки'], ['cards', 'Картки'], ['ai', 'ШІ']];
+const TABS = [['today', 'Сьогодні'], ['tasks', 'Задачі'], ['cal', 'Календар'], ['notes', 'Нотатки'], ['cards', 'Картки'], ['ai', 'ШІ']];
 const ICONS = {
-  today: <><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M8 3v4M16 3v4M3 10h18M9 15l2 2 4-4" /></>,
+  today: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  cal: <><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M8 3v4M16 3v4M3 10h18" /></>,
   tasks: <><path d="M9 6h12M9 12h12M9 18h12" /><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" /></>,
   plan: <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9h6M7 13h10M7 17h4" /></>,
   cards: <><rect x="3" y="7" width="14" height="12" rx="2" /><path d="M7 4h12a2 2 0 0 1 2 2v10" /></>,
@@ -108,6 +109,8 @@ export default function Home() {
   const [ntext, setNtext] = useState('');
   const [flow, setFlow] = useState(false);
   const [nq, setNq] = useState('');
+  const [calM, setCalM] = useState(null);
+  const [calSel, setCalSel] = useState('');
   const taRef = useRef(null);
   const endRef = useRef(null);
 
@@ -213,6 +216,22 @@ export default function Home() {
   const cur = left[0];
   const addCard = () => { if (!cq.trim() || !ca.trim()) return; setCards([...cards, { id: Date.now(), deck: '', q: cq.trim(), a: ca.trim(), known: false, seq: Date.now() }]); setCq(''); setCa(''); };
 
+  const cm = calM == null ? now.getFullYear() * 12 + now.getMonth() : calM;
+  const cy = Math.floor(cm / 12), cmo = cm % 12;
+  const offset = (new Date(cy, cmo, 1).getDay() + 6) % 7;
+  const dim = new Date(cy, cmo + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < offset; i++) cells.push(null);
+  for (let d = 1; d <= dim; d++) cells.push(d);
+  const dstr = d => cy + '-' + pad(cmo + 1) + '-' + pad(d);
+  const busy = {};
+  open.forEach(i => { if (i.due) busy[i.due] = true; });
+  plan.days.forEach(d => { if (d.blocks.length) busy[ymd(d.d)] = true; });
+  const selected = calSel || today;
+  const selPlan = plan.days.find(d => ymd(d.d) === selected);
+  const selDue = open.filter(i => i.due === selected);
+  const monthName = new Date(cy, cmo, 1).toLocaleDateString('uk-UA', { month: 'long', year: 'numeric' });
+
   return (
     <div className="wrap">
       {tab !== 'set' && <button className="gear" onClick={() => setTab('set')} aria-label="Налаштування"><Icon n="set" s={22} /></button>}
@@ -227,6 +246,7 @@ export default function Home() {
             <div className={'tc ' + b.area} onClick={() => openEdit(items.find(i => i.id === b.id))}><div className="tt">{b.t}</div><div className="ts">{AREA[b.area]}, {r1(b.h)} год</div></div>
             <input type="checkbox" onChange={() => tog(b.id)} aria-label="Готово" />
           </div>)) : <div className="card"><div className="empty">На сьогодні нічого не заплановано. Натисніть «+» або попросіть ШІ скласти план.</div></div>}
+        {plan.late.length > 0 && <div className="card warn"><div className="sec">Не вміщується в найближчі 14 днів</div>{plan.late.map((l, i) => <div className="blk" key={i}><span>{l.t}</span><span className="sub">{r1(l.left)} год</span></div>)}</div>}
         <button className="btn" onClick={() => { setTab('ai'); ask('Що мені краще зробити сьогодні і в якому порядку?'); }}>Запитати ШІ, з чого почати</button>
       </>}
 
@@ -236,13 +256,19 @@ export default function Home() {
         {section('Прострочено', overdue)}{section('З терміном', soon)}{section('Без терміну', nodue)}{section('Виконано', doneList)}
       </>}
 
-      {tab === 'plan' && <>
-        <div className="top"><h1>План</h1><div className="sub">Найближчі 14 днів</div></div>
-        {plan.late.length > 0 && <div className="card warn"><div className="sec">Не вміщується в план</div>{plan.late.map((l, i) => <div className="blk" key={i}><span>{l.t}</span><span>{r1(l.left)} год</span></div>)}<div className="sub" style={{ marginTop: 8 }}>Додайте годин у налаштуваннях або посуньте термін.</div></div>}
-        <div className="card">{plan.days.map((d, i) => { const used = d.blocks.reduce((s, b) => s + b.h, 0); return (
-          <div className="day" key={i}><div className="dh"><b>{i === 0 ? 'Сьогодні' : DN[d.d.getDay()] + ' ' + d.d.getDate() + '.' + pad(d.d.getMonth() + 1)}</b><span className="sub">{r1(used)} з {d.cap} год</span></div>
-            <div className="bar">{d.blocks.map((b, j) => <i key={j} className={b.area + '-bg'} style={{ width: (b.h / d.cap * 100) + '%' }} />)}</div>
-            {d.blocks.map((b, j) => <div className="blk" key={j}><span>{b.t}</span><span className="sub">{r1(b.h)} год</span></div>)}</div>); })}</div>
+      {tab === 'cal' && <>
+        <div className="top"><h1>Календар</h1></div>
+        <div className="cmh"><button className="chip" onClick={() => setCalM(cm - 1)} aria-label="Попередній місяць">‹</button><span>{monthName}</span><button className="chip" onClick={() => setCalM(cm + 1)} aria-label="Наступний місяць">›</button></div>
+        <div className="cal">
+          {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'].map(w => <div className="cw" key={w}>{w}</div>)}
+          {cells.map((d, i) => d ? <button key={i} className={'cd' + (dstr(d) === today ? ' td' : '') + (dstr(d) === selected ? ' sel' : '')} onClick={() => setCalSel(dstr(d))}>{d}{busy[dstr(d)] && <i className="dot" />}</button> : <div key={i} />)}
+        </div>
+        <div className="card" style={{ marginTop: 22 }}>
+          <div className="sec">{new Date(selected + 'T00:00:00').toLocaleDateString('uk-UA', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+          {selPlan && selPlan.blocks.map((b, i) => <div className="blk" key={'p' + i} onClick={() => openEdit(items.find(x => x.id === b.id))}><span>{b.t}</span><span className="sub">{r1(b.h)} год</span></div>)}
+          {selDue.map(row)}
+          {!(selPlan && selPlan.blocks.length) && !selDue.length && <div className="empty">На цей день нічого немає.</div>}
+        </div>
       </>}
 
       {tab === 'notes' && <>
