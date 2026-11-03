@@ -3,13 +3,14 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const AREA = { study: 'Навчання', work: 'Робота' };
-const TABS = [['today', 'Сьогодні'], ['tasks', 'Задачі'], ['plan', 'План'], ['cards', 'Картки'], ['ai', 'ШІ']];
+const TABS = [['today', 'Сьогодні'], ['tasks', 'Задачі'], ['plan', 'План'], ['notes', 'Нотатки'], ['cards', 'Картки'], ['ai', 'ШІ']];
 const ICONS = {
   today: <><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M8 3v4M16 3v4M3 10h18M9 15l2 2 4-4" /></>,
   tasks: <><path d="M9 6h12M9 12h12M9 18h12" /><path d="M3.5 6l1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" /></>,
   plan: <><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9h6M7 13h10M7 17h4" /></>,
   cards: <><rect x="3" y="7" width="14" height="12" rx="2" /><path d="M7 4h12a2 2 0 0 1 2 2v10" /></>,
   ai: <><path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" /><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 20l-.7-1.8-1.8-.7 1.8-.7z" /></>,
+  notes: <><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13h7M9 17h5" /></>,
   set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>
 };
 const Icon = ({ n, s = 24 }) => <svg viewBox="0 0 24 24" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[n]}</svg>;
@@ -44,7 +45,7 @@ function makePlan(items, cap) {
 }
 
 function applyActions(acts, st) {
-  let items = [...st.items], cap = [...st.cap], start = st.start, cards = [...st.cards], n = 0, k = 0;
+  let items = [...st.items], cap = [...st.cap], start = st.start, cards = [...st.cards], notes = [...(st.notes || [])], n = 0, k = 0;
   const nid = () => Date.now() + (k++);
   for (const a of acts) {
     if (!a || typeof a !== 'object') continue;
@@ -71,11 +72,13 @@ function applyActions(acts, st) {
       if (d >= 0 && d <= 6 && h >= 0) { cap[d] = h; n++; }
     } else if (a.type === 'set_start') {
       const h = Number(a.hour); if (h >= 0 && h <= 23) { start = h; n++; }
+    } else if (a.type === 'add_note' && a.text) {
+      notes.unshift({ id: nid(), text: String(a.text), upd: Date.now() }); n++;
     } else if (a.type === 'add_cards' && Array.isArray(a.cards)) {
       for (const c of a.cards) if (c && c.q && c.a) { cards.push({ id: nid(), deck: String(a.deck || ''), q: String(c.q), a: String(c.a), known: false, seq: nid() }); n++; }
     }
   }
-  return { st: { items, cap, start, cards }, n };
+  return { st: { items, cap, start, cards, notes }, n };
 }
 
 function parseAI(raw) {
@@ -100,26 +103,44 @@ export default function Home() {
   const [show, setShow] = useState(false);
   const [cq, setCq] = useState('');
   const [ca, setCa] = useState('');
+  const [notes, setNotes] = useState([]);
+  const [nview, setNview] = useState(null);
+  const [ntext, setNtext] = useState('');
+  const [flow, setFlow] = useState(false);
+  const [nq, setNq] = useState('');
+  const taRef = useRef(null);
   const endRef = useRef(null);
 
   useEffect(() => {
     try {
       const s = JSON.parse(localStorage.getItem('helper-next') || '{}');
       if (s.items) setItems(s.items); if (s.cap) setCap(s.cap); if (s.msgs) setMsgs(s.msgs);
-      if (s.start) setStart(s.start); if (s.cards) setCards(s.cards);
+      if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes);
     } catch (e) {}
     setReady(true);
   }, []);
-  useEffect(() => { if (ready) localStorage.setItem('helper-next', JSON.stringify({ items, cap, msgs, start, cards })); }, [items, cap, msgs, start, cards, ready]);
+  useEffect(() => { if (ready) localStorage.setItem('helper-next', JSON.stringify({ items, cap, msgs, start, cards, notes })); }, [items, cap, msgs, start, cards, notes, ready]);
   useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [msgs, busy, tab]);
   const plan = useMemo(() => makePlan(items, cap), [items, cap]);
   const stRef = useRef(null);
-  stRef.current = { items, cap, start, cards };
+  stRef.current = { items, cap, start, cards, notes };
+  useEffect(() => {
+    if (nview == null || !ntext.trim()) return;
+    setNotes(p => p.some(n => n.id === nview)
+      ? p.map(n => n.id === nview && n.text !== ntext ? { ...n, text: ntext, upd: Date.now() } : n)
+      : [{ id: nview, text: ntext, upd: Date.now() }, ...p]);
+  }, [ntext]);
   if (!ready) return null;
 
   const now = new Date();
   const today = ymd(now);
   const closeSheet = () => setSheet(null);
+  const openNote = id => {
+    if (id === 'new') { setNview(Date.now()); setNtext(''); setFlow(true); }
+    else { const n = notes.find(x => x.id === id); setNview(id); setNtext(n ? n.text : ''); setFlow(false); }
+  };
+  const closeNote = () => { setNotes(notes.filter(n => n.text.trim())); setNview(null); setNtext(''); setFlow(false); };
+  const delNote = () => { setNotes(notes.filter(n => n.id !== nview)); setNview(null); setNtext(''); setFlow(false); };
   const openNew = () => { setF(EMPTY); setSheet('new'); };
   const openEdit = i => { if (!i) return; setF({ t: i.t, area: i.area, h: String(i.h), due: i.due || '', pri: i.pri || 1, note: i.note || '' }); setSheet(i.id); };
   const saveTask = () => {
@@ -158,14 +179,14 @@ export default function Home() {
           const cur = stRef.current;
           const res = applyActions(actions, cur);
           n = res.n;
-          if (n) { setUndo(cur); setItems(res.st.items); setCap(res.st.cap); setStart(res.st.start); setCards(res.st.cards); }
+          if (n) { setUndo(cur); setItems(res.st.items); setCap(res.st.cap); setStart(res.st.start); setCards(res.st.cards); setNotes(res.st.notes); }
         }
         setMsgs([...next, { role: 'model', text: reply || (n ? 'Готово.' : 'Порожня відповідь'), n }]);
       }
     } catch (e) { setMsgs([...next, { role: 'model', text: 'Немає зв’язку із сервером.' }]); }
     setBusy(false);
   }
-  const doUndo = () => { if (!undo) return; setItems(undo.items); setCap(undo.cap); setStart(undo.start); setCards(undo.cards); setUndo(null); };
+  const doUndo = () => { if (!undo) return; setItems(undo.items); setCap(undo.cap); setStart(undo.start); setCards(undo.cards); setNotes(undo.notes || []); setUndo(null); };
 
   const row = i => (
     <div className={'it' + (i.done ? ' done' : '')} key={i.id}>
@@ -224,6 +245,18 @@ export default function Home() {
             {d.blocks.map((b, j) => <div className="blk" key={j}><span>{b.t}</span><span className="sub">{r1(b.h)} год</span></div>)}</div>); })}</div>
       </>}
 
+      {tab === 'notes' && <>
+        <div className="top"><h1>Нотатки</h1><div className="sub">Пишіть думки в режимі потоку: слова згасають, поки ви друкуєте</div></div>
+        <input placeholder="Пошук" value={nq} onChange={e => setNq(e.target.value)} style={{ marginBottom: 12 }} />
+        {notes.filter(n => n.text.toLowerCase().includes(nq.toLowerCase())).map(n => (
+          <div className="card" key={n.id} onClick={() => openNote(n.id)}>
+            <div className="t" style={{ fontWeight: 600 }}>{n.text.split('\n')[0].slice(0, 60)}</div>
+            <div className="note">{n.text.slice(0, 120)}</div>
+            <div className="meta"><span>{new Date(n.upd).toLocaleDateString('uk-UA')}</span><span>{n.text.split(/\s+/).filter(Boolean).length} слів</span></div>
+          </div>))}
+        {!notes.length && <div className="card"><div className="empty">Нотаток поки немає. Натисніть «+» і пишіть без редагування.</div></div>}
+      </>}
+
       {tab === 'cards' && <>
         <div className="top"><h1>Картки</h1><div className="sub">Залишилось {left.length} з {cards.length}</div></div>
         {cur ? <div className="flip" onClick={() => setShow(!show)}><div className="sub">{cur.deck || 'Без колоди'}</div><div className="fq">{show ? cur.a : cur.q}</div><div className="sub">{show ? 'Відповідь' : 'Торкніться, щоб побачити відповідь'}</div></div>
@@ -266,6 +299,7 @@ export default function Home() {
       </>}
 
       {(tab === 'today' || tab === 'tasks') && <button className="fab" onClick={openNew} aria-label="Додати задачу">+</button>}
+      {tab === 'notes' && <button className="fab" onClick={() => openNote('new')} aria-label="Нова нотатка">+</button>}
       {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" onClick={e => e.stopPropagation()}>
         <b>{sheet === 'new' ? 'Нова задача' : 'Редагування задачі'}</b>
         <input style={{ marginTop: 10 }} autoFocus placeholder="Що потрібно зробити або вивчити" value={f.t} onChange={e => setF({ ...f, t: e.target.value })} />
@@ -278,7 +312,20 @@ export default function Home() {
           {sheet !== 'new' && <button className="btn alt" onClick={() => del(sheet)}>Видалити</button>}</div>
       </div></div>}
 
-      <nav className="tabbar">{TABS.map(([k, n]) => <button key={k} className={k === tab ? 'on' : ''} onClick={() => setTab(k)}><Icon n={k} />{n}</button>)}</nav>
+      {nview != null && <div className="nv">
+        <div className="nvbar"><button className="chip" onClick={closeNote}>Закрити</button><span className="sub">{ntext.split(/\s+/).filter(Boolean).length} слів</span>
+          {flow ? <button className="chip" onClick={() => setFlow(false)}>Готово</button> : <button className="chip" onClick={() => setFlow(true)}>Писати в потоці</button>}</div>
+        {flow ? (() => { const ws = ntext.split(/\s+/).filter(Boolean); const tail = ws.slice(-7); return (
+          <div className="flow" onClick={() => taRef.current && taRef.current.focus()}>
+            <textarea ref={taRef} className="hid" autoFocus value={ntext} onChange={e => setNtext(e.target.value)} />
+            <div className="fade">{tail.map((w, i) => <span key={ws.length - tail.length + i} style={{ opacity: Math.pow((i + 1) / tail.length, 2) }}>{w} </span>)}<span className="cur" /></div>
+            <div className="sub fh">Пишіть без зупинки. Текст з’явиться, коли натиснете «Готово»</div>
+          </div>); })() : <>
+          <textarea className="ned" value={ntext} onChange={e => setNtext(e.target.value)} placeholder="Почніть писати…" />
+          <button className="chip" onClick={delNote}>Видалити нотатку</button></>}
+      </div>}
+
+      <nav className="tabbar">{TABS.map(([k, n]) => <button key={k} className={k === tab ? 'on' : ''} onClick={() => setTab(k)} aria-label={n}><Icon n={k} s={26} /></button>)}</nav>
     </div>
   );
 }
