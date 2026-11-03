@@ -41,3 +41,12 @@ textarea{resize:none}
 .ov{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;z-index:5}
 .sheet{background:var(--card);width:100%;max-width:560px;margin:0 auto;border-radius:20px 20px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom))}
 .empty{color:var(--mu);padding:6px 0}
+.tabbar button{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;padding:7px 0}
+.gear{position:absolute;top:18px;right:16px;border:0;background:var(--card);border:1px solid var(--bd);color:var(--mu);width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center}
+.wrap{position:relative}
+.applied{font-size:12px;color:var(--mu);margin-top:6px}
+.note{font-size:13px;color:var(--mu);margin-top:3px;white-space:pre-wrap}
+.flip{background:var(--card);border:1px solid var(--bd);border-radius:20px;padding:22px 18px;min-height:200px;display:flex;flex-direction:column;justify-content:space-between;text-align:center;margin-bottom:12px}
+.fq{font-size:22px;font-weight:600;white-space:pre-wrap}
+.btn.alt{background:var(--card);color:var(--tx);border:1px solid var(--bd)}
+.undo{display:flex;justify-content:space-between;align-items:center;gap:10px}
