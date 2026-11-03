@@ -224,9 +224,9 @@ export default function Home() {
   for (let i = 0; i < offset; i++) cells.push(null);
   for (let d = 1; d <= dim; d++) cells.push(d);
   const dstr = d => cy + '-' + pad(cmo + 1) + '-' + pad(d);
-  const busy = {};
-  open.forEach(i => { if (i.due) busy[i.due] = true; });
-  plan.days.forEach(d => { if (d.blocks.length) busy[ymd(d.d)] = true; });
+  const busyDays = {};
+  open.forEach(i => { if (i.due) busyDays[i.due] = true; });
+  plan.days.forEach(d => { if (d.blocks.length) busyDays[ymd(d.d)] = true; });
   const selected = calSel || today;
   const selPlan = plan.days.find(d => ymd(d.d) === selected);
   const selDue = open.filter(i => i.due === selected);
@@ -261,7 +261,7 @@ export default function Home() {
         <div className="cmh"><button className="chip" onClick={() => setCalM(cm - 1)} aria-label="Попередній місяць">‹</button><span>{monthName}</span><button className="chip" onClick={() => setCalM(cm + 1)} aria-label="Наступний місяць">›</button></div>
         <div className="cal">
           {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'].map(w => <div className="cw" key={w}>{w}</div>)}
-          {cells.map((d, i) => d ? <button key={i} className={'cd' + (dstr(d) === today ? ' td' : '') + (dstr(d) === selected ? ' sel' : '')} onClick={() => setCalSel(dstr(d))}>{d}{busy[dstr(d)] && <i className="dot" />}</button> : <div key={i} />)}
+          {cells.map((d, i) => d ? <button key={i} className={'cd' + (dstr(d) === today ? ' td' : '') + (dstr(d) === selected ? ' sel' : '')} onClick={() => setCalSel(dstr(d))}>{d}{busyDays[dstr(d)] && <i className="dot" />}</button> : <div key={i} />)}
         </div>
         <div className="card" style={{ marginTop: 22 }}>
           <div className="sec">{new Date(selected + 'T00:00:00').toLocaleDateString('uk-UA', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
