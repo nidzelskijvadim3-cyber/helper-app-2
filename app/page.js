@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
+import Docs from './docs';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const DNF = ['неділя', 'понеділок', 'вівторок', 'середа', 'четвер', 'п’ятниця', 'субота'];
@@ -243,6 +244,7 @@ export default function Home() {
     else { const n = notes.find(x => x.id === id); setNview(id); setNtext(n ? n.text : ''); setFlow(false); }
   };
   const closeNote = () => { setNotes(notes.filter(n => n.text.trim())); setNview(null); setNtext(''); setFlow(false); };
+  const newNote = flowMode => { openNote('new'); setFlow(flowMode); };
   const delNote = () => { setNotes(notes.filter(n => n.id !== nview)); setNview(null); setNtext(''); setFlow(false); };
   const openNew = () => { setF({ ...EMPTY, due: selDate !== today ? selDate : '', folder: tab === 'folders' && typeof fview === 'number' ? fview : '' }); setSheet('new'); };
   const openEdit = i => { if (!i) return; setF({ kind: i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', folder: i.folder || '' }); setSheet(i.id); };
@@ -469,6 +471,7 @@ export default function Home() {
           {folders.map(fo => <div className="ftile" key={fo.id} onClick={() => setFview(fo.id)} style={fo.cover ? { backgroundImage: 'url(' + fo.cover + ')' } : { background: fo.color }}>
             <div className="fshade" /><div className="fname">{fo.name}</div><div className="fsub">{notes.filter(n => n.folder === fo.id).length + items.filter(i => i.folder === fo.id).length}</div></div>)}
         </div>
+        <Docs folderId={null} folders={folders} onNewNote={newNote} />
       </>}
 
       {tab === 'folders' && fview != null && (() => {
@@ -487,6 +490,7 @@ export default function Home() {
               <div className="meta"><span>{new Date(n.upd).toLocaleDateString('uk-UA')}</span><span>{n.text.split(/\s+/).filter(Boolean).length} слів</span></div>
             </div>))}
           {!nl.length && !il.length && <div className="card"><div className="empty">Тут поки порожньо.</div></div>}
+          <Docs folderId={fview} folders={folders} onNewNote={newNote} />
         </>;
       })()}
 

@@ -1,0 +1,226 @@
+'use client';
+import { useState, useEffect, useRef } from 'react';
+
+const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан' };
+const FILTERS = [['all', 'Усі'], ['notebook', 'Зошити'], ['board', 'Дошки'], ['img', 'Фото й скани']];
+const COLORS = ['#1c1c1e', '#0a84ff', '#ff375f', '#30d158', '#ff9f0a', '#bf5af2'];
+
+function idb() {
+  return new Promise((res, rej) => { const r = indexedDB.open('helper-docs', 1); r.onupgradeneeded = () => r.result.createObjectStore('docs', { keyPath: 'id' }); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+}
+async function dbRun(mode, fn) {
+  const db = await idb();
+  return new Promise((res, rej) => { const t = db.transaction('docs', mode); const rq = fn(t.objectStore('docs')); t.oncomplete = () => res(rq ? rq.result : undefined); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+}
+const readFile = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
+const loadImg = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+
+async function prepImage(file, scan) {
+  const img = await loadImg(await readFile(file));
+  const sc = Math.min(1, 1600 / Math.max(img.width, img.height));
+  const c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0, c.width, c.height);
+  if (scan) {
+    const d = g.getImageData(0, 0, c.width, c.height), p = d.data, hist = new Uint32Array(256);
+    for (let i = 0; i < p.length; i += 4) { const v = Math.round(0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2]); p[i] = p[i + 1] = p[i + 2] = v; hist[v]++; }
+    const tot = c.width * c.height; let lo = 0, hi = 255, a = 0;
+    for (let v = 0; v < 256; v++) { a += hist[v]; if (a > tot * 0.02) { lo = v; break; } }
+    a = 0; for (let v = 255; v >= 0; v--) { a += hist[v]; if (a > tot * 0.15) { hi = v; break; } }
+    const k = 255 / Math.max(1, hi - lo);
+    for (let i = 0; i < p.length; i += 4) { const v = Math.max(0, Math.min(255, (p[i] - lo) * k)); p[i] = p[i + 1] = p[i + 2] = v; }
+    g.putImageData(d, 0, 0);
+  }
+  return { src: c.toDataURL('image/jpeg', 0.82), w: c.width, h: c.height };
+}
+
+function drawStroke(g, s, ws) {
+  g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = s.c; g.globalAlpha = s.a || 1; g.lineWidth = s.w * ws;
+  if (s.a && s.a < 1) g.globalCompositeOperation = 'multiply';
+  const p = s.p; g.beginPath(); g.moveTo(p[0], p[1]);
+  if (p.length <= 2) g.lineTo(p[0] + 0.1, p[1]);
+  else { for (let i = 2; i < p.length - 2; i += 2) g.quadraticCurveTo(p[i], p[i + 1], (p[i] + p[i + 2]) / 2, (p[i + 1] + p[i + 3]) / 2); g.lineTo(p[p.length - 2], p[p.length - 1]); }
+  g.stroke(); g.restore();
+}
+function renderPage(g, p, im) {
+  const ws = p.w / 1200;
+  g.fillStyle = '#fff'; g.fillRect(0, 0, p.w, p.h);
+  if (im) g.drawImage(im, 0, 0, p.w, p.h);
+  if (p.tpl === 'lined' || p.tpl === 'grid') {
+    g.strokeStyle = '#cfd8e6'; g.lineWidth = 2 * ws; g.beginPath();
+    for (let y = 100 * ws; y < p.h; y += 60 * ws) { g.moveTo(0, y); g.lineTo(p.w, y); }
+    if (p.tpl === 'grid') for (let x = 60 * ws; x < p.w; x += 60 * ws) { g.moveTo(x, 0); g.lineTo(x, p.h); }
+    g.stroke();
+  }
+  for (const s of p.strokes) drawStroke(g, s, ws);
+}
+async function makeThumb(d) {
+  const p = d.pages[0]; if (!p) return '';
+  const im = p.img ? await loadImg(p.img).catch(() => null) : null;
+  const c = document.createElement('canvas'); c.width = 240; c.height = Math.round(240 * p.h / p.w);
+  const g = c.getContext('2d'); g.scale(240 / p.w, 240 / p.w); renderPage(g, p, im);
+  return c.toDataURL('image/jpeg', 0.6);
+}
+
+function Editor({ doc, onSave, onClose }) {
+  const [d, setD] = useState(doc);
+  const [pi, setPi] = useState(0);
+  const [tool, setTool] = useState('pen');
+  const [color, setColor] = useState(COLORS[0]);
+  const [wd, setWd] = useState(4);
+  const [penOnly, setPenOnly] = useState(false);
+  const [fit, setFit] = useState({ w: 300, h: 400 });
+  const [tick, setTick] = useState(0);
+  const cvRef = useRef(null), boxRef = useRef(null), imgRef = useRef(null), cur = useRef(null), hist = useRef([]);
+  const page = d.pages[pi];
+  const setPage = np => setD(o => ({ ...o, pages: o.pages.map((q, i) => i === pi ? np : q) }));
+
+  useEffect(() => {
+    const el = boxRef.current; if (!el) return;
+    const f = () => { const sc = Math.min(el.clientWidth / page.w, el.clientHeight / page.h); setFit({ w: Math.floor(page.w * sc), h: Math.floor(page.h * sc) }); };
+    f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect();
+  }, [page.w, page.h]);
+  useEffect(() => {
+    let off = false;
+    if (!page.img) { imgRef.current = null; setTick(t => t + 1); return; }
+    loadImg(page.img).then(im => { if (!off) { imgRef.current = im; setTick(t => t + 1); } }).catch(() => {});
+    return () => { off = true; };
+  }, [pi, page.img]);
+  useEffect(() => { const cv = cvRef.current; if (cv) renderPage(cv.getContext('2d'), page, imgRef.current); }, [d, pi, tick]);
+  useEffect(() => { const t = setTimeout(() => { onSave({ ...d, upd: Date.now() }).catch(() => {}); }, 1500); return () => clearTimeout(t); }, [d]);
+
+  const pos = e => { const cv = cvRef.current, r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
+  const eraseAt = (x, y) => {
+    const ws = page.w / 1200, r = 24 * ws;
+    const keep = page.strokes.filter(s => { for (let i = 0; i < s.p.length; i += 2) if (Math.hypot(s.p[i] - x, s.p[i + 1] - y) < r + s.w * ws / 2) return false; return true; });
+    if (keep.length !== page.strokes.length) { if (cur.current && !cur.current.snap) cur.current.snap = page.strokes; setPage({ ...page, strokes: keep }); }
+  };
+  const down = e => {
+    if (penOnly && e.pointerType === 'touch') return;
+    e.preventDefault(); cvRef.current.setPointerCapture(e.pointerId);
+    const [x, y] = pos(e);
+    if (tool === 'eraser') { cur.current = { erase: true }; eraseAt(x, y); return; }
+    cur.current = { c: color, w: tool === 'hl' ? wd * 4 : wd, a: tool === 'hl' ? 0.35 : 1, p: [x, y] };
+  };
+  const move = e => {
+    const s = cur.current; if (!s) return;
+    const [x, y] = pos(e);
+    if (s.erase) { eraseAt(x, y); return; }
+    const q = s.p, lx = q[q.length - 2], ly = q[q.length - 1];
+    if (Math.hypot(x - lx, y - ly) < 2) return;
+    q.push(x, y);
+    const g = cvRef.current.getContext('2d'), ws = page.w / 1200;
+    if (s.a < 1) { renderPage(g, page, imgRef.current); drawStroke(g, s, ws); }
+    else { g.save(); g.lineCap = 'round'; g.strokeStyle = s.c; g.lineWidth = s.w * ws; g.beginPath(); g.moveTo(lx, ly); g.lineTo(x, y); g.stroke(); g.restore(); }
+  };
+  const up = () => {
+    const s = cur.current; cur.current = null; if (!s) return;
+    if (s.erase) { if (s.snap) hist.current.push({ pi, strokes: s.snap }); return; }
+    hist.current.push({ pi, strokes: page.strokes }); if (hist.current.length > 40) hist.current.shift();
+    setPage({ ...page, strokes: [...page.strokes, s] });
+  };
+  const undo = () => { const h = hist.current.pop(); if (h) setD(o => ({ ...o, pages: o.pages.map((q, i) => i === h.pi ? { ...q, strokes: h.strokes } : q) })); };
+  const addPage = () => { setD(o => ({ ...o, pages: [...o.pages, { w: page.w, h: page.h, tpl: page.img ? 'blank' : page.tpl, strokes: [] }] })); setPi(d.pages.length); hist.current = []; };
+  const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; };
+  const close = async () => { try { const t = await makeThumb(d); await onSave({ ...d, thumb: t, upd: Date.now() }); } catch (e) {} onClose(); };
+
+  return (
+    <div className="nv">
+      <div className="edtop"><button className="chip" onClick={close}>Готово</button><input value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label="Назва" /></div>
+      <div className="edbox" ref={boxRef}>
+        <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w, height: fit.h }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
+      </div>
+      <div className="edtools">
+        {[['pen', 'Ручка'], ['hl', 'Маркер'], ['eraser', 'Гумка']].map(([k, n]) => <button key={k} className={'chip' + (tool === k ? ' on' : '')} onClick={() => setTool(k)}>{n}</button>)}
+        <button className="chip" onClick={undo}>Скасувати</button>
+        <div className="edrow">{COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser') setTool('pen'); }} aria-label={c} />)}
+          {[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={'Товщина ' + w}><i style={{ width: w * 2, height: w * 2 }} /></button>)}</div>
+        <div className="edrow">
+          <button className="chip" onClick={() => { setPi(Math.max(0, pi - 1)); hist.current = []; }}>‹</button><span className="sub">{pi + 1} з {d.pages.length}</span>
+          <button className="chip" onClick={() => { setPi(Math.min(d.pages.length - 1, pi + 1)); hist.current = []; }}>›</button>
+          <button className="chip" onClick={addPage}>+ Сторінка</button>{d.pages.length > 1 && <button className="chip" onClick={delPage}>Видалити</button>}</div>
+        <div className="edrow">
+          {d.type === 'notebook' && !page.img && [['blank', 'Чиста'], ['lined', 'Лінійка'], ['grid', 'Клітинка']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} onClick={() => setPage({ ...page, tpl: k })}>{n}</button>)}
+          <button className={'chip' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)}>Лише Apple Pencil</button></div>
+      </div>
+    </div>
+  );
+}
+
+export default function Docs({ folderId, folders, onNewNote }) {
+  const [docs, setDocs] = useState([]);
+  const [flt, setFlt] = useState('all');
+  const [sort, setSort] = useState('new');
+  const [q, setQ] = useState('');
+  const [menu, setMenu] = useState(false);
+  const [ed, setEd] = useState(null);
+  const [act, setAct] = useState(null);
+  const [msg, setMsg] = useState('');
+  const phRef = useRef(null), scRef = useRef(null), imRef = useRef(null);
+
+  useEffect(() => { dbRun('readonly', s => s.getAll()).then(setDocs).catch(() => setMsg('Сховище документів недоступне в цьому браузері.')); }, []);
+  const persist = async dd => {
+    await dbRun('readwrite', s => s.put(dd));
+    setDocs(p => p.some(x => x.id === dd.id) ? p.map(x => x.id === dd.id ? dd : x) : [dd, ...p]);
+  };
+  const fid = typeof folderId === 'number' ? folderId : '';
+  const mk = (type, extra) => ({ id: Date.now(), type, title: TYPES[type] + ' ' + new Date().toLocaleDateString('uk-UA'), folder: fid, created: Date.now(), upd: Date.now(), thumb: '', pages: [], ...extra });
+  const start = async dd => { try { await persist(dd); setEd(dd); } catch (e) { setMsg('Не вдалося зберегти документ: можливо, закінчилося місце.'); } setMenu(false); };
+  const newNotebook = () => start(mk('notebook', { pages: [{ w: 1200, h: 1600, tpl: 'lined', strokes: [] }] }));
+  const newBoard = () => start(mk('board', { pages: [{ w: 1600, h: 1200, tpl: 'blank', strokes: [] }] }));
+  const fromFile = async (file, type) => {
+    if (!file) return;
+    setMsg('Обробка зображення…');
+    try { const im = await prepImage(file, type === 'scan'); await start(mk(type, { pages: [{ w: im.w, h: im.h, tpl: 'blank', img: im.src, strokes: [] }] })); setMsg(''); }
+    catch (e) { setMsg('Не вдалося обробити зображення.'); setMenu(false); }
+  };
+
+  const inFolder = x => folderId === 'all' ? true : (folderId == null ? x.folder === '' || x.folder == null : x.folder === folderId);
+  const list = docs.filter(inFolder)
+    .filter(x => flt === 'all' || x.type === flt || (flt === 'img' && (x.type === 'photo' || x.type === 'scan')))
+    .filter(x => x.title.toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : b.upd - a.upd);
+
+  return (
+    <div style={{ marginTop: 26 }}>
+      <div className="sec">Документи</div>
+      <button className="btn" onClick={() => setMenu(true)}>Створити або імпортувати</button>
+      {msg && <div className="sub" style={{ margin: '10px 0' }}>{msg}</div>}
+      <div className="dtools" style={{ marginTop: 14 }}>
+        <div className="seg">{FILTERS.map(([k, n]) => <button key={k} className={flt === k ? 'on' : ''} onClick={() => setFlt(k)}>{n}</button>)}</div>
+        <div className="row" style={{ margin: 0 }}><input placeholder="Пошук документів" value={q} onChange={e => setQ(e.target.value)} />
+          <select value={sort} onChange={e => setSort(e.target.value)} style={{ width: 'auto' }}><option value="new">Нові</option><option value="name">За назвою</option></select></div>
+      </div>
+      {list.length ? <div className="dgrid">{list.map(x => (
+        <div key={x.id}>
+          <div className="dthumb" onClick={() => setEd(x)} style={x.thumb ? { backgroundImage: 'url(' + x.thumb + ')' } : {}}>{!x.thumb && <span>{TYPES[x.type]}</span>}</div>
+          <div className="dmeta"><div className="dt" onClick={() => setEd(x)}>{x.title}</div><button className="x" onClick={() => setAct(x)} aria-label="Дії">⋯</button></div>
+          <div className="sub">{new Date(x.upd).toLocaleDateString('uk-UA')}, стор.: {x.pages.length}</div>
+        </div>))}</div> : <div className="card"><div className="empty">Документів поки немає. Створіть зошит, дошку або додайте скан.</div></div>}
+
+      <input ref={phRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
+      <input ref={scRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'scan'); e.target.value = ''; }} />
+      <input ref={imRef} type="file" accept="image/*" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
+
+      {menu && <div className="ov" onClick={() => setMenu(false)}><div className="sheet menu" onClick={e => e.stopPropagation()}>
+        <b>Створити</b><div style={{ height: 12 }} />
+        <button onClick={() => { setMenu(false); onNewNote(true); }}>Швидка нотатка<small>Слова згасають, поки ви пишете</small></button>
+        <button onClick={() => { setMenu(false); onNewNote(false); }}>Текстовий документ<small>Звичайний текст</small></button>
+        <button onClick={newNotebook}>Зошит<small>Сторінки з лінійкою або клітинкою, малювання від руки</small></button>
+        <button onClick={newBoard}>Дошка<small>Велике вільне полотно</small></button>
+        <button onClick={() => phRef.current && phRef.current.click()}>Сфотографувати<small>Фото, яке можна підписувати</small></button>
+        <button onClick={() => scRef.current && scRef.current.click()}>Сканувати документ<small>Фото з вирівнюванням яскравості, як скан</small></button>
+        <button onClick={() => imRef.current && imRef.current.click()}>Імпортувати зображення<small>З галереї або файлів</small></button>
+      </div></div>}
+
+      {act && <div className="ov" onClick={() => setAct(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
+        <b>Документ</b>
+        <input style={{ marginTop: 12 }} value={act.title} onChange={e => setAct({ ...act, title: e.target.value })} />
+        <div className="row"><select value={act.folder === '' || act.folder == null ? '' : act.folder} onChange={e => setAct({ ...act, folder: e.target.value === '' ? '' : Number(e.target.value) })}><option value="">Без папки</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select></div>
+        <div className="row"><button className="btn" onClick={async () => { try { await persist({ ...act, upd: Date.now() }); } catch (e) {} setAct(null); }}>Зберегти</button>
+          <button className="btn alt" onClick={async () => { try { await dbRun('readwrite', s => s.delete(act.id)); setDocs(p => p.filter(x => x.id !== act.id)); } catch (e) {} setAct(null); }}>Видалити</button></div>
+      </div></div>}
+
+      {ed && <Editor doc={ed} onSave={persist} onClose={() => setEd(null)} />}
+    </div>
+  );
+}

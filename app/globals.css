@@ -96,3 +96,17 @@ input[type=checkbox]:checked{background:var(--ac);border-color:var(--ac)}
 .cover{width:100%;aspect-ratio:16/9;border-radius:14px;background-size:cover;background-position:center}
 .hidefile{display:none}
 .fileb{display:inline-block;margin:0}
+.dtools{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.dgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.dthumb{aspect-ratio:3/4;border-radius:12px;background:#fff center/cover no-repeat;display:flex;align-items:center;justify-content:center;color:#888;font-size:14px;box-shadow:0 1px 6px rgba(0,0,0,.3);overflow:hidden}
+.dmeta{display:flex;justify-content:space-between;align-items:center;margin-top:6px;gap:6px}.dt{font-weight:600;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.menu button{display:block;width:100%;text-align:left;border:0;background:var(--fill);color:var(--tx);font-size:17px;padding:13px 16px;border-radius:12px;margin-bottom:8px}
+.menu small{display:block;color:var(--mu);font-size:13px}
+.edtop{display:flex;align-items:center;gap:8px;margin-bottom:10px}.edtop .chip{margin:0}
+.edbox{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:var(--fill);border-radius:12px;overflow:hidden}
+.edbox canvas{background:#fff;touch-action:none;box-shadow:0 2px 12px rgba(0,0,0,.3)}
+.edtools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding-top:10px}
+.edtools .chip{margin:0}.edtools .chip.on{background:var(--ac);color:var(--on)}
+.edrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;width:100%}
+.cdot{width:28px;height:28px;border-radius:50%;border:0;padding:0}.cdot.on{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--tx)}
+.wdot{width:32px;height:32px;border-radius:50%;border:0;background:var(--fill);display:flex;align-items:center;justify-content:center;padding:0}.wdot i{display:block;border-radius:50%;background:var(--tx)}.wdot.on{box-shadow:inset 0 0 0 2px var(--ac)}
