@@ -1,4 +1,4 @@
-export const maxDuration = 30;
+export const maxDuration = 60;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function gemini(system, messages) {
@@ -52,18 +52,37 @@ async function withRetry(fn) {
   return last;
 }
 
+const ACTIONS = 'Доступні дії: {"type":"add_task","t":"назва","area":"study|work|personal|health|home","h":години числом,"due":"YYYY-MM-DD або порожній рядок","pri":1 або 2,"repeat":"none|daily|weekdays|weekly"}; {"type":"add_event","t":"назва","area":"..","date":"YYYY-MM-DD","time":"HH:MM","h":тривалість у годинах,"repeat":"none|daily|weekdays|weekly"}; {"type":"update_task","id":число,"t":"..","area":"..","h":число,"date":"YYYY-MM-DD","time":"HH:MM","pri":1 або 2,"repeat":".."} (лише поля, що змінюються); {"type":"complete_task","id":число}; {"type":"delete_task","id":число}; {"type":"set_capacity","day":від 0 до 6 (0 це неділя),"h":години}; {"type":"set_start","hour":від 0 до 23}; {"type":"add_note","text":"текст нотатки"}; {"type":"add_cards","deck":"назва колоди","cards":[{"q":"питання","a":"відповідь"}]}.';
+
+function appPrompt(ctx, parse) {
+  return [
+    'Ти особистий помічник для повсякденного життя людини: навчання, робота, особисті справи, здоров’я, дім. Відповідай українською, коротко й по суті.',
+    'Ти керуєш застосунком через дії. Відповідай ТІЛЬКИ валідним JSON без markdown у форматі {"reply":"текст користувачу","actions":[...]}.',
+    ACTIONS,
+    'ПОДІЯ має конкретну дату й час і не переноситься (візит до лікаря, зустріч, пара, зміна): використовуй add_event. ЗАДАЧА це робота, яку можна зробити в будь-який час до терміну: використовуй add_task. Візит до лікаря ніколи не є задачею.',
+    'Дати визначай за полем next21days (дата і день тижня). Не вгадуй. Якщо для події немає дати або часу, або день тижня не збігається з датою, НЕ додавай нічого: у reply постав одне коротке уточнювальне питання, actions порожній.',
+    parse ? 'РЕЖИМ ШВИДКОГО ДОДАВАННЯ: перетвори фразу користувача на 1-3 дії add_task або add_event, інших дій не роби. У reply одне коротке речення (або уточнення, якщо чогось бракує).' : 'Якщо користувач лише питає або просить пояснити, actions порожній. Дії виконуй лише тоді, коли користувач про це просить. Не вигадуй id: використовуй лише id зі стану.',
+    'Стан застосунку (JSON): ' + JSON.stringify(ctx)
+  ].join('\n');
+}
+
+function quizPrompt(ctx) {
+  const kind = ctx.kind === 'choice' ? 'лише choice' : ctx.kind === 'open' ? 'лише open' : 'приблизно 70% choice і 30% open';
+  return [
+    'Ти складаєш тест для самоперевірки. Відповідай ТІЛЬКИ валідним JSON без markdown: {"quiz":{"title":"коротка назва","questions":[{"type":"choice","q":"питання","options":["А","Б","В","Г"],"answer":індекс правильного варіанта з нуля,"explain":"коротке пояснення"},{"type":"open","q":"питання","answer":"еталонна відповідь","explain":"пояснення"}]}}.',
+    'Кількість питань: ' + (Number(ctx.n) || 5) + '. Типи питань: ' + kind + '. Складність від простої до складної.',
+    'Питання за темою або матеріалом, який надав користувач. Якщо користувач вставив матеріал, спирайся лише на нього. Якщо тема це вивчення мови (англійська, німецька тощо), питання і варіанти пиши мовою, що вивчається, а пояснення українською.',
+    'Для choice рівно 4 варіанти, лише один правильний, позицію правильної відповіді розподіляй випадково.'
+  ].join('\n');
+}
+
+const gradePrompt = 'Ти перевіряєш відкриті відповіді на тест. На вхід JSON-масив об’єктів {i,q,ref,user}, де ref це еталонна відповідь, а user відповідь людини. Відповідай ТІЛЬКИ валідним JSON: {"grades":[{"i":число,"score":від 0 до 1 (0.5 означає частково),"comment":"коротко, що вірно і чого бракує"}]}. Оцінюй за змістом, а не за формулюванням. Порожня відповідь це 0. Коментарі українською.';
+
 export async function POST(req) {
   const pass = process.env.APP_PASSWORD;
   if (pass && req.headers.get('x-pass') !== pass) return Response.json({ error: 'Нужен пароль' }, { status: 401 });
-  const { messages = [], ctx = {} } = await req.json();
-  const system = [
-    'Ти особистий помічник з навчання та роботи для людини на дуальному навчанні. Відповідай українською, коротко й по суті.',
-    'Ти можеш керувати застосунком через дії. Відповідай ТІЛЬКИ валідним JSON без markdown у форматі {"reply":"текст відповіді користувачу","actions":[...]}.',
-    'Якщо користувач лише питає або просить пояснити, actions має бути порожнім масивом. Виконуй дії тільки тоді, коли користувач про це просить.',
-    'Доступні дії: {"type":"add_task","t":"назва","area":"study або work","h":години числом,"due":"YYYY-MM-DD або порожній рядок","pri":1 або 2 (2 означає важливо)}; {"type":"update_task","id":число,"t":"..","area":"..","h":число,"due":"..","pri":1 або 2} (вказуй лише поля, що змінюються); {"type":"complete_task","id":число}; {"type":"delete_task","id":число}; {"type":"set_capacity","day":від 0 до 6 (0 це неділя),"h":години}; {"type":"set_start","hour":від 0 до 23}; {"type":"add_note","text":"текст нотатки"}; {"type":"add_cards","deck":"назва колоди","cards":[{"q":"питання","a":"відповідь"}]}.',
-    'Для планування тижня створюй задачі з реалістичними термінами. Не вигадуй id: використовуй лише id зі стану.',
-    'Сьогодні ' + (ctx.today || new Date().toISOString().slice(0, 10)) + '. Стан застосунку (JSON): ' + JSON.stringify(ctx)
-  ].join('\n');
+  const { messages = [], ctx = {}, mode = 'chat' } = await req.json();
+  const system = mode === 'quiz' ? quizPrompt(ctx) : mode === 'grade' ? gradePrompt : appPrompt(ctx, mode === 'parse');
   const order = (process.env.AI_ORDER || 'gemini,deepseek').split(',').map(s => s.trim()).filter(s => PROVIDERS[s]);
   const errs = [];
   for (const name of order) {
