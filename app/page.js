@@ -6,7 +6,12 @@ const DNF = ['неділя', 'понеділок', 'вівторок', 'сере
 const AREA = { study: 'Навчання', work: 'Робота', personal: 'Особисте', health: 'Здоров’я', home: 'Дім' };
 const REP = { none: 'Не повторювати', daily: 'Щодня', weekdays: 'У будні', weekly: 'Щотижня' };
 const REPS = { daily: 'щодня', weekdays: 'у будні', weekly: 'щотижня' };
-const TABS = [['today', 'План'], ['cal', 'Календар'], ['tasks', 'Задачі'], ['notes', 'Нотатки'], ['cards', 'Навчання'], ['ai', 'ШІ']];
+const FONTS = { sf: '-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif', serif: 'ui-serif,"New York",Georgia,"Times New Roman",serif', rounded: 'ui-rounded,"SF Pro Rounded",system-ui,sans-serif', mono: 'ui-monospace,"SF Mono",Menlo,monospace' };
+const FONTN = { sf: 'Класичний (SF)', serif: 'Строгий (із засічками)', rounded: 'Округлий', mono: 'Моноширинний' };
+const ACCENTS = ['#0a84ff', '#ff375f', '#ff9f0a', '#30d158', '#bf5af2', '#64d2ff', '#ffd60a', '#ff453a'];
+const UI0 = { theme: 'dark', accent: '#0a84ff', font: 'sf' };
+const onColor = h => { const n = parseInt(String(h).slice(1), 16) || 0; return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150 ? '#000' : '#fff'; };
+const TABS = [['today', 'План'], ['cal', 'Календар'], ['tasks', 'Задачі'], ['folders', 'Папки'], ['cards', 'Навчання'], ['ai', 'ШІ']];
 const ICONS = {
   today: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   cal: <><rect x="3" y="4" width="18" height="17" rx="3" /><path d="M3 9h18M8 2v4M16 2v4M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01" /></>,
@@ -14,6 +19,7 @@ const ICONS = {
   notes: <><path d="M6 3h9l4 4v14H6z" /><path d="M14 3v5h5M9 13h7M9 17h5" /></>,
   cards: <><rect x="3" y="7" width="14" height="12" rx="2" /><path d="M7 4h12a2 2 0 0 1 2 2v10" /></>,
   ai: <><path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" /><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 20l-.7-1.8-1.8-.7 1.8-.7z" /></>,
+  folders: <><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>,
   set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>
 };
 const Icon = ({ n, s = 24 }) => <svg viewBox="0 0 24 24" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[n]}</svg>;
@@ -30,7 +36,7 @@ const isEv = i => i.kind === 'event';
 const isRep = i => !!i.repeat && i.repeat !== 'none';
 const normArea = v => (AREA[v] ? v : 'personal');
 const normRep = v => (REP[v] ? v : 'none');
-const EMPTY = { kind: 'task', t: '', area: 'study', h: '', due: '', time: '', pri: 1, note: '', repeat: 'none' };
+const EMPTY = { kind: 'task', t: '', area: 'study', h: '', due: '', time: '', pri: 1, note: '', repeat: 'none', folder: '' };
 
 function occurs(i, d) {
   if (!i.due) return false;
@@ -193,6 +199,11 @@ export default function Home() {
   const [tmsg, setTmsg] = useState('');
   const [tview, setTview] = useState(null);
   const [qi, setQi] = useState(0);
+  const [folders, setFolders] = useState([]);
+  const [ui, setUi] = useState(UI0);
+  const [fview, setFview] = useState(null);
+  const [fform, setFform] = useState(null);
+  const [nfold, setNfold] = useState('');
   const taRef = useRef(null);
   const endRef = useRef(null);
   const stRef = useRef(null);
@@ -201,11 +212,16 @@ export default function Home() {
     try {
       const s = JSON.parse(localStorage.getItem('helper-next') || '{}');
       if (s.items) setItems(s.items); if (s.cap) setCap(s.cap); if (s.msgs) setMsgs(s.msgs);
-      if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes); if (s.tests) setTests(s.tests);
+      if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes); if (s.tests) setTests(s.tests); if (s.folders) setFolders(s.folders); if (s.ui) setUi({ ...UI0, ...s.ui });
     } catch (e) {}
     setReady(true);
   }, []);
-  useEffect(() => { if (ready) localStorage.setItem('helper-next', JSON.stringify({ items, cap, msgs, start, cards, notes, tests })); }, [items, cap, msgs, start, cards, notes, tests, ready]);
+  useEffect(() => { if (ready) { try { localStorage.setItem('helper-next', JSON.stringify({ items, cap, msgs, start, cards, notes, tests, folders, ui })); } catch (e) {} } }, [items, cap, msgs, start, cards, notes, tests, folders, ui, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    const r = document.documentElement;
+    r.dataset.theme = ui.theme; r.style.setProperty('--ac', ui.accent); r.style.setProperty('--on', onColor(ui.accent)); r.style.setProperty('--font', FONTS[ui.font] || FONTS.sf);
+  }, [ui, ready]);
   useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [msgs, busy, tab]);
   const plan = useMemo(() => makePlan(items, cap), [items, cap]);
   stRef.current = { items, cap, start, cards, notes };
@@ -213,7 +229,7 @@ export default function Home() {
     if (nview == null || !ntext.trim()) return;
     setNotes(p => p.some(n => n.id === nview)
       ? p.map(n => n.id === nview && n.text !== ntext ? { ...n, text: ntext, upd: Date.now() } : n)
-      : [{ id: nview, text: ntext, upd: Date.now() }, ...p]);
+      : [{ id: nview, text: ntext, upd: Date.now(), folder: nfold }, ...p]);
   }, [ntext]);
   if (!ready) return null;
 
@@ -223,19 +239,19 @@ export default function Home() {
   const applySt = st => { setItems(st.items); setCap(st.cap); setStart(st.start); setCards(st.cards); setNotes(st.notes); };
   const closeSheet = () => setSheet(null);
   const openNote = id => {
-    if (id === 'new') { setNview(Date.now()); setNtext(''); setFlow(true); }
+    if (id === 'new') { setNview(Date.now()); setNtext(''); setNfold(typeof fview === 'number' ? fview : ''); setFlow(true); }
     else { const n = notes.find(x => x.id === id); setNview(id); setNtext(n ? n.text : ''); setFlow(false); }
   };
   const closeNote = () => { setNotes(notes.filter(n => n.text.trim())); setNview(null); setNtext(''); setFlow(false); };
   const delNote = () => { setNotes(notes.filter(n => n.id !== nview)); setNview(null); setNtext(''); setFlow(false); };
-  const openNew = () => { setF({ ...EMPTY, due: selDate !== today ? selDate : '' }); setSheet('new'); };
-  const openEdit = i => { if (!i) return; setF({ kind: i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none' }); setSheet(i.id); };
+  const openNew = () => { setF({ ...EMPTY, due: selDate !== today ? selDate : '', folder: tab === 'folders' && typeof fview === 'number' ? fview : '' }); setSheet('new'); };
+  const openEdit = i => { if (!i) return; setF({ kind: i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', folder: i.folder || '' }); setSheet(i.id); };
   const saveTask = () => {
     if (!f.t.trim()) return;
     const h = parseFloat(f.h);
     const ev = f.kind === 'event';
     const rep = f.repeat || 'none';
-    const base = { kind: f.kind, t: f.t.trim(), area: f.area, h: h > 0 ? h : 1, due: f.due || (ev || rep !== 'none' ? selDate : ''), time: ev ? (f.time || '09:00') : '', pri: Number(f.pri) || 1, note: f.note.trim(), repeat: rep };
+    const base = { kind: f.kind, t: f.t.trim(), area: f.area, h: h > 0 ? h : 1, due: f.due || (ev || rep !== 'none' ? selDate : ''), time: ev ? (f.time || '09:00') : '', pri: Number(f.pri) || 1, note: f.note.trim(), repeat: rep, folder: f.folder === '' || f.folder == null ? '' : Number(f.folder) };
     if (sheet === 'new') setItems([...items, { id: Date.now(), ...base, done: false }]);
     else setItems(items.map(i => i.id === sheet ? { ...i, ...base } : i));
     closeSheet();
@@ -246,6 +262,25 @@ export default function Home() {
     return { ...i, done: !i.done, doneAt: !i.done ? today : null };
   }));
   const del = id => { setItems(items.filter(i => i.id !== id)); closeSheet(); };
+  const saveFolder = () => {
+    if (!fform || !fform.name.trim()) return;
+    const fo = { id: fform.id || Date.now(), name: fform.name.trim(), color: fform.color, cover: fform.cover || '' };
+    setFolders(fform.id ? folders.map(x => x.id === fo.id ? fo : x) : [...folders, fo]); setFform(null);
+  };
+  const delFolder = () => {
+    setItems(items.map(i => i.folder === fform.id ? { ...i, folder: '' } : i)); setNotes(notes.map(n => n.folder === fform.id ? { ...n, folder: '' } : n));
+    setFolders(folders.filter(x => x.id !== fform.id)); setFform(null); setFview(null);
+  };
+  const pickCover = file => {
+    if (!file) return;
+    const rd = new FileReader();
+    rd.onload = () => { const img = new Image(); img.onload = () => {
+      const sc = Math.min(1, 700 / Math.max(img.width, img.height)); const c = document.createElement('canvas');
+      c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      setFform(p => ({ ...p, cover: c.toDataURL('image/jpeg', 0.72) }));
+    }; img.src = rd.result; };
+    rd.readAsDataURL(file);
+  };
 
   const makeCtx = () => {
     const s0 = stRef.current;
@@ -427,17 +462,33 @@ export default function Home() {
         {section('Прострочено', overdue)}{section('Події', upEv)}{section('З терміном', soon)}{section('Без терміну', nodue)}{section('Повторювані', repList)}{section('Виконано', doneList)}
       </>}
 
-      {tab === 'notes' && <>
-        <div className="top"><h1>Нотатки</h1><div className="sub">Пишіть думки в режимі потоку: слова згасають, поки ви друкуєте</div></div>
-        <input placeholder="Пошук" value={nq} onChange={e => setNq(e.target.value)} style={{ marginBottom: 12 }} />
-        {notes.filter(n => n.text.toLowerCase().includes(nq.toLowerCase())).map(n => (
-          <div className="card" key={n.id} onClick={() => openNote(n.id)}>
-            <div className="t" style={{ fontWeight: 600 }}>{n.text.split('\n')[0].slice(0, 60)}</div>
-            <div className="note">{n.text.slice(0, 120)}</div>
-            <div className="meta"><span>{new Date(n.upd).toLocaleDateString('uk-UA')}</span><span>{n.text.split(/\s+/).filter(Boolean).length} слів</span></div>
-          </div>))}
-        {!notes.length && <div className="card"><div className="empty">Нотаток поки немає. Натисніть «+» і пишіть без редагування.</div></div>}
+      {tab === 'folders' && fview == null && <>
+        <div className="top"><h1>Папки</h1><div className="sub">Групуйте нотатки й задачі. Торкніться плитки, щоб відкрити, або «+», щоб створити папку.</div></div>
+        <div className="fgrid">
+          <div className="ftile plain" onClick={() => setFview('all')}><div className="fname">Усі нотатки</div><div className="fsub">{notes.length}</div></div>
+          {folders.map(fo => <div className="ftile" key={fo.id} onClick={() => setFview(fo.id)} style={fo.cover ? { backgroundImage: 'url(' + fo.cover + ')' } : { background: fo.color }}>
+            <div className="fshade" /><div className="fname">{fo.name}</div><div className="fsub">{notes.filter(n => n.folder === fo.id).length + items.filter(i => i.folder === fo.id).length}</div></div>)}
+        </div>
       </>}
+
+      {tab === 'folders' && fview != null && (() => {
+        const fo = folders.find(x => x.id === fview);
+        const nl = notes.filter(n => fview === 'all' || n.folder === fview).filter(n => n.text.toLowerCase().includes(nq.toLowerCase()));
+        const il = fo ? items.filter(i => i.folder === fo.id) : [];
+        return <>
+          <div className="top"><button className="chip" onClick={() => { setFview(null); setNq(''); }}>‹ Папки</button><h1>{fo ? fo.name : 'Усі нотатки'}</h1>
+            <div className="daynav"><button className="chip" onClick={() => openNote('new')}>Нова нотатка</button>{fo && <button className="chip" onClick={openNew}>Нова задача</button>}{fo && <button className="chip" onClick={() => setFform({ ...fo })}>Змінити</button>}</div></div>
+          <input placeholder="Пошук нотаток" value={nq} onChange={e => setNq(e.target.value)} style={{ marginBottom: 14 }} />
+          {il.length > 0 && <div className="card"><div className="sec">Задачі й події</div>{il.map(row)}</div>}
+          {nl.map(n => (
+            <div className="card" key={n.id} onClick={() => openNote(n.id)}>
+              <div className="t" style={{ fontWeight: 600 }}>{n.text.split('\n')[0].slice(0, 60)}</div>
+              <div className="note">{n.text.slice(0, 120)}</div>
+              <div className="meta"><span>{new Date(n.upd).toLocaleDateString('uk-UA')}</span><span>{n.text.split(/\s+/).filter(Boolean).length} слів</span></div>
+            </div>))}
+          {!nl.length && !il.length && <div className="card"><div className="empty">Тут поки порожньо.</div></div>}
+        </>;
+      })()}
 
       {tab === 'cards' && <>
         <div className="top"><h1>Навчання</h1>
@@ -488,6 +539,9 @@ export default function Home() {
 
       {tab === 'set' && <>
         <div className="top"><h1>Налаштування</h1></div>
+        <div className="card"><div className="sec">Тема</div><div className="seg">{[['dark', 'Темна'], ['light', 'Світла'], ['auto', 'Авто']].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>
+        <div className="card"><div className="sec">Колір акценту</div><div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (ui.accent === c ? ' on' : '')} style={{ background: c }} onClick={() => setUi({ ...ui, accent: c })} aria-label={c} />)}<input type="color" value={ui.accent} onChange={e => setUi({ ...ui, accent: e.target.value })} aria-label="Свій колір" /></div></div>
+        <div className="card"><div className="sec">Шрифт</div>{Object.entries(FONTN).map(([k, n]) => <button key={k} className={'fopt' + (ui.font === k ? ' on' : '')} style={{ fontFamily: FONTS[k] }} onClick={() => setUi({ ...ui, font: k })}>{n}</button>)}</div>
         <div className="card"><div className="sec">Пароль застосунку для ШІ</div>
           <input type="password" placeholder="Пароль" defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>
         <div className="card"><div className="sec">О котрій годині починаєте займатися</div>
@@ -499,7 +553,7 @@ export default function Home() {
       </>}
 
       {(tab === 'today' || tab === 'tasks' || tab === 'cal') && <button className="fab" onClick={openNew} aria-label="Додати">+</button>}
-      {tab === 'notes' && <button className="fab" onClick={() => openNote('new')} aria-label="Нова нотатка">+</button>}
+      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '' })} aria-label="Нова папка">+</button>}
 
       {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" onClick={e => e.stopPropagation()}>
         <div className="seg"><button className={!ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'task' })}>Задача</button><button className={ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'event' })}>Подія</button></div>
@@ -509,9 +563,22 @@ export default function Home() {
         <div className="row"><input type="date" value={f.due} onChange={e => setF({ ...f, due: e.target.value })} />
           {ev ? <input type="number" min="0.5" step="0.5" placeholder="Тривалість, год" value={f.h} onChange={e => setF({ ...f, h: e.target.value })} /> : <select value={f.pri} onChange={e => setF({ ...f, pri: e.target.value })}><option value={1}>Звичайна</option><option value={2}>Важлива</option></select>}</div>
         <div className="row"><select value={f.repeat} onChange={e => setF({ ...f, repeat: e.target.value })}>{Object.entries(REP).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
+        {folders.length > 0 && <div className="row"><select value={f.folder} onChange={e => setF({ ...f, folder: e.target.value })}><option value="">Без папки</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select></div>}
         <textarea rows={2} placeholder="Нотатка (необов’язково)" value={f.note} onChange={e => setF({ ...f, note: e.target.value })} />
         <div className="row"><button className="btn" onClick={saveTask}>{sheet === 'new' ? 'Додати' : 'Зберегти'}</button>
           {sheet !== 'new' && <button className="btn alt" onClick={() => del(sheet)}>Видалити</button>}</div>
+      </div></div>}
+
+      {fform && <div className="ov" onClick={() => setFform(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
+        <b>{fform.id ? 'Папка' : 'Нова папка'}</b>
+        <input style={{ marginTop: 12 }} autoFocus placeholder="Назва папки" value={fform.name} onChange={e => setFform({ ...fform, name: e.target.value })} />
+        <div className="sec" style={{ marginTop: 14 }}>Колір</div>
+        <div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (fform.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setFform({ ...fform, color: c })} aria-label={c} />)}</div>
+        <div className="sec" style={{ marginTop: 14 }}>Обкладинка</div>
+        <div className="cover" style={fform.cover ? { backgroundImage: 'url(' + fform.cover + ')' } : { background: fform.color }} />
+        <div className="row"><label className="chip fileb">Обрати фото<input type="file" accept="image/*" className="hidefile" onChange={e => { pickCover(e.target.files && e.target.files[0]); e.target.value = ''; }} /></label>
+          {fform.cover && <button className="chip" onClick={() => setFform({ ...fform, cover: '' })}>Прибрати фото</button>}</div>
+        <div className="row"><button className="btn" onClick={saveFolder}>Зберегти</button>{fform.id && <button className="btn alt" onClick={delFolder}>Видалити</button>}</div>
       </div></div>}
 
       {nview != null && <div className="nv">
@@ -524,6 +591,7 @@ export default function Home() {
             <div className="sub fh">Пишіть без зупинки. Текст з’явиться, коли натиснете «Готово»</div>
           </div>); })() : <>
           <textarea className="ned" value={ntext} onChange={e => setNtext(e.target.value)} placeholder="Почніть писати…" />
+          {folders.length > 0 && <select value={(notes.find(n => n.id === nview) || {}).folder || ''} onChange={e => setNotes(notes.map(n => n.id === nview ? { ...n, folder: e.target.value === '' ? '' : Number(e.target.value) } : n))} style={{ marginBottom: 10 }}><option value="">Без папки</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select>}
           <button className="chip" onClick={delNote}>Видалити нотатку</button></>}
       </div>}
 
