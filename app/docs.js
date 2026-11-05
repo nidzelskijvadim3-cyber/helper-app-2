@@ -1,8 +1,8 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 
-const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан' };
-const FILTERS = [['all', 'Усі'], ['fav', 'Обране'], ['notebook', 'Зошити'], ['board', 'Дошки'], ['img', 'Фото й скани']];
+const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан', pdf: 'PDF' };
+const FILTERS = [['all', 'Усі'], ['recent', 'Недавні'], ['fav', 'Обране'], ['notebook', 'Зошити'], ['board', 'Дошки'], ['pdf', 'PDF'], ['img', 'Фото й скани']];
 export const bridge = { info: null, getImage: null };
 export async function listDocs() { try { return await dbRun('readonly', s => s.getAll()); } catch (e) { return []; } }
 export async function putDoc(d) { await dbRun('readwrite', s => s.put(d)); window.dispatchEvent(new Event('docs-changed')); }
@@ -20,11 +20,36 @@ export async function shrink(file, max = 1024, q = 0.72) {
 const COLORS = ['#1c1c1e', '#0a84ff', '#ff375f', '#30d158', '#ff9f0a', '#bf5af2'];
 
 function idb() {
-  return new Promise((res, rej) => { const r = indexedDB.open('helper-docs', 1); r.onupgradeneeded = () => r.result.createObjectStore('docs', { keyPath: 'id' }); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  return new Promise((res, rej) => {
+    if (typeof indexedDB === 'undefined') return rej(new Error('IndexedDB is not available'));
+    const r = indexedDB.open('helper-docs', 1);
+    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains('docs')) r.result.createObjectStore('docs', { keyPath: 'id' }); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error || new Error('Could not open document storage'));
+    r.onblocked = () => rej(new Error('Document storage upgrade is blocked by another tab'));
+  });
 }
 async function dbRun(mode, fn) {
   const db = await idb();
-  return new Promise((res, rej) => { const t = db.transaction('docs', mode); const rq = fn(t.objectStore('docs')); t.oncomplete = () => res(rq ? rq.result : undefined); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+  return new Promise((res, rej) => {
+    let rq, settled = false;
+    const finish = (ok, value) => { if (settled) return; settled = true; db.close(); ok ? res(value) : rej(value); };
+    try {
+      const tx = db.transaction('docs', mode); rq = fn(tx.objectStore('docs'));
+      tx.oncomplete = () => finish(true, rq ? rq.result : undefined);
+      tx.onerror = () => finish(false, tx.error || new Error('Document storage transaction failed'));
+      tx.onabort = () => finish(false, tx.error || new Error('Document storage transaction was aborted'));
+    } catch (e) { finish(false, e); }
+  });
+}
+async function putManyDocs(items) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('docs', 'readwrite');
+    items.forEach(item => tx.objectStore('docs').put(item));
+    tx.oncomplete = () => { db.close(); res(); };
+    tx.onerror = () => { const e = tx.error || new Error('Backup import failed'); db.close(); rej(e); };
+    tx.onabort = () => { const e = tx.error || new Error('Backup import was aborted'); db.close(); rej(e); };
+  });
 }
 const readFile = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
 const loadImg = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
@@ -107,6 +132,7 @@ function Editor({ doc, onSave, onClose }) {
   const [tin, setTin] = useState(null);
   const [strip, setStrip] = useState(false);
   const [thumbs, setThumbs] = useState([]);
+  const [saveStatus, setSaveStatus] = useState('saved');
   const cvRef = useRef(null), boxRef = useRef(null), imgRef = useRef(null), cur = useRef(null), hist = useRef([]), redo = useRef([]), dRef = useRef(d), piRef = useRef(0);
   dRef.current = d; piRef.current = pi;
   const page = d.pages[pi];
@@ -134,7 +160,14 @@ function Editor({ doc, onSave, onClose }) {
     return () => { off = true; };
   }, [pi, page.img]);
   useEffect(() => { const cv = cvRef.current; if (cv) renderPage(cv.getContext('2d'), page, imgRef.current); }, [d, pi, tick]);
-  useEffect(() => { const t = setTimeout(() => { onSave({ ...d, upd: Date.now() }).catch(() => {}); }, 1500); return () => clearTimeout(t); }, [d]);
+  useEffect(() => {
+    setSaveStatus('saving');
+    const t = setTimeout(async () => {
+      try { await onSave({ ...d, upd: Date.now() }); setSaveStatus('saved'); }
+      catch (e) { setSaveStatus('error'); }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [d]);
   useEffect(() => {
     if (!strip) return; let off = false;
     (async () => {
@@ -195,16 +228,37 @@ function Editor({ doc, onSave, onClose }) {
       if (!b) return; const f = new File([b], (d.title || 'page') + '.png', { type: 'image/png' });
       try {
         if (navigator.canShare && navigator.canShare({ files: [f] })) await navigator.share({ files: [f], title: d.title });
-        else { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = f.name; a.click(); }
+        else { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = f.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1500); }
       } catch (e) {}
     }, 'image/png');
   };
-  const close = async () => { try { const t = await makeThumb(d); await onSave({ ...d, thumb: t, upd: Date.now() }); } catch (e) {} onClose(); };
+  const exportPdf = async () => {
+    setSaveStatus('exporting');
+    try {
+      const { jsPDF } = await import('jspdf');
+      const first = d.pages[0];
+      const pdf = new jsPDF({ orientation: first.w > first.h ? 'landscape' : 'portrait', unit: 'px', format: [first.w, first.h], compress: true });
+      for (let i = 0; i < d.pages.length; i++) {
+        const p = d.pages[i];
+        if (i > 0) pdf.addPage([p.w, p.h], p.w > p.h ? 'landscape' : 'portrait');
+        const image = p.img ? await loadImg(p.img).catch(() => null) : null;
+        const canvas = document.createElement('canvas'); canvas.width = p.w; canvas.height = p.h;
+        renderPage(canvas.getContext('2d'), p, image);
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.88), 'JPEG', 0, 0, p.w, p.h, undefined, 'FAST');
+      }
+      pdf.save((d.title || 'notebook').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80) + '.pdf');
+      setSaveStatus('saved');
+    } catch (e) { setSaveStatus('error'); }
+  };
+  const close = async () => {
+    try { const t = await makeThumb(d); await onSave({ ...d, thumb: t, upd: Date.now() }); setSaveStatus('saved'); onClose(); }
+    catch (e) { setSaveStatus('error'); }
+  };
   const TOOLS = [['pen', 'Ручка'], ['hl', 'Маркер'], ['eraser', 'Гумка'], ['line', 'Лінія'], ['rect', 'Рамка'], ['oval', 'Овал'], ['text', 'Текст'], ['hand', 'Рука']];
 
   return (
     <div className="nv">
-      <div className="edtop"><button className="chip" onClick={close}>Готово</button><input value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label="Назва" /></div>
+      <div className="edtop"><button className="chip" onClick={close}>Готово</button><input value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label="Назва" /><span className={'save-indicator ' + saveStatus}>{saveStatus === 'saving' ? 'Збереження…' : saveStatus === 'error' ? 'Помилка збереження' : saveStatus === 'exporting' ? 'Створення PDF…' : 'Збережено'}</span></div>
       <div className="edbox" ref={boxRef}>
         <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w * zoom, height: fit.h * zoom, touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
       </div>
@@ -216,7 +270,7 @@ function Editor({ doc, onSave, onClose }) {
         <div className="edrow">
           <button className="chip" onClick={() => swap(hist, redo)}>Назад</button><button className="chip" onClick={() => swap(redo, hist)}>Вперед</button>
           <button className="chip" onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))}>−</button><span className="sub">{Math.round(zoom * 100)}%</span><button className="chip" onClick={() => setZoom(Math.min(4, +(zoom + 0.5).toFixed(1)))}>+</button>
-          <button className="chip" onClick={share}>Поділитися</button></div>
+          <button className="chip" onClick={share}>Поділитися PNG</button><button className="chip" onClick={exportPdf}>Експорт PDF</button></div>
         <div className="edrow">
           <button className="chip" onClick={() => goPage(pi - 1)}>‹</button><span className="sub">{pi + 1} з {d.pages.length}</span><button className="chip" onClick={() => goPage(pi + 1)}>›</button>
           <button className={'chip' + (strip ? ' on' : '')} onClick={() => setStrip(!strip)}>Сторінки</button>
@@ -238,12 +292,13 @@ export default function Docs({ folderId, folders, onNewNote }) {
   const [docs, setDocs] = useState([]);
   const [flt, setFlt] = useState('all');
   const [sort, setSort] = useState('new');
+  const [viewMode, setViewMode] = useState('grid');
   const [q, setQ] = useState('');
   const [menu, setMenu] = useState(false);
   const [ed, setEd] = useState(null);
   const [act, setAct] = useState(null);
   const [msg, setMsg] = useState('');
-  const phRef = useRef(null), scRef = useRef(null), imRef = useRef(null);
+  const phRef = useRef(null), scRef = useRef(null), imRef = useRef(null), pdfRef = useRef(null), backupRef = useRef(null);
 
   useEffect(() => { dbRun('readonly', s => s.getAll()).then(setDocs).catch(() => setMsg('Сховище документів недоступне в цьому браузері.')); }, []);
   useEffect(() => { const f = () => { dbRun('readonly', s => s.getAll()).then(setDocs).catch(() => {}); }; window.addEventListener('docs-changed', f); return () => window.removeEventListener('docs-changed', f); }, []);
@@ -251,9 +306,22 @@ export default function Docs({ folderId, folders, onNewNote }) {
     await dbRun('readwrite', s => s.put(dd));
     setDocs(p => p.some(x => x.id === dd.id) ? p.map(x => x.id === dd.id ? dd : x) : [dd, ...p]);
   };
+  const openDoc = async x => {
+    const opened = { ...x, lastOpened: Date.now() };
+    try { await persist(opened); } catch (e) { setMsg('Не удалось обновить документ. Проверьте свободное место в браузере.'); }
+    setEd(opened);
+  };
+  const duplicateDoc = async x => {
+    const copy = JSON.parse(JSON.stringify(x));
+    copy.id = Date.now() + Math.floor(Math.random() * 100000);
+    copy.title = (x.title || 'Документ') + ' — копия';
+    copy.created = Date.now(); copy.upd = Date.now(); copy.lastOpened = 0; copy.fav = false;
+    try { await persist(copy); setAct(null); setMsg('Копия документа создана.'); }
+    catch (e) { setMsg('Не удалось создать копию. Возможно, закончилось место в браузере.'); }
+  };
   const fid = typeof folderId === 'number' ? folderId : '';
   const mk = (type, extra) => ({ id: Date.now(), type, title: TYPES[type] + ' ' + new Date().toLocaleDateString('uk-UA'), folder: fid, created: Date.now(), upd: Date.now(), thumb: '', pages: [], ...extra });
-  const start = async dd => { try { await persist(dd); setEd(dd); } catch (e) { setMsg('Не вдалося зберегти документ: можливо, закінчилося місце.'); } setMenu(false); };
+  const start = async dd => { try { await persist(dd); setEd(dd); setMenu(false); return true; } catch (e) { setMsg('Не вдалося зберегти документ: можливо, закінчилося місце.'); setMenu(false); return false; } };
   const newNotebook = () => start(mk('notebook', { pages: [{ w: 1200, h: 1600, tpl: 'lined', strokes: [] }] }));
   const newBoard = () => start(mk('board', { pages: [{ w: 1600, h: 1200, tpl: 'blank', strokes: [] }] }));
   const fromFile = async (file, type) => {
@@ -262,33 +330,82 @@ export default function Docs({ folderId, folders, onNewNote }) {
     try { const im = await prepImage(file, type === 'scan'); await start(mk(type, { pages: [{ w: im.w, h: im.h, tpl: 'blank', img: im.src, strokes: [] }] })); setMsg(''); }
     catch (e) { setMsg('Не вдалося обробити зображення.'); setMenu(false); }
   };
+  const fromPdf = async file => {
+    if (!file) return;
+    if (file.size > 35 * 1024 * 1024) { setMsg('PDF завеликий для імпорту в браузері (ліміт 35 МБ). Спробуйте стиснути файл.'); return; }
+    setMsg('Імпорт PDF: підготовка сторінок…');
+    try {
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+      const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+      const pdf = await task.promise; const count = Math.min(pdf.numPages, 30); const pages = [];
+      for (let i = 1; i <= count; i++) {
+        setMsg(`Імпорт PDF: сторінка ${i} з ${count}…`);
+        const page = await pdf.getPage(i); const base = page.getViewport({ scale: 1 });
+        const scale = Math.min(1.5, 1400 / Math.max(base.width, base.height));
+        const viewport = page.getViewport({ scale }); const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        pages.push({ w: canvas.width, h: canvas.height, tpl: 'blank', img: canvas.toDataURL('image/jpeg', 0.78), strokes: [], pdfPage: i });
+        canvas.width = 0; canvas.height = 0;
+      }
+      const saved = await start({ ...mk('pdf', { pages }), title: file.name.replace(/\.pdf$/i, '') || 'PDF' });
+      if (saved) setMsg(pdf.numPages > count ? `Імпортовано перші ${count} сторінок із ${pdf.numPages}.` : 'PDF імпортовано.');
+      await pdf.destroy();
+    } catch (e) { setMsg('Не вдалося імпортувати PDF. Перевірте файл і спробуйте ще раз.'); setMenu(false); }
+  };
+  const exportBackup = () => {
+    const payload = { format: 'helper-docs-backup', version: 1, exportedAt: new Date().toISOString(), docs };
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `helper-documents-backup-${new Date().toISOString().slice(0,10)}.json`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000); setMsg('Резервну копію підготовлено. Збережіть файл у Files або на комп’ютері.');
+  };
+  const importBackup = async file => {
+    if (!file) return;
+    if (file.size > 100 * 1024 * 1024) { setMsg('Файл резервної копії перевищує 100 МБ.'); return; }
+    setMsg('Перевірка резервної копії…');
+    try {
+      const data = JSON.parse(await file.text());
+      if (data.format !== 'helper-docs-backup' || !Array.isArray(data.docs)) throw new Error('Invalid backup format');
+      const existing = new Set(docs.map(x => String(x.id)));
+      const restored = data.docs.filter(x => x && x.id != null && Array.isArray(x.pages) && x.pages.length && x.pages.every(p => p && Number.isFinite(p.w) && Number.isFinite(p.h) && Array.isArray(p.strokes))).map(x => {
+        const item = { ...x, id: existing.has(String(x.id)) ? Date.now() + Math.floor(Math.random() * 100000000) : x.id };
+        existing.add(String(item.id)); return item;
+      });
+      if (!restored.length) throw new Error('No valid documents in backup');
+      await putManyDocs(restored); setDocs(p => [...restored, ...p]); setMsg(`Відновлено документів: ${restored.length}. Існуючі документи не перезаписувалися.`);
+    } catch (e) { setMsg('Не вдалося відновити копію: файл пошкоджений або має невідомий формат.'); }
+  };
 
   const inFolder = x => folderId === 'all' ? true : (folderId == null ? x.folder === '' || x.folder == null : x.folder === folderId);
   const list = docs.filter(inFolder)
-    .filter(x => flt === 'all' || (flt === 'fav' && x.fav) || x.type === flt || (flt === 'img' && (x.type === 'photo' || x.type === 'scan')))
+    .filter(x => flt === 'all' || (flt === 'recent' && x.lastOpened) || (flt === 'fav' && x.fav) || x.type === flt || (flt === 'img' && (x.type === 'photo' || x.type === 'scan')))
     .filter(x => x.title.toLowerCase().includes(q.toLowerCase()))
-    .sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : b.upd - a.upd);
+    .sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : sort === 'recent' ? (b.lastOpened || 0) - (a.lastOpened || 0) : b.upd - a.upd);
 
   return (
     <div style={{ marginTop: 26 }}>
       <div className="sec">Документи</div>
-      <button className="btn" onClick={() => setMenu(true)}>Створити або імпортувати</button>
+      <div className="row library-actions"><button className="btn" onClick={() => setMenu(true)}>Створити або імпортувати</button><button className="btn alt" onClick={exportBackup}>Резервна копія</button><button className="btn alt" onClick={() => backupRef.current && backupRef.current.click()}>Відновити</button></div>
       {msg && <div className="sub" style={{ margin: '10px 0' }}>{msg}</div>}
       <div className="dtools" style={{ marginTop: 14 }}>
         <div className="seg">{FILTERS.map(([k, n]) => <button key={k} className={flt === k ? 'on' : ''} onClick={() => setFlt(k)}>{n}</button>)}</div>
         <div className="row" style={{ margin: 0 }}><input placeholder="Пошук документів" value={q} onChange={e => setQ(e.target.value)} />
-          <select value={sort} onChange={e => setSort(e.target.value)} style={{ width: 'auto' }}><option value="new">Нові</option><option value="name">За назвою</option></select></div>
+          <select value={sort} onChange={e => setSort(e.target.value)} style={{ width: 'auto' }}><option value="new">Останні змінені</option><option value="recent">Останні відкриті</option><option value="name">За назвою</option></select>
+          <div className="seg dview"><button className={viewMode === 'grid' ? 'on' : ''} onClick={() => setViewMode('grid')} aria-label="Сітка">▦</button><button className={viewMode === 'list' ? 'on' : ''} onClick={() => setViewMode('list')} aria-label="Список">☰</button></div></div>
       </div>
-      {list.length ? <div className="dgrid">{list.map(x => (
+      {list.length ? <div className={viewMode === 'list' ? 'dlist' : 'dgrid'}>{list.map(x => (
         <div key={x.id}>
-          <div className="dthumb" onClick={() => setEd(x)} style={x.thumb ? { backgroundImage: 'url(' + x.thumb + ')' } : {}}>{!x.thumb && <span>{TYPES[x.type]}</span>}{x.fav && <span className="star">★</span>}</div>
-          <div className="dmeta"><div className="dt" onClick={() => setEd(x)}>{x.title}</div><button className="x" onClick={() => setAct(x)} aria-label="Дії">⋯</button></div>
+          <div className="dthumb" onClick={() => openDoc(x)} style={x.thumb ? { backgroundImage: 'url(' + x.thumb + ')' } : {}}>{!x.thumb && <span>{TYPES[x.type]}</span>}{x.fav && <span className="star">★</span>}</div>
+          <div className="dmeta"><div className="dt" onClick={() => openDoc(x)}>{x.title}</div><button className="x" onClick={() => setAct(x)} aria-label="Дії">⋯</button></div>
           <div className="sub">{new Date(x.upd).toLocaleDateString('uk-UA')}, стор.: {x.pages.length}</div>
         </div>))}</div> : <div className="card"><div className="empty">Документів поки немає. Створіть зошит, дошку або додайте скан.</div></div>}
 
       <input ref={phRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
       <input ref={scRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'scan'); e.target.value = ''; }} />
       <input ref={imRef} type="file" accept="image/*" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
+      <input ref={pdfRef} type="file" accept="application/pdf,.pdf" className="hidefile" onChange={e => { fromPdf(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+      <input ref={backupRef} type="file" accept="application/json,.json" className="hidefile" onChange={e => { importBackup(e.target.files && e.target.files[0]); e.target.value = ''; }} />
 
       {menu && <div className="ov" onClick={() => setMenu(false)}><div className="sheet menu" onClick={e => e.stopPropagation()}>
         <b>Створити</b><div style={{ height: 12 }} />
@@ -299,6 +416,7 @@ export default function Docs({ folderId, folders, onNewNote }) {
         <button onClick={() => phRef.current && phRef.current.click()}>Сфотографувати<small>Фото, яке можна підписувати</small></button>
         <button onClick={() => scRef.current && scRef.current.click()}>Сканувати документ<small>Фото з вирівнюванням яскравості, як скан</small></button>
         <button onClick={() => imRef.current && imRef.current.click()}>Імпортувати зображення<small>З галереї або файлів</small></button>
+        <button onClick={() => pdfRef.current && pdfRef.current.click()}>Імпортувати PDF<small>До 30 сторінок за один імпорт, з можливістю писати поверх</small></button>
       </div></div>}
 
       {act && <div className="ov" onClick={() => setAct(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
@@ -307,6 +425,7 @@ export default function Docs({ folderId, folders, onNewNote }) {
         <div className="row"><button className="btn alt" onClick={() => setAct({ ...act, fav: !act.fav })}>{act.fav ? '★ В обраному' : '☆ Додати в обране'}</button></div>
         <div className="row"><select value={act.folder === '' || act.folder == null ? '' : act.folder} onChange={e => setAct({ ...act, folder: e.target.value === '' ? '' : Number(e.target.value) })}><option value="">Без папки</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select></div>
         <div className="row"><button className="btn" onClick={async () => { try { await persist({ ...act, upd: Date.now() }); } catch (e) {} setAct(null); }}>Зберегти</button>
+          <button className="btn alt" onClick={() => duplicateDoc(act)}>Дублювати</button>
           <button className="btn alt" onClick={async () => { try { await dbRun('readwrite', s => s.delete(act.id)); setDocs(p => p.filter(x => x.id !== act.id)); } catch (e) {} setAct(null); }}>Видалити</button></div>
       </div></div>}
 
