@@ -349,7 +349,7 @@ export default function Docs({ folderId, folders, onNewNote }) {
         pages.push({ w: canvas.width, h: canvas.height, tpl: 'blank', img: canvas.toDataURL('image/jpeg', 0.78), strokes: [], pdfPage: i });
         canvas.width = 0; canvas.height = 0;
       }
-      const saved = await start({ ...mk('pdf', { pages }), title: file.name.replace(/\\.pdf$/i, '') || 'PDF' });
+      const saved = await start({ ...mk('pdf', { pages }), title: file.name.replace(/\.pdf$/i, '') || 'PDF' });
       if (saved) setMsg(pdf.numPages > count ? `Імпортовано перші ${count} сторінок із ${pdf.numPages}.` : 'PDF імпортовано.');
       await pdf.destroy();
     } catch (e) { setMsg('Не вдалося імпортувати PDF. Перевірте файл і спробуйте ще раз.'); setMenu(false); }
@@ -368,7 +368,7 @@ export default function Docs({ folderId, folders, onNewNote }) {
       const data = JSON.parse(await file.text());
       if (data.format !== 'helper-docs-backup' || !Array.isArray(data.docs)) throw new Error('Invalid backup format');
       const existing = new Set(docs.map(x => String(x.id)));
-      const restored = data.docs.filter(x => x && Array.isArray(x.pages) && x.pages.length && x.pages.every(p => p && Number.isFinite(p.w) && Number.isFinite(p.h) && Array.isArray(p.strokes))).map(x => {
+      const restored = data.docs.filter(x => x && x.id != null && Array.isArray(x.pages) && x.pages.length && x.pages.every(p => p && Number.isFinite(p.w) && Number.isFinite(p.h) && Array.isArray(p.strokes))).map(x => {
         const item = { ...x, id: existing.has(String(x.id)) ? Date.now() + Math.floor(Math.random() * 100000000) : x.id };
         existing.add(String(item.id)); return item;
       });
