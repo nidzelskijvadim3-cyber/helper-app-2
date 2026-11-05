@@ -10,7 +10,7 @@ async function gemini(system, messages) {
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
-      contents: messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }] })),
+      contents: messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }].concat((m.images || []).map(u => ({ inlineData: { mimeType: (String(u).match(/^data:([^;]+)/) || [])[1] || 'image/jpeg', data: String(u).split(',')[1] } }))) })),
       generationConfig: { responseMimeType: 'application/json' }
     })
   });
@@ -27,10 +27,10 @@ async function deepseek(system, messages) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
     body: JSON.stringify({
-      model: process.env.DEEPSEEK_MODEL || 'deepseek-flash',
+      model: messages.some(m => m.images && m.images.length) ? (process.env.DEEPSEEK_VISION_MODEL || process.env.DEEPSEEK_MODEL || 'deepseek-flash') : (process.env.DEEPSEEK_MODEL || 'deepseek-flash'),
       stream: false,
       response_format: { type: 'json_object' },
-      messages: [{ role: 'system', content: system }].concat(messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text })))
+      messages: [{ role: 'system', content: system }].concat(messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.images && m.images.length ? [{ type: 'text', text: m.text }].concat(m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))) : m.text })))
     })
   });
   const d = await r.json().catch(() => ({}));
@@ -40,6 +40,7 @@ async function deepseek(system, messages) {
 }
 
 const PROVIDERS = { gemini, deepseek };
+const ACTIONS2 = ' Також: {"type":"create_folder","name":"..","color":"#hex"}; {"type":"rename_folder","id":число,"name":".."}; {"type":"move_note","id":число,"folder":"id або назва папки або порожній рядок"}; {"type":"create_doc","kind":"notebook або board","title":"..","folder":"id або назва","template":"blank|lined|grid|dots"}; {"type":"rename_doc","id":число,"title":".."}; {"type":"move_doc","id":число,"folder":"id або назва або порожній рядок"}. У add_task, add_event, update_task і add_note можна вказати "folder" (id або назва папки). Папки, нотатки й документи беруться зі стану (ctx.folders, ctx.notes, ctx.docs). Якщо є ctx.screen, це опис екрана, який користувач бачить зараз (у ctx.screen.openNote текст відкритої нотатки). Якщо до повідомлення додано зображення, уважно розгляни його, опиши або використай за запитом (наприклад, розпізнай рукописний текст, склади питання, занеси події з розкладу). Видаляти документи й папки не можна.';
 
 async function withRetry(fn) {
   let last = { ok: false, status: 0, err: 'нет ответа' };
@@ -58,7 +59,7 @@ function appPrompt(ctx, parse) {
   return [
     'Ти особистий помічник для повсякденного життя людини: навчання, робота, особисті справи, здоров’я, дім. Відповідай українською, коротко й по суті.',
     'Ти керуєш застосунком через дії. Відповідай ТІЛЬКИ валідним JSON без markdown у форматі {"reply":"текст користувачу","actions":[...]}.',
-    ACTIONS,
+    ACTIONS + ACTIONS2,
     'ПОДІЯ має конкретну дату й час і не переноситься (візит до лікаря, зустріч, пара, зміна): використовуй add_event. ЗАДАЧА це робота, яку можна зробити в будь-який час до терміну: використовуй add_task. Візит до лікаря ніколи не є задачею.',
     'Дати визначай за полем next21days (дата і день тижня). Не вгадуй. Якщо для події немає дати або часу, або день тижня не збігається з датою, НЕ додавай нічого: у reply постав одне коротке уточнювальне питання, actions порожній.',
     parse ? 'РЕЖИМ ШВИДКОГО ДОДАВАННЯ: перетвори фразу користувача на 1-3 дії add_task або add_event, інших дій не роби. У reply одне коротке речення (або уточнення, якщо чогось бракує).' : 'Якщо користувач лише питає або просить пояснити, actions порожній. Дії виконуй лише тоді, коли користувач про це просить. Не вигадуй id: використовуй лише id зі стану.',

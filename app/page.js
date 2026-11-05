@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import Docs from './docs';
+import Docs, { bridge, listDocs, putDoc, delDoc, newDoc, shrink } from './docs';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const DNF = ['неділя', 'понеділок', 'вівторок', 'середа', 'четвер', 'п’ятниця', 'субота'];
@@ -88,16 +88,21 @@ function layoutDay(blocks, evs, startMin) {
 }
 
 function applyActions(acts, st) {
-  let items = [...st.items], cap = [...st.cap], start = st.start, cards = [...st.cards], notes = [...(st.notes || [])], n = 0, k = 0;
+  let items = [...st.items], cap = [...st.cap], start = st.start, cards = [...st.cards], notes = [...(st.notes || [])], folders = [...(st.folders || [])], docOps = [], n = 0, k = 0;
   const nid = () => Date.now() + (k++);
   const today = ymd(new Date());
+  const resolveF = v => {
+    if (v === '' || v == null) return '';
+    if (Number.isFinite(Number(v)) && folders.some(f => f.id === Number(v))) return Number(v);
+    const f = folders.find(x => x.name.toLowerCase() === String(v).toLowerCase()); return f ? f.id : '';
+  };
   for (const a of acts) {
     if (!a || typeof a !== 'object') continue;
     const aid = Number(a.id);
     if (a.type === 'add_task' && a.t) {
-      items.push({ id: nid(), kind: 'task', t: String(a.t), area: normArea(a.area), h: Number(a.h) > 0 ? Number(a.h) : 1, due: isDate(a.due) ? a.due : '', time: '', pri: Number(a.pri) === 2 ? 2 : 1, note: '', repeat: normRep(a.repeat), done: false }); n++;
+      items.push({ id: nid(), kind: 'task', t: String(a.t), area: normArea(a.area), h: Number(a.h) > 0 ? Number(a.h) : 1, due: isDate(a.due) ? a.due : '', time: '', pri: Number(a.pri) === 2 ? 2 : 1, note: '', repeat: normRep(a.repeat), folder: resolveF(a.folder), done: false }); n++;
     } else if (a.type === 'add_event' && a.t && isDate(a.date)) {
-      items.push({ id: nid(), kind: 'event', t: String(a.t), area: normArea(a.area), h: Number(a.h) > 0 ? Number(a.h) : 1, due: a.date, time: isTime(a.time) ? a.time : '09:00', pri: 1, note: '', repeat: normRep(a.repeat), done: false }); n++;
+      items.push({ id: nid(), kind: 'event', t: String(a.t), area: normArea(a.area), h: Number(a.h) > 0 ? Number(a.h) : 1, due: a.date, time: isTime(a.time) ? a.time : '09:00', pri: 1, note: '', repeat: normRep(a.repeat), folder: resolveF(a.folder), done: false }); n++;
     } else if (a.type === 'update_task') {
       items = items.map(i => {
         if (i.id !== aid) return i; n++;
@@ -110,6 +115,7 @@ function applyActions(acts, st) {
         if (isTime(a.time)) p.time = a.time;
         if (a.pri) p.pri = Number(a.pri) === 2 ? 2 : 1;
         if (a.repeat) p.repeat = normRep(a.repeat);
+        if (a.folder !== undefined) p.folder = resolveF(a.folder);
         return { ...i, ...p };
       });
     } else if (a.type === 'complete_task') {
@@ -126,12 +132,25 @@ function applyActions(acts, st) {
     } else if (a.type === 'set_start') {
       const h = Number(a.hour); if (h >= 0 && h <= 23) { start = h; n++; }
     } else if (a.type === 'add_note' && a.text) {
-      notes.unshift({ id: nid(), text: String(a.text), upd: Date.now() }); n++;
+      notes.unshift({ id: nid(), text: String(a.text), upd: Date.now(), folder: resolveF(a.folder) }); n++;
+    } else if (a.type === 'create_folder' && a.name) {
+      folders.push({ id: nid(), name: String(a.name).slice(0, 40), color: /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : ACCENTS[folders.length % ACCENTS.length], cover: '' }); n++;
+    } else if (a.type === 'rename_folder' && a.name) {
+      folders = folders.map(f => { if (f.id !== aid) return f; n++; return { ...f, name: String(a.name).slice(0, 40) }; });
+    } else if (a.type === 'move_note') {
+      notes = notes.map(x => { if (x.id !== aid) return x; n++; return { ...x, folder: resolveF(a.folder) }; });
+    } else if (a.type === 'create_doc') {
+      const kind = a.kind === 'board' ? 'board' : 'notebook';
+      docOps.push({ op: 'create', kind, title: a.title ? String(a.title).slice(0, 60) : '', folder: resolveF(a.folder), tpl: ['blank', 'lined', 'grid', 'dots'].includes(a.template) ? a.template : (kind === 'board' ? 'blank' : 'lined') }); n++;
+    } else if (a.type === 'rename_doc' && a.title) {
+      docOps.push({ op: 'rename', id: aid, title: String(a.title).slice(0, 60) }); n++;
+    } else if (a.type === 'move_doc') {
+      docOps.push({ op: 'move', id: aid, folder: resolveF(a.folder) }); n++;
     } else if (a.type === 'add_cards' && Array.isArray(a.cards)) {
       for (const c of a.cards) if (c && c.q && c.a) { cards.push({ id: nid(), deck: String(a.deck || ''), q: String(c.q), a: String(c.a), known: false, seq: nid() }); n++; }
     }
   }
-  return { st: { items, cap, start, cards, notes }, n };
+  return { st: { items, cap, start, cards, notes, folders }, n, docOps };
 }
 
 const clean = raw => String(raw).trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
@@ -205,6 +224,10 @@ export default function Home() {
   const [fview, setFview] = useState(null);
   const [fform, setFform] = useState(null);
   const [nfold, setNfold] = useState('');
+  const [aiOpen, setAiOpen] = useState(false);
+  const [see, setSee] = useState(false);
+  const [att, setAtt] = useState([]);
+  const [docUndo, setDocUndo] = useState([]);
   const taRef = useRef(null);
   const endRef = useRef(null);
   const stRef = useRef(null);
@@ -225,7 +248,7 @@ export default function Home() {
   }, [ui, ready]);
   useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [msgs, busy, tab]);
   const plan = useMemo(() => makePlan(items, cap), [items, cap]);
-  stRef.current = { items, cap, start, cards, notes };
+  stRef.current = { items, cap, start, cards, notes, folders };
   useEffect(() => {
     if (nview == null || !ntext.trim()) return;
     setNotes(p => p.some(n => n.id === nview)
@@ -237,7 +260,7 @@ export default function Home() {
   const now = new Date();
   const today = ymd(now);
   const selDate = sel || today;
-  const applySt = st => { setItems(st.items); setCap(st.cap); setStart(st.start); setCards(st.cards); setNotes(st.notes); };
+  const applySt = st => { setItems(st.items); setCap(st.cap); setStart(st.start); setCards(st.cards); setNotes(st.notes); if (st.folders) setFolders(st.folders); };
   const closeSheet = () => setSheet(null);
   const openNote = id => {
     if (id === 'new') { setNview(Date.now()); setNtext(''); setNfold(typeof fview === 'number' ? fview : ''); setFlow(true); }
@@ -293,23 +316,85 @@ export default function Home() {
     };
   };
 
+  const screenInfo = () => {
+    const o = { tab };
+    if (tab === 'today') o.date = selDate;
+    if (tab === 'folders' && fview != null) { const fo = folders.find(x => x.id === fview); o.folder = fo ? fo.name : 'Усі нотатки'; }
+    if (nview != null) o.openNote = ntext.slice(0, 3000);
+    if (bridge.info) o.openDocument = bridge.info();
+    return o;
+  };
+  async function runDocOps(ops) {
+    const undoOps = [], all = await listDocs();
+    for (const o of ops) {
+      if (o.op === 'create') { const dd = newDoc(o.kind, o.title, o.folder, o.tpl); await putDoc(dd); undoOps.push({ del: dd.id }); }
+      else {
+        const dd = all.find(x => x.id === o.id); if (!dd) continue;
+        undoOps.push({ put: { ...dd } });
+        await putDoc(o.op === 'rename' ? { ...dd, title: o.title, upd: Date.now() } : { ...dd, folder: o.folder, upd: Date.now() });
+      }
+    }
+    return undoOps;
+  }
   async function ask(text) {
-    if (!text.trim() || busy) return;
-    const next = [...msgs, { role: 'user', text }];
-    setMsgs(next); setInp(''); setBusy(true);
+    if (busy || (!text.trim() && !att.length)) return;
+    const imgs = [...att];
+    if (see && bridge.getImage) { try { const im = bridge.getImage(); if (im) imgs.push(im); } catch (e) {} }
+    const next = [...msgs, { role: 'user', text: text.trim() || 'Подивись на зображення.', pics: imgs.length }];
+    setMsgs(next); setInp(''); setAtt([]); setBusy(true);
     try {
-      const raw = await callAI({ messages: next.slice(-12).map(m => ({ role: m.role, text: m.text })), ctx: makeCtx() });
+      const ctx = makeCtx();
+      ctx.folders = folders.map(({ id, name }) => ({ id, name }));
+      ctx.notes = notes.slice(0, 40).map(n => ({ id: n.id, t: n.text.split('\n')[0].slice(0, 50), folder: n.folder || '' }));
+      ctx.docs = (await listDocs()).slice(0, 60).map(({ id, title, type, folder }) => ({ id, title, type, folder: folder || '' }));
+      ctx.screen = see ? screenInfo() : { tab };
+      const raw = await callAI({ messages: next.slice(-12).map((m, i, arr) => ({ role: m.role, text: m.text, images: i === arr.length - 1 && imgs.length ? imgs : undefined })), ctx });
       const { reply, actions } = parseAI(raw);
       let n = 0;
-      if (actions.length) { const cur = stRef.current; const res = applyActions(actions, cur); n = res.n; if (n) { setUndo(cur); applySt(res.st); } }
+      if (actions.length) {
+        const cur = stRef.current; const res = applyActions(actions, cur); n = res.n;
+        if (n) { setUndo(cur); applySt(res.st); setDocUndo(res.docOps.length ? await runDocOps(res.docOps) : []); }
+      }
       setMsgs([...next, { role: 'model', text: reply || (n ? 'Готово.' : 'Порожня відповідь'), n }]);
     } catch (e) {
-      if (e.code === 401) setTab('set');
+      if (e.code === 401) { setAiOpen(false); setTab('set'); }
       setMsgs([...next, { role: 'model', text: e.message }]);
     }
     setBusy(false);
   }
-  const doUndo = () => { if (!undo) return; applySt({ ...undo, notes: undo.notes || [] }); setUndo(null); };
+  const doUndo = async () => {
+    if (!undo) return;
+    applySt({ ...undo, notes: undo.notes || [] });
+    for (const o of docUndo) { try { if (o.del) await delDoc(o.del); else await putDoc(o.put); } catch (e) {} }
+    setDocUndo([]); setUndo(null);
+  };
+  const addPics = async files => {
+    const out = [];
+    for (const f of Array.from(files || []).slice(0, 3 - att.length)) { try { out.push(await shrink(f, 1024, 0.72)); } catch (e) {} }
+    if (out.length) setAtt(p => [...p, ...out].slice(0, 3));
+  };
+  const aiPanel = sheetMode => (<>
+    {sheetMode ? <div className="aihead"><b>Помічник</b><button className="chip" onClick={() => setAiOpen(false)}>Закрити</button></div>
+      : <div className="top"><h1>Помічник</h1><div className="sub">Керує задачами, подіями, папками, документами й карточками. Розуміє фото.</div></div>}
+    <div>{[['Склади план на тиждень з моїх задач', 1], ['Що робити просто зараз?', 1], ['Створи зошит для предмета: ', 0], ['Зроби картки за темою: ', 0], ['Поясни тему простими словами: ', 0]].map(([q, go]) =>
+      <button className="chip" key={q} onClick={() => go ? ask(q) : setInp(q)}>{q.replace(': ', '…')}</button>)}</div>
+    <div className={sheetMode ? 'aimsgs' : ''}>
+      {msgs.map((x, i) => <div key={i} className={'bubble' + (x.role === 'user' ? ' me' : '')}>{x.text}{x.pics > 0 && <div className="applied">Додано зображень: {x.pics}</div>}{x.n > 0 && <div className="applied">Внесено змін: {x.n}</div>}</div>)}
+      {busy && <div className="sub">Думаю…</div>}
+      {undo && <div className="card undo"><span className="sub">ШІ змінив застосунок</span><button className="chip" style={{ margin: 0 }} onClick={doUndo}>Скасувати зміни</button></div>}
+      <div ref={endRef} />
+    </div>
+    <div className={sheetMode ? 'aicomp' : 'card'} style={sheetMode ? {} : { marginTop: 12 }}>
+      {att.length > 0 && <div className="atts">{att.map((u, i) => <div className="att" key={i} style={{ backgroundImage: 'url(' + u + ')' }}><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label="Прибрати">×</button></div>)}</div>}
+      <textarea rows={sheetMode ? 2 : 3} placeholder="Напишіть, що зробити або що пояснити" value={inp} onChange={e => setInp(e.target.value)} />
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <label className="chip fileb">Фото<input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
+        <button className={'chip' + (see ? ' on' : '')} style={{ margin: 0 }} onClick={() => setSee(!see)}>Показати ШІ цей екран</button>
+        <button className="chip" style={{ margin: 0 }} onClick={() => setMsgs([])}>Очистити</button>
+      </div>
+      <button className="btn" onClick={() => ask(inp)} disabled={busy}>{busy ? 'Думаю…' : 'Надіслати'}</button>
+    </div>
+  </>);
 
   async function quickAdd() {
     const text = qa.trim();
@@ -527,19 +612,7 @@ export default function Home() {
         </>}
       </>}
 
-      {tab === 'ai' && <>
-        <div className="top"><h1>Помічник</h1><div className="sub">Може сам додавати задачі й події, складати графік і створювати картки</div></div>
-        <div>{[['Склади план на тиждень з моїх задач', 1], ['Що робити просто зараз?', 1], ['Додай: ', 0], ['Зроби картки за темою: ', 0], ['Поясни тему простими словами: ', 0]].map(([q, go]) =>
-          <button className="chip" key={q} onClick={() => go ? ask(q) : setInp(q)}>{q.replace(': ', '…')}</button>)}</div>
-        {msgs.map((x, i) => <div key={i} className={'bubble' + (x.role === 'user' ? ' me' : '')}>{x.text}{x.n > 0 && <div className="applied">Внесено змін: {x.n}</div>}</div>)}
-        {busy && <div className="sub">Думаю…</div>}
-        {undo && <div className="card undo"><span className="sub">ШІ змінив застосунок</span><button className="chip" style={{ margin: 0 }} onClick={doUndo}>Скасувати зміни</button></div>}
-        <div className="card" style={{ marginTop: 12 }}>
-          <textarea rows={3} placeholder="Напишіть, що зробити або що пояснити" value={inp} onChange={e => setInp(e.target.value)} />
-          <div className="row"><button className="btn" onClick={() => ask(inp)}>Надіслати</button><button className="chip" style={{ margin: 0 }} onClick={() => setMsgs([])}>Очистити</button></div>
-        </div>
-        <div ref={endRef} />
-      </>}
+      {tab === 'ai' && aiPanel(false)}
 
       {tab === 'set' && <>
         <div className="top"><h1>Налаштування</h1></div>
@@ -622,6 +695,9 @@ export default function Home() {
             {tmsg && <div className="sub">{tmsg}</div>}
           </div>)}
       </div>}
+
+      {!aiOpen && tab !== 'ai' && !(nview != null && flow) && <button className="aifab" onClick={() => setAiOpen(true)} aria-label="Помічник ШІ"><Icon n="ai" s={26} /></button>}
+      {aiOpen && <div className="ov ai" onClick={() => setAiOpen(false)}><div className="sheet aisheet" onClick={e => e.stopPropagation()}>{aiPanel(true)}</div></div>}
 
       <nav className="tabbar">{TABS.map(([k, n]) => <button key={k} className={k === tab ? 'on' : ''} onClick={() => setTab(k)} aria-label={n}><Icon n={k} s={26} /></button>)}</nav>
     </div>

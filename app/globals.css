@@ -110,3 +110,21 @@ input[type=checkbox]:checked{background:var(--ac);border-color:var(--ac)}
 .edrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;width:100%}
 .cdot{width:28px;height:28px;border-radius:50%;border:0;padding:0}.cdot.on{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--tx)}
 .wdot{width:32px;height:32px;border-radius:50%;border:0;background:var(--fill);display:flex;align-items:center;justify-content:center;padding:0}.wdot i{display:block;border-radius:50%;background:var(--tx)}.wdot.on{box-shadow:inset 0 0 0 2px var(--ac)}
+.edbox{display:flex;align-items:stretch;justify-content:flex-start;overflow:auto}
+.edbox canvas{margin:auto;flex:none}
+.strip{display:flex;gap:8px;overflow-x:auto;padding:10px 0 2px}
+.strip button{flex:none;width:54px;min-height:72px;border:0;border-radius:6px;background:#fff center/cover no-repeat;position:relative;box-shadow:0 1px 4px rgba(0,0,0,.35);padding:0}
+.strip button.on{outline:2px solid var(--ac)}
+.strip span{position:absolute;bottom:2px;right:4px;font-size:11px;color:#444;background:rgba(255,255,255,.8);border-radius:4px;padding:0 3px}
+.star{position:absolute;top:6px;right:8px;color:#ffcc00;font-size:18px;text-shadow:0 1px 3px rgba(0,0,0,.5)}
+.dthumb{position:relative}
+.chip.on{background:var(--ac);color:var(--on)}
+.aifab{position:fixed;left:20px;bottom:calc(90px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:50%;border:0;background:var(--glass);color:var(--ac);-webkit-backdrop-filter:blur(24px) saturate(180%);backdrop-filter:blur(24px) saturate(180%);box-shadow:0 6px 18px rgba(0,0,0,.35),inset 0 0 0 .5px var(--glassb);display:flex;align-items:center;justify-content:center;z-index:40}
+.ov.ai{z-index:50}
+.aisheet{display:flex;flex-direction:column;height:86vh;max-height:86vh;padding-bottom:calc(14px + env(safe-area-inset-bottom))}
+.aihead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.aihead .chip{margin:0}
+.aimsgs{flex:1;overflow-y:auto;min-height:0}
+.aicomp{padding-top:8px}
+.atts{display:flex;gap:8px;margin-bottom:8px}
+.att{position:relative;width:64px;height:64px;border-radius:10px;background:center/cover no-repeat}
+.att button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:0;background:var(--tx);color:var(--bg);font-size:14px;line-height:1;padding:0}
