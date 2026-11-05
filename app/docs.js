@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 
 const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан' };
-const FILTERS = [['all', 'Усі'], ['fav', 'Обране'], ['notebook', 'Зошити'], ['board', 'Дошки'], ['img', 'Фото й скани']];
+const FILTERS = [['all', 'Усі'], ['recent', 'Недавні'], ['fav', 'Обране'], ['notebook', 'Зошити'], ['board', 'Дошки'], ['img', 'Фото й скани']];
 export const bridge = { info: null, getImage: null };
 export async function listDocs() { try { return await dbRun('readonly', s => s.getAll()); } catch (e) { return []; } }
 export async function putDoc(d) { await dbRun('readwrite', s => s.put(d)); window.dispatchEvent(new Event('docs-changed')); }
@@ -238,6 +238,7 @@ export default function Docs({ folderId, folders, onNewNote }) {
   const [docs, setDocs] = useState([]);
   const [flt, setFlt] = useState('all');
   const [sort, setSort] = useState('new');
+  const [viewMode, setViewMode] = useState('grid');
   const [q, setQ] = useState('');
   const [menu, setMenu] = useState(false);
   const [ed, setEd] = useState(null);
@@ -250,6 +251,19 @@ export default function Docs({ folderId, folders, onNewNote }) {
   const persist = async dd => {
     await dbRun('readwrite', s => s.put(dd));
     setDocs(p => p.some(x => x.id === dd.id) ? p.map(x => x.id === dd.id ? dd : x) : [dd, ...p]);
+  };
+  const openDoc = async x => {
+    const opened = { ...x, lastOpened: Date.now() };
+    try { await persist(opened); } catch (e) { setMsg('Не удалось обновить документ. Проверьте свободное место в браузере.'); }
+    setEd(opened);
+  };
+  const duplicateDoc = async x => {
+    const copy = JSON.parse(JSON.stringify(x));
+    copy.id = Date.now() + Math.floor(Math.random() * 100000);
+    copy.title = (x.title || 'Документ') + ' — копия';
+    copy.created = Date.now(); copy.upd = Date.now(); copy.lastOpened = 0; copy.fav = false;
+    try { await persist(copy); setAct(null); setMsg('Копия документа создана.'); }
+    catch (e) { setMsg('Не удалось создать копию. Возможно, закончилось место в браузере.'); }
   };
   const fid = typeof folderId === 'number' ? folderId : '';
   const mk = (type, extra) => ({ id: Date.now(), type, title: TYPES[type] + ' ' + new Date().toLocaleDateString('uk-UA'), folder: fid, created: Date.now(), upd: Date.now(), thumb: '', pages: [], ...extra });
@@ -265,9 +279,9 @@ export default function Docs({ folderId, folders, onNewNote }) {
 
   const inFolder = x => folderId === 'all' ? true : (folderId == null ? x.folder === '' || x.folder == null : x.folder === folderId);
   const list = docs.filter(inFolder)
-    .filter(x => flt === 'all' || (flt === 'fav' && x.fav) || x.type === flt || (flt === 'img' && (x.type === 'photo' || x.type === 'scan')))
+    .filter(x => flt === 'all' || (flt === 'recent' && x.lastOpened) || (flt === 'fav' && x.fav) || x.type === flt || (flt === 'img' && (x.type === 'photo' || x.type === 'scan')))
     .filter(x => x.title.toLowerCase().includes(q.toLowerCase()))
-    .sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : b.upd - a.upd);
+    .sort((a, b) => sort === 'name' ? a.title.localeCompare(b.title) : sort === 'recent' ? (b.lastOpened || 0) - (a.lastOpened || 0) : b.upd - a.upd);
 
   return (
     <div style={{ marginTop: 26 }}>
@@ -277,12 +291,13 @@ export default function Docs({ folderId, folders, onNewNote }) {
       <div className="dtools" style={{ marginTop: 14 }}>
         <div className="seg">{FILTERS.map(([k, n]) => <button key={k} className={flt === k ? 'on' : ''} onClick={() => setFlt(k)}>{n}</button>)}</div>
         <div className="row" style={{ margin: 0 }}><input placeholder="Пошук документів" value={q} onChange={e => setQ(e.target.value)} />
-          <select value={sort} onChange={e => setSort(e.target.value)} style={{ width: 'auto' }}><option value="new">Нові</option><option value="name">За назвою</option></select></div>
+          <select value={sort} onChange={e => setSort(e.target.value)} style={{ width: 'auto' }}><option value="new">Останні змінені</option><option value="recent">Останні відкриті</option><option value="name">За назвою</option></select>
+          <div className="seg dview"><button className={viewMode === 'grid' ? 'on' : ''} onClick={() => setViewMode('grid')} aria-label="Сітка">▦</button><button className={viewMode === 'list' ? 'on' : ''} onClick={() => setViewMode('list')} aria-label="Список">☰</button></div></div>
       </div>
-      {list.length ? <div className="dgrid">{list.map(x => (
+      {list.length ? <div className={viewMode === 'list' ? 'dlist' : 'dgrid'}>{list.map(x => (
         <div key={x.id}>
-          <div className="dthumb" onClick={() => setEd(x)} style={x.thumb ? { backgroundImage: 'url(' + x.thumb + ')' } : {}}>{!x.thumb && <span>{TYPES[x.type]}</span>}{x.fav && <span className="star">★</span>}</div>
-          <div className="dmeta"><div className="dt" onClick={() => setEd(x)}>{x.title}</div><button className="x" onClick={() => setAct(x)} aria-label="Дії">⋯</button></div>
+          <div className="dthumb" onClick={() => openDoc(x)} style={x.thumb ? { backgroundImage: 'url(' + x.thumb + ')' } : {}}>{!x.thumb && <span>{TYPES[x.type]}</span>}{x.fav && <span className="star">★</span>}</div>
+          <div className="dmeta"><div className="dt" onClick={() => openDoc(x)}>{x.title}</div><button className="x" onClick={() => setAct(x)} aria-label="Дії">⋯</button></div>
           <div className="sub">{new Date(x.upd).toLocaleDateString('uk-UA')}, стор.: {x.pages.length}</div>
         </div>))}</div> : <div className="card"><div className="empty">Документів поки немає. Створіть зошит, дошку або додайте скан.</div></div>}
 
@@ -307,6 +322,7 @@ export default function Docs({ folderId, folders, onNewNote }) {
         <div className="row"><button className="btn alt" onClick={() => setAct({ ...act, fav: !act.fav })}>{act.fav ? '★ В обраному' : '☆ Додати в обране'}</button></div>
         <div className="row"><select value={act.folder === '' || act.folder == null ? '' : act.folder} onChange={e => setAct({ ...act, folder: e.target.value === '' ? '' : Number(e.target.value) })}><option value="">Без папки</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select></div>
         <div className="row"><button className="btn" onClick={async () => { try { await persist({ ...act, upd: Date.now() }); } catch (e) {} setAct(null); }}>Зберегти</button>
+          <button className="btn alt" onClick={() => duplicateDoc(act)}>Дублювати</button>
           <button className="btn alt" onClick={async () => { try { await dbRun('readwrite', s => s.delete(act.id)); setDocs(p => p.filter(x => x.id !== act.id)); } catch (e) {} setAct(null); }}>Видалити</button></div>
       </div></div>}
 
