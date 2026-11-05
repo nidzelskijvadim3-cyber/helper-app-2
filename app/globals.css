@@ -128,3 +128,6 @@ input[type=checkbox]:checked{background:var(--ac);border-color:var(--ac)}
 .atts{display:flex;gap:8px;margin-bottom:8px}
 .att{position:relative;width:64px;height:64px;border-radius:10px;background:center/cover no-repeat}
 .att button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:0;background:var(--tx);color:var(--bg);font-size:14px;line-height:1;padding:0}
+
+/* Premium notebook library: compact list layout and view switcher */
+.dview{flex:0 0 auto;margin:0}.dview button{min-width:34px;padding:7px 9px}.dlist{display:flex;flex-direction:column;gap:10px}.dlist>div{display:grid;grid-template-columns:64px minmax(0,1fr);column-gap:12px;align-items:center;padding:8px 10px;border:1px solid var(--line,rgba(128,128,128,.18));border-radius:14px;background:var(--card,rgba(128,128,128,.06))}.dlist .dthumb{grid-row:1 / span 2;width:64px;height:82px;aspect-ratio:auto;border-radius:8px}.dlist .dmeta{margin:0;min-width:0}.dlist .sub{grid-column:2;margin-top:2px}
