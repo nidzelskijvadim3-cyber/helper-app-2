@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import Docs, { bridge, listDocs, putDoc, delDoc, newDoc, shrink } from './docs';
+import Docs, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, moveDoc } from './docs';
+import { canMoveFolder, folderPath } from './lib';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const DNF = ['неділя', 'понеділок', 'вівторок', 'середа', 'четвер', 'п’ятниця', 'субота'];
@@ -134,7 +135,7 @@ function applyActions(acts, st) {
     } else if (a.type === 'add_note' && a.text) {
       notes.unshift({ id: nid(), text: String(a.text), upd: Date.now(), folder: resolveF(a.folder) }); n++;
     } else if (a.type === 'create_folder' && a.name) {
-      folders.push({ id: nid(), name: String(a.name).slice(0, 40), color: /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : ACCENTS[folders.length % ACCENTS.length], cover: '' }); n++;
+      folders.push({ id: nid(), name: String(a.name).slice(0, 40), color: /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : ACCENTS[folders.length % ACCENTS.length], cover: '', parent: resolveF(a.parent) }); n++;
     } else if (a.type === 'rename_folder' && a.name) {
       folders = folders.map(f => { if (f.id !== aid) return f; n++; return { ...f, name: String(a.name).slice(0, 40) }; });
     } else if (a.type === 'move_note') {
@@ -236,7 +237,7 @@ export default function Home() {
     try {
       const s = JSON.parse(localStorage.getItem('helper-next') || '{}');
       if (s.items) setItems(s.items); if (s.cap) setCap(s.cap); if (s.msgs) setMsgs(s.msgs);
-      if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes); if (s.tests) setTests(s.tests); if (s.folders) setFolders(s.folders); if (s.ui) setUi({ ...UI0, ...s.ui });
+      if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes); if (s.tests) setTests(s.tests); if (s.folders) setFolders(s.folders.map(f => ({ parent: '', ...f }))); if (s.ui) setUi({ ...UI0, ...s.ui });
     } catch (e) {}
     setReady(true);
   }, []);
@@ -289,13 +290,28 @@ export default function Home() {
   const del = id => { setItems(items.filter(i => i.id !== id)); closeSheet(); };
   const saveFolder = () => {
     if (!fform || !fform.name.trim()) return;
-    const fo = { id: fform.id || Date.now(), name: fform.name.trim(), color: fform.color, cover: fform.cover || '' };
+    const fo = { id: fform.id || Date.now(), name: fform.name.trim(), color: fform.color, cover: fform.cover || '', parent: fform.parent == null ? '' : fform.parent };
     setFolders(fform.id ? folders.map(x => x.id === fo.id ? fo : x) : [...folders, fo]); setFform(null);
   };
   const delFolder = () => {
-    setItems(items.map(i => i.folder === fform.id ? { ...i, folder: '' } : i)); setNotes(notes.map(n => n.folder === fform.id ? { ...n, folder: '' } : n));
-    setFolders(folders.filter(x => x.id !== fform.id)); setFform(null); setFview(null);
+    const id = fform.id, up = fform.parent == null ? '' : fform.parent;
+    setItems(items.map(i => i.folder === id ? { ...i, folder: up } : i)); setNotes(notes.map(n => n.folder === id ? { ...n, folder: up } : n));
+    setFolders(folders.filter(x => x.id !== id).map(x => x.parent === id ? { ...x, parent: up } : x));
+    reparentDocs(id, up).catch(() => {});
+    setFform(null); setFview(up === '' ? null : up);
   };
+  const dropDoc = async (e, fid) => {
+    e.preventDefault(); e.currentTarget.classList.remove('drop');
+    const id = Number(e.dataTransfer.getData('text/doc'));
+    if (id) { try { await moveDoc(id, fid); } catch (er) {} }
+  };
+  const folderTile = fo => (
+    <div className="ftile" key={fo.id} data-fid={fo.id} onClick={() => setFview(fo.id)}
+      onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('drop'); }} onDragLeave={e => e.currentTarget.classList.remove('drop')} onDrop={e => dropDoc(e, fo.id)}
+      style={fo.cover ? { backgroundImage: 'url(' + fo.cover + ')' } : { background: fo.color }}>
+      <div className="fshade" /><div className="fname">{fo.name}</div>
+      <div className="fsub">{notes.filter(n => n.folder === fo.id).length + items.filter(i => i.folder === fo.id).length + folders.filter(x => x.parent === fo.id).length}</div>
+    </div>);
   const pickCover = file => {
     if (!file) return;
     const rd = new FileReader();
@@ -344,7 +360,7 @@ export default function Home() {
     setMsgs(next); setInp(''); setAtt([]); setBusy(true);
     try {
       const ctx = makeCtx();
-      ctx.folders = folders.map(({ id, name }) => ({ id, name }));
+      ctx.folders = folders.map(({ id, name, parent }) => ({ id, name, parent: parent || '' }));
       ctx.notes = notes.slice(0, 40).map(n => ({ id: n.id, t: n.text.split('\n')[0].slice(0, 50), folder: n.folder || '' }));
       ctx.docs = (await listDocs()).slice(0, 60).map(({ id, title, type, folder }) => ({ id, title, type, folder: folder || '' }));
       ctx.screen = see ? screenInfo() : { tab };
@@ -553,8 +569,7 @@ export default function Home() {
         <div className="top"><h1>Папки</h1><div className="sub">Групуйте нотатки й задачі. Торкніться плитки, щоб відкрити, або «+», щоб створити папку.</div></div>
         <div className="fgrid">
           <div className="ftile plain" onClick={() => setFview('all')}><div className="fname">Усі нотатки</div><div className="fsub">{notes.length}</div></div>
-          {folders.map(fo => <div className="ftile" key={fo.id} onClick={() => setFview(fo.id)} style={fo.cover ? { backgroundImage: 'url(' + fo.cover + ')' } : { background: fo.color }}>
-            <div className="fshade" /><div className="fname">{fo.name}</div><div className="fsub">{notes.filter(n => n.folder === fo.id).length + items.filter(i => i.folder === fo.id).length}</div></div>)}
+          {folders.filter(fo => fo.parent === '').map(folderTile)}
         </div>
         <Docs folderId={null} folders={folders} onNewNote={newNote} />
       </>}
@@ -564,8 +579,9 @@ export default function Home() {
         const nl = notes.filter(n => fview === 'all' || n.folder === fview).filter(n => n.text.toLowerCase().includes(nq.toLowerCase()));
         const il = fo ? items.filter(i => i.folder === fo.id) : [];
         return <>
-          <div className="top"><button className="chip" onClick={() => { setFview(null); setNq(''); }}>‹ Папки</button><h1>{fo ? fo.name : 'Усі нотатки'}</h1>
-            <div className="daynav"><button className="chip" onClick={() => openNote('new')}>Нова нотатка</button>{fo && <button className="chip" onClick={openNew}>Нова задача</button>}{fo && <button className="chip" onClick={() => setFform({ ...fo })}>Змінити</button>}</div></div>
+          <div className="top"><button className="chip" data-fid={fo && fo.parent !== '' && fo.parent != null ? fo.parent : ''} onClick={() => { setFview(fo && fo.parent !== '' && fo.parent != null ? fo.parent : null); setNq(''); }} onDragOver={e => e.preventDefault()} onDrop={e => dropDoc(e, fo && fo.parent !== '' && fo.parent != null ? fo.parent : '')}>‹ {fo && fo.parent !== '' && fo.parent != null ? ((folders.find(x => x.id === fo.parent) || {}).name || 'Назад') : 'Папки'}</button><h1>{fo ? fo.name : 'Усі нотатки'}</h1>{fo && <div className="sub">{folderPath(folders, fo.id)}</div>}
+            <div className="daynav"><button className="chip" onClick={() => openNote('new')}>Нова нотатка</button>{fo && <button className="chip" onClick={openNew}>Нова задача</button>}{fo && <button className="chip" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: fo.id })}>Нова підпапка</button>}{fo && <button className="chip" onClick={() => setFform({ ...fo })}>Змінити</button>}</div></div>
+          {fo && folders.some(x => x.parent === fo.id) && <div className="fgrid" style={{ marginBottom: 16 }}>{folders.filter(x => x.parent === fo.id).map(folderTile)}</div>}
           <input placeholder="Пошук нотаток" value={nq} onChange={e => setNq(e.target.value)} style={{ marginBottom: 14 }} />
           {il.length > 0 && <div className="card"><div className="sec">Задачі й події</div>{il.map(row)}</div>}
           {nl.map(n => (
@@ -630,7 +646,7 @@ export default function Home() {
       </>}
 
       {(tab === 'today' || tab === 'tasks' || tab === 'cal') && <button className="fab" onClick={openNew} aria-label="Додати">+</button>}
-      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '' })} aria-label="Нова папка">+</button>}
+      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: '' })} aria-label="Нова папка">+</button>}
 
       {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" onClick={e => e.stopPropagation()}>
         <div className="seg"><button className={!ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'task' })}>Задача</button><button className={ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'event' })}>Подія</button></div>
@@ -649,6 +665,9 @@ export default function Home() {
       {fform && <div className="ov" onClick={() => setFform(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
         <b>{fform.id ? 'Папка' : 'Нова папка'}</b>
         <input style={{ marginTop: 12 }} autoFocus placeholder="Назва папки" value={fform.name} onChange={e => setFform({ ...fform, name: e.target.value })} />
+        <div className="sec" style={{ marginTop: 14 }}>Розташування</div>
+        <select value={fform.parent == null ? '' : fform.parent} onChange={e => setFform({ ...fform, parent: e.target.value === '' ? '' : Number(e.target.value) })}>
+          <option value="">Головний рівень</option>{folders.filter(x => x.id !== fform.id && (!fform.id || canMoveFolder(folders, fform.id, x.id))).map(x => <option key={x.id} value={x.id}>{folderPath(folders, x.id)}</option>)}</select>
         <div className="sec" style={{ marginTop: 14 }}>Колір</div>
         <div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (fform.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setFform({ ...fform, color: c })} aria-label={c} />)}</div>
         <div className="sec" style={{ marginTop: 14 }}>Обкладинка</div>

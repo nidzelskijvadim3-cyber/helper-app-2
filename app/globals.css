@@ -128,14 +128,14 @@ input[type=checkbox]:checked{background:var(--ac);border-color:var(--ac)}
 .atts{display:flex;gap:8px;margin-bottom:8px}
 .att{position:relative;width:64px;height:64px;border-radius:10px;background:center/cover no-repeat}
 .att button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:0;background:var(--tx);color:var(--bg);font-size:14px;line-height:1;padding:0}
-
-/* Premium notebook library: compact list layout and view switcher */
-.dview{flex:0 0 auto;margin:0}.dview button{min-width:34px;padding:7px 9px}.dlist{display:flex;flex-direction:column;gap:10px}.dlist>div{display:grid;grid-template-columns:64px minmax(0,1fr);column-gap:12px;align-items:center;padding:8px 10px;border:1px solid var(--line,rgba(128,128,128,.18));border-radius:14px;background:var(--card,rgba(128,128,128,.06))}.dlist .dthumb{grid-row:1 / span 2;width:64px;height:82px;aspect-ratio:auto;border-radius:8px}.dlist .dmeta{margin:0;min-width:0}.dlist .sub{grid-column:2;margin-top:2px}
-
-/* Notebook library and persistence feedback */
-.library-actions{flex-wrap:wrap;align-items:center}.library-actions .btn{width:auto;flex:1 1 auto;min-width:120px}
-.dview{flex:0 0 auto;margin:0}.dview button{min-width:34px;padding:7px 9px}
-.dlist{display:flex;flex-direction:column;gap:10px}.dlist>div{display:grid;grid-template-columns:64px minmax(0,1fr);column-gap:12px;align-items:center;padding:8px 10px;border:1px solid var(--glassb);border-radius:14px;background:var(--card)}.dlist .dthumb{grid-row:1 / span 2;width:64px;height:82px;aspect-ratio:auto;border-radius:8px}.dlist .dmeta{margin:0;min-width:0}.dlist .sub{grid-column:2;margin-top:2px}
-.save-indicator{font-size:11px;white-space:nowrap;opacity:.72}.save-indicator.error{color:#ff453a;opacity:1}.save-indicator.saved{color:#30a46c}
-@media(max-width:420px){.edtop{gap:5px}.save-indicator{font-size:10px}.library-actions .btn{font-size:13px;padding:9px 10px}}
-.dtools>.seg{max-width:100%;overflow-x:auto;scrollbar-width:none}.dtools>.seg::-webkit-scrollbar{display:none}.dtools>.seg button{flex:0 0 auto;padding-left:11px;padding-right:11px;white-space:nowrap}.edtop input{min-width:0;flex:1}
+.dc{min-width:0}.dc.sm{width:112px;flex:none}
+.rrow{display:flex;gap:12px;overflow-x:auto;padding:2px 2px 14px;margin:0 -2px}
+.dcover{position:absolute;inset:0;display:flex;align-items:flex-end;padding:10px 10px 10px 18px;color:#fff;font-weight:700;font-size:15px;line-height:1.2;text-align:left}
+.dcover .spine{position:absolute;left:0;top:0;bottom:0;width:8px;background:rgba(0,0,0,.22)}
+.dcover span{position:relative;text-shadow:0 1px 3px rgba(0,0,0,.35);word-break:break-word}
+.dlist{padding:4px 14px}
+.dl{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:.5px solid var(--bd)}.dl:first-child{border-top:0}
+.dl .dthumb{width:44px;flex:none;border-radius:6px}.dl .info{flex:1;min-width:0}.dl .dt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.menu button.danger{background:var(--wn);color:#fff}
+.dc[draggable=true],.dl[draggable=true]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.ftile.drop{outline:3px dashed var(--ac);outline-offset:-3px}
