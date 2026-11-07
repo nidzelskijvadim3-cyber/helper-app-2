@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { listMeta, getDoc, saveDoc, putMeta, putDoc, delDoc, duplicateDoc, reparentDocs, moveDoc } from './store';
 import { newDoc, newId, filterDocs, sortDocs, recentDocs, folderPath } from './lib';
+import { t as tr, loc } from './i18n';
 
 export { putDoc, delDoc, newDoc, reparentDocs, moveDoc };
 export const listDocs = listMeta;
@@ -38,6 +39,7 @@ async function prepImage(file, scan) {
   return { src: c.toDataURL('image/jpeg', 0.82), w: c.width, h: c.height };
 }
 
+const pressureOf = e => Math.min(1, Math.max(0.05, e.pressure || 0.5));
 function drawStroke(g, s, ws) {
   g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = s.c; g.fillStyle = s.c; g.globalAlpha = s.a || 1; g.lineWidth = (s.w || 3) * ws;
   if (s.k === 'text') {
@@ -46,7 +48,13 @@ function drawStroke(g, s, ws) {
     g.restore(); return;
   }
   if (s.a && s.a < 1) g.globalCompositeOperation = 'multiply';
-  const p = s.p; g.beginPath();
+  const p = s.p;
+  if (!s.k && s.pr) {
+    if (p.length <= 2) { g.beginPath(); g.arc(p[0], p[1], (s.w || 3) * ws * (0.35 + 1.3 * s.pr[0]) / 2, 0, 7); g.fill(); g.restore(); return; }
+    for (let i = 2; i < p.length; i += 2) { g.beginPath(); g.moveTo(p[i - 2], p[i - 1]); g.lineTo(p[i], p[i + 1]); g.lineWidth = (s.w || 3) * ws * (0.35 + 1.3 * (s.pr[i / 2] || 0.5)); g.stroke(); }
+    g.restore(); return;
+  }
+  g.beginPath();
   if (s.k === 'line') { g.moveTo(p[0], p[1]); g.lineTo(p[2], p[3]); }
   else if (s.k === 'rect') g.rect(Math.min(p[0], p[2]), Math.min(p[1], p[3]), Math.abs(p[2] - p[0]), Math.abs(p[3] - p[1]));
   else if (s.k === 'oval') g.ellipse((p[0] + p[2]) / 2, (p[1] + p[3]) / 2, Math.abs(p[2] - p[0]) / 2 || 0.1, Math.abs(p[3] - p[1]) / 2 || 0.1, 0, 0, Math.PI * 2);
@@ -92,13 +100,14 @@ function Editor({ doc, onSave, onClose }) {
   const [color, setColor] = useState(COLORS[0]);
   const [wd, setWd] = useState(4);
   const [penOnly, setPenOnly] = useState(false);
+  const [pressure, setPressure] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [fit, setFit] = useState({ w: 300, h: 400 });
   const [tick, setTick] = useState(0);
   const [tin, setTin] = useState(null);
   const [strip, setStrip] = useState(false);
   const [thumbs, setThumbs] = useState([]);
-  const cvRef = useRef(null), boxRef = useRef(null), imgRef = useRef(null), cur = useRef(null), hist = useRef([]), redo = useRef([]), dRef = useRef(d), piRef = useRef(0), saved = useRef(doc.pages);
+  const cvRef = useRef(null), boxRef = useRef(null), imgRef = useRef(null), cur = useRef(null), hist = useRef([]), redo = useRef([]), dRef = useRef(d), piRef = useRef(0), saved = useRef(doc.pages), touches = useRef(new Map()), gest = useRef(null);
   dRef.current = d; piRef.current = pi;
   const page = d.pages[pi];
   const setPage = np => setD(o => ({ ...o, pages: o.pages.map((q, i) => i === pi ? np : q) }));
@@ -154,27 +163,60 @@ function Editor({ doc, onSave, onClose }) {
   };
   const down = e => {
     if (tool === 'hand') return;
-    if (penOnly && e.pointerType === 'touch') return;
+    if (e.pointerType === 'touch') {
+      touches.current.set(e.pointerId, [e.clientX, e.clientY]);
+      const el = boxRef.current;
+      if (touches.current.size >= 2) {
+        cur.current = null; renderPage(cvRef.current.getContext('2d'), page, imgRef.current);
+        const [a, b] = [...touches.current.values()];
+        gest.current = { d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: zoom, m0: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], sl: el.scrollLeft, st: el.scrollTop };
+        return;
+      }
+      if (penOnly) { gest.current = { pan: true, m0: [e.clientX, e.clientY], sl: el.scrollLeft, st: el.scrollTop }; return; }
+    }
     e.preventDefault(); cvRef.current.setPointerCapture(e.pointerId);
     const [x, y] = pos(e);
     if (tool === 'text') { setTin({ x, y, v: '' }); return; }
     if (tool === 'eraser') { cur.current = { erase: true }; eraseAt(x, y); return; }
     if (tool === 'line' || tool === 'rect' || tool === 'oval') { cur.current = { k: tool, c: color, w: wd, p: [x, y, x, y] }; return; }
     cur.current = { c: color, w: tool === 'hl' ? wd * 4 : wd, a: tool === 'hl' ? 0.35 : 1, p: [x, y] };
+    if (pressure && e.pointerType === 'pen' && tool !== 'hl') cur.current.pr = [pressureOf(e)];
   };
   const move = e => {
+    if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) {
+      touches.current.set(e.pointerId, [e.clientX, e.clientY]);
+      const g = gest.current;
+      if (g) {
+        const el = boxRef.current;
+        if (g.pan) { el.scrollLeft = g.sl - (e.clientX - g.m0[0]); el.scrollTop = g.st - (e.clientY - g.m0[1]); }
+        else if (touches.current.size >= 2) {
+          const [a, b] = [...touches.current.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+          setZoom(Math.max(1, Math.min(5, +(g.z0 * d / g.d0).toFixed(2))));
+          el.scrollLeft = g.sl - ((a[0] + b[0]) / 2 - g.m0[0]); el.scrollTop = g.st - ((a[1] + b[1]) / 2 - g.m0[1]);
+        }
+        return;
+      }
+    }
     const s = cur.current; if (!s) return;
     const [x, y] = pos(e);
     if (s.erase) { eraseAt(x, y); return; }
     const g = cvRef.current.getContext('2d'), ws = page.w / 1200;
     if (s.k) { s.p[2] = x; s.p[3] = y; renderPage(g, page, imgRef.current); drawStroke(g, s, ws); return; }
-    const q = s.p, lx = q[q.length - 2], ly = q[q.length - 1];
-    if (Math.hypot(x - lx, y - ly) < 2) return;
-    q.push(x, y);
-    if (s.a < 1) { renderPage(g, page, imgRef.current); drawStroke(g, s, ws); }
-    else { g.save(); g.lineCap = 'round'; g.strokeStyle = s.c; g.lineWidth = s.w * ws; g.beginPath(); g.moveTo(lx, ly); g.lineTo(x, y); g.stroke(); g.restore(); }
+    const evs = e.pointerType === 'pen' && e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for (const ev of evs) {
+      const [px, py] = pos(ev), q = s.p, lx = q[q.length - 2], ly = q[q.length - 1];
+      if (Math.hypot(px - lx, py - ly) < 2) continue;
+      q.push(px, py);
+      const pr = s.pr ? pressureOf(ev) : 0; if (s.pr) s.pr.push(pr);
+      if (s.a < 1) { renderPage(g, page, imgRef.current); drawStroke(g, s, ws); }
+      else { g.save(); g.lineCap = 'round'; g.strokeStyle = s.c; g.lineWidth = s.w * ws * (s.pr ? 0.35 + 1.3 * pr : 1); g.beginPath(); g.moveTo(lx, ly); g.lineTo(px, py); g.stroke(); g.restore(); }
+    }
   };
-  const up = () => {
+  const up = e => {
+    if (e && e.pointerType === 'touch') {
+      touches.current.delete(e.pointerId);
+      if (touches.current.size === 0 || (gest.current && !gest.current.pan && touches.current.size < 2)) gest.current = null;
+    }
     const s = cur.current; cur.current = null; if (!s) return;
     if (s.erase) { if (s.snap) { hist.current.push({ pi, strokes: s.snap }); redo.current = []; } return; }
     if (s.k && Math.hypot(s.p[2] - s.p[0], s.p[3] - s.p[1]) < 4) { renderPage(cvRef.current.getContext('2d'), page, imgRef.current); return; }
@@ -185,6 +227,13 @@ function Editor({ doc, onSave, onClose }) {
   const goPage = n => { setPi(Math.max(0, Math.min(d.pages.length - 1, n))); hist.current = []; redo.current = []; };
   const addPage = () => { setD(o => ({ ...o, pages: [...o.pages, { w: page.w, h: page.h, tpl: page.img ? 'blank' : page.tpl, strokes: [] }] })); setPi(d.pages.length); hist.current = []; redo.current = []; };
   const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; redo.current = []; };
+  useEffect(() => {
+    const h = e => {
+      if (tin || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+      e.preventDefault(); if (e.shiftKey) swap(redo, hist); else swap(hist, redo);
+    };
+    window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
+  });
   const share = () => {
     const cv = cvRef.current; if (!cv) return;
     cv.toBlob(async b => {
@@ -196,35 +245,36 @@ function Editor({ doc, onSave, onClose }) {
     }, 'image/png');
   };
   const close = async () => { try { const t = await makeThumb(d); await flush({ thumb: t }); } catch (e) {} onClose(); };
-  const TOOLS = [['pen', 'Ручка'], ['hl', 'Маркер'], ['eraser', 'Гумка'], ['line', 'Лінія'], ['rect', 'Рамка'], ['oval', 'Овал'], ['text', 'Текст'], ['hand', 'Рука']];
+  const TOOLS = [['pen', tr("Ручка")], ['hl', tr("Маркер")], ['eraser', tr("Гумка")], ['line', tr("Лінія")], ['rect', tr("Рамка")], ['oval', tr("Овал")], ['text', tr("Текст")], ['hand', tr("Рука")]];
 
   return (
-    <div className="nv">
-      <div className="edtop"><button className="chip" onClick={close}>Готово</button><input value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label="Назва" /></div>
+    <div className="nv ed">
+      <div className="edtop"><button className="chip" onClick={close}>{tr("Готово")}</button><input value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label={tr("Назва")} /></div>
       <div className="edbox" ref={boxRef}>
         <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w * zoom, height: fit.h * zoom, touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
       </div>
-      {strip && <div className="strip">{thumbs.map((t, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + t + ')' }} aria-label={'Сторінка ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
+      {strip && <div className="strip">{thumbs.map((t, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + t + ')' }} aria-label={tr("Сторінка ") + (i + 1)}><span>{i + 1}</span></button>)}</div>}
       <div className="edtools">
         <div className="edrow">{TOOLS.map(([k, n]) => <button key={k} className={'chip' + (tool === k ? ' on' : '')} onClick={() => setTool(k)}>{n}</button>)}</div>
         <div className="edrow">{COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={c} />)}
-          {[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={'Товщина ' + w}><i style={{ width: w * 2, height: w * 2 }} /></button>)}</div>
+          {[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={tr("Товщина ") + w}><i style={{ width: w * 2, height: w * 2 }} /></button>)}</div>
         <div className="edrow">
-          <button className="chip" onClick={() => swap(hist, redo)}>Назад</button><button className="chip" onClick={() => swap(redo, hist)}>Вперед</button>
+          <button className="chip" onClick={() => swap(hist, redo)}>{tr("Скасувати")}</button><button className="chip" onClick={() => swap(redo, hist)}>{tr("Вперед")}</button>
           <button className="chip" onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))}>−</button><span className="sub">{Math.round(zoom * 100)}%</span><button className="chip" onClick={() => setZoom(Math.min(4, +(zoom + 0.5).toFixed(1)))}>+</button>
-          <button className="chip" onClick={share}>Поділитися</button></div>
+          <button className="chip" onClick={share}>{tr("Поділитися")}</button></div>
         <div className="edrow">
-          <button className="chip" onClick={() => goPage(pi - 1)}>‹</button><span className="sub">{pi + 1} з {d.pages.length}</span><button className="chip" onClick={() => goPage(pi + 1)}>›</button>
-          <button className={'chip' + (strip ? ' on' : '')} onClick={() => setStrip(!strip)}>Сторінки</button>
-          <button className="chip" onClick={addPage}>+ Сторінка</button>{d.pages.length > 1 && <button className="chip" onClick={delPage}>Видалити</button>}</div>
+          <button className="chip" onClick={() => goPage(pi - 1)}>‹</button><span className="sub">{pi + 1} {tr(" з ")}{d.pages.length}</span><button className="chip" onClick={() => goPage(pi + 1)}>›</button>
+          <button className={'chip' + (strip ? ' on' : '')} onClick={() => setStrip(!strip)}>{tr("Сторінки")}</button>
+          <button className="chip" onClick={addPage}>{tr("+ Сторінка")}</button>{d.pages.length > 1 && <button className="chip" onClick={delPage}>{tr("Видалити")}</button>}</div>
         <div className="edrow">
-          {d.type === 'notebook' && !page.img && [['blank', 'Чиста'], ['lined', 'Лінійка'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} onClick={() => setPage({ ...page, tpl: k })}>{n}</button>)}
-          <button className={'chip' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)}>Лише Apple Pencil</button></div>
+          {d.type === 'notebook' && !page.img && [['blank', tr("Чиста")], ['lined', tr("Лінійка")], ['grid', tr("Клітинка")], ['dots', tr("Крапки")]].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} onClick={() => setPage({ ...page, tpl: k })}>{n}</button>)}
+          <button className={'chip' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)}>{tr("Лише Apple Pencil")}</button>
+          <button className={'chip' + (pressure ? ' on' : '')} onClick={() => setPressure(!pressure)}>{tr("Чутливість до нажиму")}</button></div>
       </div>
       {tin && <div className="ov" onClick={() => setTin(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
-        <b>Текст на сторінці</b>
-        <textarea style={{ marginTop: 12 }} rows={3} autoFocus value={tin.v} onChange={e => setTin({ ...tin, v: e.target.value })} placeholder="Введіть текст" />
-        <div className="row"><button className="btn" onClick={addText}>Додати</button></div>
+        <b>{tr("Текст на сторінці")}</b>
+        <textarea style={{ marginTop: 12 }} rows={3} autoFocus value={tin.v} onChange={e => setTin({ ...tin, v: e.target.value })} placeholder={tr("Введіть текст")} />
+        <div className="row"><button className="btn" onClick={addText}>{tr("Додати")}</button></div>
       </div></div>}
     </div>
   );
@@ -253,20 +303,21 @@ export default function Docs({ folderId, folders, onNewNote }) {
   }, []);
 
   const fid = typeof folderId === 'number' ? folderId : '';
-  const openDoc = async x => { try { const d = await getDoc(x.id); if (d) setEd(d); else setMsg('Не вдалося відкрити документ.'); } catch (e) { setMsg('Не вдалося відкрити документ.'); } };
+  const dflt = type => tr(TYPES[type]) + ' ' + new Date().toLocaleDateString(loc());
+  const openDoc = async x => { try { const d = await getDoc(x.id); if (d) setEd(d); else setMsg(tr("Не вдалося відкрити документ.")); } catch (e) { setMsg(tr("Не вдалося відкрити документ.")); } };
   const start = async dd => {
     try { await saveDoc(dd, 'all'); setEd(dd); }
-    catch (e) { setMsg('Не вдалося зберегти документ: можливо, закінчилося місце.'); }
+    catch (e) { setMsg(tr("Не вдалося зберегти документ: можливо, закінчилося місце.")); }
     setMenu(false); setNb(null);
   };
   const fromFile = async (file, type) => {
     if (!file) return;
-    setMsg('Обробка зображення…');
+    setMsg(tr("Обробка зображення…"));
     try {
       const im = await prepImage(file, type === 'scan');
-      await start({ id: newId(), type, title: TYPES[type] + ' ' + new Date().toLocaleDateString('uk-UA'), folder: fid, cover: '', created: Date.now(), upd: Date.now(), thumb: '', fav: false, pages: [{ w: im.w, h: im.h, tpl: 'blank', img: im.src, strokes: [] }] });
+      await start({ id: newId(), type, title: tr(TYPES[type]) + ' ' + new Date().toLocaleDateString(loc()), folder: fid, cover: '', created: Date.now(), upd: Date.now(), thumb: '', fav: false, pages: [{ w: im.w, h: im.h, tpl: 'blank', img: im.src, strokes: [] }] });
       setMsg('');
-    } catch (e) { setMsg('Не вдалося обробити зображення.'); setMenu(false); }
+    } catch (e) { setMsg(tr("Не вдалося обробити зображення.")); setMenu(false); }
   };
   const closeAct = async () => {
     if (act) { const m = docs.find(x => x.id === act.id); const t = act.title.trim(); if (m && t && m.title !== t) { try { await putMeta({ ...m, title: t, upd: Date.now() }); } catch (e) {} } }
@@ -278,7 +329,7 @@ export default function Docs({ folderId, folders, onNewNote }) {
   const thumbEl = x => (
     <div className="dthumb" onClick={() => { if (fired.current) { fired.current = false; return; } openDoc(x); }}
       style={x.thumb && !(x.type === 'notebook' && x.cover) ? { backgroundImage: 'url(' + x.thumb + ')' } : {}}>
-      {x.type === 'notebook' && x.cover ? <div className="dcover" style={{ background: x.cover }}><div className="spine" /><span>{x.title}</span></div> : (!x.thumb && <span>{TYPES[x.type]}</span>)}
+      {x.type === 'notebook' && x.cover ? <div className="dcover" style={{ background: x.cover }}><div className="spine" /><span>{x.title}</span></div> : (!x.thumb && <span>{tr(TYPES[x.type])}</span>)}
       {x.fav && <span className="star">★</span>}
     </div>);
   const drag = x => ({
@@ -291,66 +342,66 @@ export default function Docs({ folderId, folders, onNewNote }) {
   const card = (x, small) => (
     <div key={x.id} className={'dc' + (small ? ' sm' : '')} {...drag(x)}>
       {thumbEl(x)}
-      <div className="dmeta"><div className="dt">{x.title}</div><button className="x" onClick={() => setAct(x)} aria-label="Дії">⋯</button></div>
-      {!small && <div className="sub">{new Date(x.upd).toLocaleDateString('uk-UA')}, стор.: {x.pageCount || 1}</div>}
+      <div className="dmeta"><div className="dt">{x.title}</div><button className="x" onClick={() => setAct(x)} aria-label={tr("Дії")}>⋯</button></div>
+      {!small && <div className="sub">{new Date(x.upd).toLocaleDateString(loc())}{tr(", стор.: ")}{x.pageCount || 1}</div>}
     </div>);
   const row = x => (
     <div key={x.id} className="dl" {...drag(x)}>
       {thumbEl(x)}
-      <div className="info" onClick={() => openDoc(x)}><div className="dt">{x.title}</div><div className="sub">{TYPES[x.type]}, {new Date(x.upd).toLocaleDateString('uk-UA')}, стор.: {x.pageCount || 1}</div></div>
-      <button className="x" onClick={() => setAct(x)} aria-label="Дії">⋯</button>
+      <div className="info" onClick={() => openDoc(x)}><div className="dt">{x.title}</div><div className="sub">{tr(TYPES[x.type])}, {new Date(x.upd).toLocaleDateString(loc())}{tr(", стор.: ")}{x.pageCount || 1}</div></div>
+      <button className="x" onClick={() => setAct(x)} aria-label={tr("Дії")}>⋯</button>
     </div>);
 
   return (
     <div style={{ marginTop: 26 }}>
-      <div className="sec">Документи</div>
-      <button className="btn" onClick={() => setMenu(true)}>Створити або імпортувати</button>
+      <div className="sec">{tr("Документи")}</div>
+      <button className="btn" onClick={() => setMenu(true)}>{tr("Створити або імпортувати")}</button>
       {msg && <div className="sub" style={{ margin: '10px 0' }}>{msg}</div>}
-      {recents.length > 0 && <><div className="sec" style={{ marginTop: 18 }}>Нещодавні</div><div className="rrow">{recents.map(x => card(x, true))}</div></>}
+      {recents.length > 0 && <><div className="sec" style={{ marginTop: 18 }}>{tr("Нещодавні")}</div><div className="rrow">{recents.map(x => card(x, true))}</div></>}
       <div className="dtools" style={{ marginTop: 14 }}>
-        <div className="seg">{FILTERS.map(([k, n]) => <button key={k} className={flt === k ? 'on' : ''} onClick={() => setFlt(k)}>{n}</button>)}</div>
-        <div className="row" style={{ margin: 0 }}><input placeholder="Пошук документів" value={q} onChange={e => setQ(e.target.value)} />
-          <select value={sort} onChange={e => setSort(e.target.value)} style={{ width: 'auto' }}><option value="new">Нові</option><option value="created">Створені</option><option value="name">За назвою</option></select></div>
-        <div className="seg" style={{ maxWidth: 180 }}>{[['grid', 'Сітка'], ['list', 'Список']].map(([k, n]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => pickView(k)}>{n}</button>)}</div>
+        <div className="seg">{FILTERS.map(([k, n]) => <button key={k} className={flt === k ? 'on' : ''} onClick={() => setFlt(k)}>{tr(n)}</button>)}</div>
+        <div className="row" style={{ margin: 0 }}><input placeholder={tr("Пошук документів")} value={q} onChange={e => setQ(e.target.value)} />
+          <select value={sort} onChange={e => setSort(e.target.value)} style={{ width: 'auto' }}><option value="new">{tr("Нові")}</option><option value="created">{tr("Створені")}</option><option value="name">{tr("За назвою")}</option></select></div>
+        <div className="seg" style={{ maxWidth: 180 }}>{[['grid', tr("Сітка")], ['list', tr("Список")]].map(([k, n]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => pickView(k)}>{n}</button>)}</div>
       </div>
       {list.length ? (view === 'grid' ? <div className="dgrid">{list.map(x => card(x, false))}</div> : <div className="card dlist">{list.map(row)}</div>)
-        : <div className="card"><div className="empty">{q.trim() || flt !== 'all' ? 'Нічого не знайдено.' : 'Документів поки немає. Створіть зошит, дошку або додайте скан.'}</div></div>}
+        : <div className="card"><div className="empty">{q.trim() || flt !== 'all' ? tr("Нічого не знайдено.") : tr("Документів поки немає. Створіть зошит, дошку або додайте скан.")}</div></div>}
 
       <input ref={phRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
       <input ref={scRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'scan'); e.target.value = ''; }} />
       <input ref={imRef} type="file" accept="image/*" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
 
       {menu && <div className="ov" onClick={() => setMenu(false)}><div className="sheet menu" onClick={e => e.stopPropagation()}>
-        <b>Створити</b><div style={{ height: 12 }} />
-        <button onClick={() => { setMenu(false); onNewNote(true); }}>Швидка нотатка<small>Слова згасають, поки ви пишете</small></button>
-        <button onClick={() => { setMenu(false); onNewNote(false); }}>Текстовий документ<small>Звичайний текст</small></button>
-        <button onClick={() => { setMenu(false); setNb({ title: '', cover: COVERS[0], tpl: 'lined' }); }}>Зошит<small>Обкладинка, сторінки з лінійкою, клітинкою чи крапками</small></button>
-        <button onClick={() => start(newDoc('board', '', fid, 'blank'))}>Дошка<small>Велике вільне полотно</small></button>
-        <button onClick={() => phRef.current && phRef.current.click()}>Сфотографувати<small>Фото, яке можна підписувати</small></button>
-        <button onClick={() => scRef.current && scRef.current.click()}>Сканувати документ<small>Фото з вирівнюванням яскравості, як скан</small></button>
-        <button onClick={() => imRef.current && imRef.current.click()}>Імпортувати зображення<small>З галереї або файлів</small></button>
+        <b>{tr("Створити")}</b><div style={{ height: 12 }} />
+        <button onClick={() => { setMenu(false); onNewNote(true); }}>{tr("Швидка нотатка")}<small>{tr("Слова згасають, поки ви пишете")}</small></button>
+        <button onClick={() => { setMenu(false); onNewNote(false); }}>{tr("Текстовий документ")}<small>{tr("Звичайний текст")}</small></button>
+        <button onClick={() => { setMenu(false); setNb({ title: '', cover: COVERS[0], tpl: 'lined' }); }}>{tr("Зошит")}<small>{tr("Обкладинка, сторінки з лінійкою, клітинкою чи крапками")}</small></button>
+        <button onClick={() => start(newDoc('board', dflt('board'), fid, 'blank'))}>{tr("Дошка")}<small>{tr("Велике вільне полотно")}</small></button>
+        <button onClick={() => phRef.current && phRef.current.click()}>{tr("Сфотографувати")}<small>{tr("Фото, яке можна підписувати")}</small></button>
+        <button onClick={() => scRef.current && scRef.current.click()}>{tr("Сканувати документ")}<small>{tr("Фото з вирівнюванням яскравості, як скан")}</small></button>
+        <button onClick={() => imRef.current && imRef.current.click()}>{tr("Імпортувати зображення")}<small>{tr("З галереї або файлів")}</small></button>
       </div></div>}
 
       {nb && <div className="ov" onClick={() => setNb(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
-        <b>Новий зошит</b>
-        <input style={{ marginTop: 12 }} autoFocus placeholder="Назва (необов’язково)" value={nb.title} onChange={e => setNb({ ...nb, title: e.target.value })} />
-        <div className="sec" style={{ marginTop: 14 }}>Обкладинка</div>
+        <b>{tr("Новий зошит")}</b>
+        <input style={{ marginTop: 12 }} autoFocus placeholder={tr("Назва (необов’язково)")} value={nb.title} onChange={e => setNb({ ...nb, title: e.target.value })} />
+        <div className="sec" style={{ marginTop: 14 }}>{tr("Обкладинка")}</div>
         <div className="sw">{COVERS.map(c => <button key={c} className={'swatch' + (nb.cover === c ? ' on' : '')} style={{ background: c }} onClick={() => setNb({ ...nb, cover: c })} aria-label={c} />)}</div>
-        <div className="sec" style={{ marginTop: 14 }}>Папір</div>
-        <div className="seg">{[['blank', 'Чиста'], ['lined', 'Лінійка'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={nb.tpl === k ? 'on' : ''} onClick={() => setNb({ ...nb, tpl: k })}>{n}</button>)}</div>
-        <div className="row"><button className="btn" onClick={() => start(newDoc('notebook', nb.title.trim(), fid, nb.tpl, nb.cover))}>Створити</button></div>
+        <div className="sec" style={{ marginTop: 14 }}>{tr("Папір")}</div>
+        <div className="seg">{[['blank', tr("Чиста")], ['lined', tr("Лінійка")], ['grid', tr("Клітинка")], ['dots', tr("Крапки")]].map(([k, n]) => <button key={k} className={nb.tpl === k ? 'on' : ''} onClick={() => setNb({ ...nb, tpl: k })}>{n}</button>)}</div>
+        <div className="row"><button className="btn" onClick={() => start(newDoc('notebook', nb.title.trim() || dflt('notebook'), fid, nb.tpl, nb.cover))}>{tr("Створити")}</button></div>
       </div></div>}
 
       {act && <div className="ov" onClick={closeAct}><div className="sheet menu" onClick={e => e.stopPropagation()}>
-        <input value={act.title} onChange={e => setAct({ ...act, title: e.target.value })} aria-label="Назва" style={{ marginBottom: 10 }} />
-        <button onClick={() => { const x = act; setAct(null); openDoc(x); }}>Відкрити</button>
-        <button onClick={async () => { const m = { ...act, fav: !act.fav }; try { await putMeta(m); setAct(m); } catch (e) {} }}>{act.fav ? '★ Прибрати з обраного' : '☆ Додати в обране'}</button>
-        <button onClick={async () => { try { await duplicateDoc(act.id); } catch (e) { setMsg('Не вдалося дублювати: можливо, закінчилося місце.'); } setAct(null); }}>Дублювати</button>
+        <input value={act.title} onChange={e => setAct({ ...act, title: e.target.value })} aria-label={tr("Назва")} style={{ marginBottom: 10 }} />
+        <button onClick={() => { const x = act; setAct(null); openDoc(x); }}>{tr("Відкрити")}</button>
+        <button onClick={async () => { const m = { ...act, fav: !act.fav }; try { await putMeta(m); setAct(m); } catch (e) {} }}>{act.fav ? tr("★ Прибрати з обраного") : tr("☆ Додати в обране")}</button>
+        <button onClick={async () => { try { await duplicateDoc(act.id); } catch (e) { setMsg(tr("Не вдалося дублювати: можливо, закінчилося місце.")); } setAct(null); }}>{tr("Дублювати")}</button>
         <select value={act.folder === '' || act.folder == null ? '' : act.folder} style={{ marginBottom: 8 }}
           onChange={async e => { const f = e.target.value === '' ? '' : Number(e.target.value); const m = { ...act, folder: f }; try { await putMeta(m); setAct(m); } catch (er) {} }}>
-          <option value="">Без папки</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{folderPath(folders, fo.id)}</option>)}</select>
-        <button className={confirm ? 'danger' : ''} onClick={async () => { if (!confirm) { setConfirm(true); return; } try { await delDoc(act.id); } catch (e) {} setAct(null); setConfirm(false); }}>{confirm ? 'Підтвердити видалення' : 'Видалити'}</button>
-        <button onClick={closeAct}>Готово</button>
+          <option value="">{tr("Без папки")}</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{folderPath(folders, fo.id)}</option>)}</select>
+        <button className={confirm ? 'danger' : ''} onClick={async () => { if (!confirm) { setConfirm(true); return; } try { await delDoc(act.id); } catch (e) {} setAct(null); setConfirm(false); }}>{confirm ? tr("Підтвердити видалення") : tr("Видалити")}</button>
+        <button onClick={closeAct}>{tr("Готово")}</button>
       </div></div>}
 
       {ed && <Editor doc={ed} onSave={(d, dirty) => saveDoc(d, dirty)} onClose={() => setEd(null)} />}

@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Docs, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, moveDoc } from './docs';
 import { canMoveFolder, folderPath } from './lib';
+import { t as tr, loc, setLang, getLang } from './i18n';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const DNF = ['неділя', 'понеділок', 'вівторок', 'середа', 'четвер', 'п’ятниця', 'субота'];
@@ -11,7 +12,7 @@ const REPS = { daily: 'щодня', weekdays: 'у будні', weekly: 'щоти
 const FONTS = { sf: '-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif', serif: 'ui-serif,"New York",Georgia,"Times New Roman",serif', rounded: 'ui-rounded,"SF Pro Rounded",system-ui,sans-serif', mono: 'ui-monospace,"SF Mono",Menlo,monospace' };
 const FONTN = { sf: 'Класичний (SF)', serif: 'Строгий (із засічками)', rounded: 'Округлий', mono: 'Моноширинний' };
 const ACCENTS = ['#0a84ff', '#ff375f', '#ff9f0a', '#30d158', '#bf5af2', '#64d2ff', '#ffd60a', '#ff453a'];
-const UI0 = { theme: 'dark', accent: '#0a84ff', font: 'sf' };
+const UI0 = { theme: 'dark', accent: '#0a84ff', font: 'sf', lang: 'uk' };
 const onColor = h => { const n = parseInt(String(h).slice(1), 16) || 0; return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150 ? '#000' : '#fff'; };
 const TABS = [['today', 'План'], ['cal', 'Календар'], ['tasks', 'Задачі'], ['folders', 'Папки'], ['cards', 'Навчання'], ['ai', 'ШІ']];
 const ICONS = {
@@ -36,7 +37,7 @@ const isTime = s => /^\d{2}:\d{2}$/.test(s || '');
 const toMin = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
 const isEv = i => i.kind === 'event';
 const isRep = i => !!i.repeat && i.repeat !== 'none';
-const normArea = v => (AREA[v] ? v : 'personal');
+const normArea = v => (tr(AREA[v]) ? v : 'personal');
 const normRep = v => (REP[v] ? v : 'none');
 const EMPTY = { kind: 'task', t: '', area: 'study', h: '', due: '', time: '', pri: 1, note: '', repeat: 'none', folder: '' };
 
@@ -178,11 +179,11 @@ const tScore = t => t.qs.reduce((s, q, i) => s + (q.type === 'choice' ? (t.ans[i
 async function callAI(body) {
   let r;
   try {
-    r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-pass': localStorage.getItem('helper-pass') || '' }, body: JSON.stringify(body) });
-  } catch (e) { throw new Error('Немає зв’язку із сервером.'); }
+    r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-pass': localStorage.getItem('helper-pass') || '' }, body: JSON.stringify({ ...body, lang: getLang() }) });
+  } catch (e) { throw new Error(tr("Немає зв’язку із сервером.")); }
   const d = await r.json().catch(() => ({}));
-  if (r.status === 401) { const err = new Error('Введіть пароль у налаштуваннях (шестерня вгорі) і повторіть запит.'); err.code = 401; throw err; }
-  if (!d.text) throw new Error(d.error || 'Порожня відповідь');
+  if (r.status === 401) { const err = new Error(tr("Введіть пароль у налаштуваннях (шестерня вгорі) і повторіть запит.")); err.code = 401; throw err; }
+  if (!d.text) throw new Error(d.error || tr("Порожня відповідь"));
   return d.text;
 }
 
@@ -222,6 +223,7 @@ export default function Home() {
   const [qi, setQi] = useState(0);
   const [folders, setFolders] = useState([]);
   const [ui, setUi] = useState(UI0);
+  setLang(ui.lang);
   const [fview, setFview] = useState(null);
   const [fform, setFform] = useState(null);
   const [nfold, setNfold] = useState('');
@@ -245,7 +247,7 @@ export default function Home() {
   useEffect(() => {
     if (!ready) return;
     const r = document.documentElement;
-    r.dataset.theme = ui.theme; r.style.setProperty('--ac', ui.accent); r.style.setProperty('--on', onColor(ui.accent)); r.style.setProperty('--font', FONTS[ui.font] || FONTS.sf);
+    r.lang = ui.lang === 'de' ? 'de' : 'uk'; r.dataset.theme = ui.theme; r.style.setProperty('--ac', ui.accent); r.style.setProperty('--on', onColor(ui.accent)); r.style.setProperty('--font', FONTS[ui.font] || FONTS.sf);
   }, [ui, ready]);
   useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [msgs, busy, tab]);
   const plan = useMemo(() => makePlan(items, cap), [items, cap]);
@@ -335,7 +337,7 @@ export default function Home() {
   const screenInfo = () => {
     const o = { tab };
     if (tab === 'today') o.date = selDate;
-    if (tab === 'folders' && fview != null) { const fo = folders.find(x => x.id === fview); o.folder = fo ? fo.name : 'Усі нотатки'; }
+    if (tab === 'folders' && fview != null) { const fo = folders.find(x => x.id === fview); o.folder = fo ? fo.name : tr("Усі нотатки"); }
     if (nview != null) o.openNote = ntext.slice(0, 3000);
     if (bridge.info) o.openDocument = bridge.info();
     return o;
@@ -343,7 +345,7 @@ export default function Home() {
   async function runDocOps(ops) {
     const undoOps = [], all = await listDocs();
     for (const o of ops) {
-      if (o.op === 'create') { const dd = newDoc(o.kind, o.title, o.folder, o.tpl); await putDoc(dd); undoOps.push({ del: dd.id }); }
+      if (o.op === 'create') { const dd = newDoc(o.kind, o.title || (tr(o.kind === 'board' ? 'Дошка' : 'Зошит') + ' ' + new Date().toLocaleDateString(loc())), o.folder, o.tpl); await putDoc(dd); undoOps.push({ del: dd.id }); }
       else {
         const dd = all.find(x => x.id === o.id); if (!dd) continue;
         undoOps.push({ put: { ...dd } });
@@ -356,7 +358,7 @@ export default function Home() {
     if (busy || (!text.trim() && !att.length)) return;
     const imgs = [...att];
     if (see && bridge.getImage) { try { const im = bridge.getImage(); if (im) imgs.push(im); } catch (e) {} }
-    const next = [...msgs, { role: 'user', text: text.trim() || 'Подивись на зображення.', pics: imgs.length }];
+    const next = [...msgs, { role: 'user', text: text.trim() || tr("Подивись на зображення."), pics: imgs.length }];
     setMsgs(next); setInp(''); setAtt([]); setBusy(true);
     try {
       const ctx = makeCtx();
@@ -371,7 +373,7 @@ export default function Home() {
         const cur = stRef.current; const res = applyActions(actions, cur); n = res.n;
         if (n) { setUndo(cur); applySt(res.st); setDocUndo(res.docOps.length ? await runDocOps(res.docOps) : []); }
       }
-      setMsgs([...next, { role: 'model', text: reply || (n ? 'Готово.' : 'Порожня відповідь'), n }]);
+      setMsgs([...next, { role: 'model', text: reply || (n ? tr("Готово.") : tr("Порожня відповідь")), n }]);
     } catch (e) {
       if (e.code === 401) { setAiOpen(false); setTab('set'); }
       setMsgs([...next, { role: 'model', text: e.message }]);
@@ -390,25 +392,25 @@ export default function Home() {
     if (out.length) setAtt(p => [...p, ...out].slice(0, 3));
   };
   const aiPanel = sheetMode => (<>
-    {sheetMode ? <div className="aihead"><b>Помічник</b><button className="chip" onClick={() => setAiOpen(false)}>Закрити</button></div>
-      : <div className="top"><h1>Помічник</h1><div className="sub">Керує задачами, подіями, папками, документами й карточками. Розуміє фото.</div></div>}
-    <div>{[['Склади план на тиждень з моїх задач', 1], ['Що робити просто зараз?', 1], ['Створи зошит для предмета: ', 0], ['Зроби картки за темою: ', 0], ['Поясни тему простими словами: ', 0]].map(([q, go]) =>
+    {sheetMode ? <div className="aihead"><b>{tr("Помічник")}</b><button className="chip" onClick={() => setAiOpen(false)}>{tr("Закрити")}</button></div>
+      : <div className="top"><h1>{tr("Помічник")}</h1><div className="sub">{tr("Керує задачами, подіями, папками, документами й карточками. Розуміє фото.")}</div></div>}
+    <div>{[[tr("Склади план на тиждень з моїх задач"), 1], [tr("Що робити просто зараз?"), 1], [tr("Створи зошит для предмета: "), 0], [tr("Зроби картки за темою: "), 0], [tr("Поясни тему простими словами: "), 0]].map(([q, go]) =>
       <button className="chip" key={q} onClick={() => go ? ask(q) : setInp(q)}>{q.replace(': ', '…')}</button>)}</div>
     <div className={sheetMode ? 'aimsgs' : ''}>
-      {msgs.map((x, i) => <div key={i} className={'bubble' + (x.role === 'user' ? ' me' : '')}>{x.text}{x.pics > 0 && <div className="applied">Додано зображень: {x.pics}</div>}{x.n > 0 && <div className="applied">Внесено змін: {x.n}</div>}</div>)}
-      {busy && <div className="sub">Думаю…</div>}
-      {undo && <div className="card undo"><span className="sub">ШІ змінив застосунок</span><button className="chip" style={{ margin: 0 }} onClick={doUndo}>Скасувати зміни</button></div>}
+      {msgs.map((x, i) => <div key={i} className={'bubble' + (x.role === 'user' ? ' me' : '')}>{x.text}{x.pics > 0 && <div className="applied">{tr("Додано зображень: ")}{x.pics}</div>}{x.n > 0 && <div className="applied">{tr("Внесено змін: ")}{x.n}</div>}</div>)}
+      {busy && <div className="sub">{tr("Думаю…")}</div>}
+      {undo && <div className="card undo"><span className="sub">{tr("ШІ змінив застосунок")}</span><button className="chip" style={{ margin: 0 }} onClick={doUndo}>{tr("Скасувати зміни")}</button></div>}
       <div ref={endRef} />
     </div>
     <div className={sheetMode ? 'aicomp' : 'card'} style={sheetMode ? {} : { marginTop: 12 }}>
-      {att.length > 0 && <div className="atts">{att.map((u, i) => <div className="att" key={i} style={{ backgroundImage: 'url(' + u + ')' }}><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label="Прибрати">×</button></div>)}</div>}
-      <textarea rows={sheetMode ? 2 : 3} placeholder="Напишіть, що зробити або що пояснити" value={inp} onChange={e => setInp(e.target.value)} />
+      {att.length > 0 && <div className="atts">{att.map((u, i) => <div className="att" key={i} style={{ backgroundImage: 'url(' + u + ')' }}><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label={tr("Прибрати")}>×</button></div>)}</div>}
+      <textarea rows={sheetMode ? 2 : 3} placeholder={tr("Напишіть, що зробити або що пояснити")} value={inp} onChange={e => setInp(e.target.value)} />
       <div className="row" style={{ flexWrap: 'wrap' }}>
-        <label className="chip fileb">Фото<input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
-        <button className={'chip' + (see ? ' on' : '')} style={{ margin: 0 }} onClick={() => setSee(!see)}>Показати ШІ цей екран</button>
-        <button className="chip" style={{ margin: 0 }} onClick={() => setMsgs([])}>Очистити</button>
+        <label className="chip fileb">{tr("Фото")}<input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
+        <button className={'chip' + (see ? ' on' : '')} style={{ margin: 0 }} onClick={() => setSee(!see)}>{tr("Показати ШІ цей екран")}</button>
+        <button className="chip" style={{ margin: 0 }} onClick={() => setMsgs([])}>{tr("Очистити")}</button>
       </div>
-      <button className="btn" onClick={() => ask(inp)} disabled={busy}>{busy ? 'Думаю…' : 'Надіслати'}</button>
+      <button className="btn" onClick={() => ask(inp)} disabled={busy}>{busy ? tr("Думаю…") : tr("Надіслати")}</button>
     </div>
   </>);
 
@@ -420,7 +422,7 @@ export default function Home() {
       const raw = await callAI({ mode: 'parse', messages: [{ role: 'user', text }], ctx: makeCtx() });
       const { reply, actions } = parseAI(raw);
       if (actions.length) setPreview({ actions, reply });
-      else setQaMsg(reply || 'Не вдалося розібрати. Уточніть дату і час.');
+      else setQaMsg(reply || tr("Не вдалося розібрати. Уточніть дату і час."));
     } catch (e) { setQaMsg(e.message); }
     setQaBusy(false);
   }
@@ -429,16 +431,16 @@ export default function Home() {
     if (res.n) { setUndo(cur); applySt(res.st); }
     setPreview(null); setQa('');
   };
-  const nm = id => { const i = items.find(x => x.id === Number(id)); return i ? '«' + i.t + '»' : 'задачу'; };
+  const nm = id => { const i = items.find(x => x.id === Number(id)); return i ? '«' + i.t + '»' : tr("задачу"); };
   const act2text = a => {
-    if (a.type === 'add_event') return 'Подія: ' + a.t + ', ' + (isDate(a.date) ? dm(a.date) : '?') + ' о ' + (a.time || '09:00') + (a.repeat && a.repeat !== 'none' ? ', ' + REPS[a.repeat] : '');
-    if (a.type === 'add_task') return 'Задача: ' + a.t + ', ' + (Number(a.h) > 0 ? a.h : 1) + ' год' + (isDate(a.due) ? ', до ' + dm(a.due) : '') + (a.repeat && a.repeat !== 'none' ? ', ' + REPS[a.repeat] : '');
-    if (a.type === 'update_task') return 'Змінити ' + nm(a.id);
-    if (a.type === 'complete_task') return 'Виконано: ' + nm(a.id);
-    if (a.type === 'delete_task') return 'Видалити ' + nm(a.id);
-    if (a.type === 'add_note') return 'Нотатка';
-    if (a.type === 'add_cards') return 'Картки: ' + ((a.cards || []).length);
-    return 'Зміна налаштувань';
+    if (a.type === 'add_event') return tr("Подія: ") + a.t + ', ' + (isDate(a.date) ? dm(a.date) : '?') + tr(" о ") + (a.time || '09:00') + (a.repeat && a.repeat !== 'none' ? ', ' + tr(REPS[a.repeat]) : '');
+    if (a.type === 'add_task') return tr("Задача: ") + a.t + ', ' + (Number(a.h) > 0 ? a.h : 1) + tr(" год") + (isDate(a.due) ? tr(", до ") + dm(a.due) : '') + (a.repeat && a.repeat !== 'none' ? ', ' + tr(REPS[a.repeat]) : '');
+    if (a.type === 'update_task') return tr("Змінити ") + nm(a.id);
+    if (a.type === 'complete_task') return tr("Виконано: ") + nm(a.id);
+    if (a.type === 'delete_task') return tr("Видалити ") + nm(a.id);
+    if (a.type === 'add_note') return tr("Нотатка");
+    if (a.type === 'add_cards') return tr("Картки: ") + ((a.cards || []).length);
+    return tr("Зміна налаштувань");
   };
 
   async function createTest() {
@@ -447,7 +449,7 @@ export default function Home() {
     try {
       const raw = await callAI({ mode: 'quiz', messages: [{ role: 'user', text: tcfg.topic }], ctx: { n: Number(tcfg.n), kind: tcfg.kind } });
       const q = parseQuiz(raw);
-      if (!q) throw new Error('ШІ повернув тест у неправильному форматі. Спробуйте ще раз.');
+      if (!q) throw new Error(tr("ШІ повернув тест у неправильному форматі. Спробуйте ще раз."));
       const t = { id: Date.now(), title: q.title || tcfg.topic.slice(0, 40), qs: q.questions, ans: {}, grades: {}, done: false, created: Date.now() };
       setTests([t, ...tests]); setTview(t.id); setQi(0);
     } catch (e) { setTmsg(e.message); }
@@ -465,23 +467,23 @@ export default function Home() {
       const o = JSON.parse(clean(raw)); const g = { ...(t.grades || {}) };
       (o.grades || []).forEach(x => { const i = Number(x.i); if (t.qs[i]) g[i] = { score: Math.min(1, Math.max(0, Number(x.score) || 0)), comment: String(x.comment || '') }; });
       patchTest(t.id, { grades: g });
-    } catch (e) { setTmsg('Не вдалося оцінити відповіді. Спробуйте ще раз.'); }
+    } catch (e) { setTmsg(tr("Не вдалося оцінити відповіді. Спробуйте ще раз.")); }
     setTbusy(false);
   }
   const cardsFromTest = t => {
     const bad = t.qs.map((q, i) => ({ q, i })).filter(({ q, i }) => okOf(t, q, i) !== true);
     const add = bad.map(({ q }, k) => ({ id: Date.now() + k, deck: t.title, q: q.q, a: (q.type === 'choice' ? q.options[q.answer] : q.answer) + (q.explain ? '\n' + q.explain : ''), known: false, seq: Date.now() + k }));
-    setCards([...cards, ...add]); setTmsg(add.length ? 'Додано карток: ' + add.length : 'Помилок немає, картки не потрібні.');
+    setCards([...cards, ...add]); setTmsg(add.length ? tr("Додано карток: ") + add.length : tr("Помилок немає, картки не потрібні."));
   };
 
   const row = i => (
     <div className={'it' + (i.done ? ' done' : '')} key={i.id}>
       {isEv(i) ? <span className="evd" /> : <input type="checkbox" checked={isRep(i) ? (i.doneDates || []).includes(today) : !!i.done} onChange={() => tog(i.id, today)} />}
       <div className="b" onClick={() => openEdit(i)}><div className="t">{i.t}</div>
-        <div className="meta"><span className={'tag ' + i.area}>{AREA[i.area]}</span>
-          {isEv(i) ? <span>{i.due && !isRep(i) ? dm(i.due) + ' ' : ''}{i.time}</span> : <span>{i.h} год</span>}
-          {!isEv(i) && !isRep(i) && i.due && <span className={!i.done && i.due < today ? 'late' : ''}>до {dm(i.due)}</span>}
-          {isRep(i) && <span>{REPS[i.repeat]}</span>}{i.pri === 2 && <span className="late">Важливо</span>}</div>
+        <div className="meta"><span className={'tag ' + i.area}>{tr(AREA[i.area])}</span>
+          {isEv(i) ? <span>{i.due && !isRep(i) ? dm(i.due) + ' ' : ''}{i.time}</span> : <span>{i.h} {tr(" год")}</span>}
+          {!isEv(i) && !isRep(i) && i.due && <span className={!i.done && i.due < today ? 'late' : ''}>{tr("до ")}{dm(i.due)}</span>}
+          {isRep(i) && <span>{tr(REPS[i.repeat])}</span>}{i.pri === 2 && <span className="late">{tr("Важливо")}</span>}</div>
         {i.note && <div className="note">{i.note}</div>}</div>
     </div>);
   const section = (title, list) => list.length > 0 && <div className="card"><div className="sec">{title}</div>{list.map(row)}</div>;
@@ -502,8 +504,8 @@ export default function Home() {
   const timeline = layoutDay(dayPlan ? dayPlan.blocks : [], evOn(selDate), start * 60);
   const doneOnDay = oneOff.filter(i => i.done && i.doneAt === selDate);
   const shiftDay = n => { const d = new Date(selDate + 'T00:00:00'); d.setDate(d.getDate() + n); setSel(ymd(d) === today ? '' : ymd(d)); };
-  const dateStr = now.toLocaleDateString('uk-UA', { weekday: 'long', day: 'numeric', month: 'long' });
-  const selLabel = new Date(selDate + 'T00:00:00').toLocaleDateString('uk-UA', { weekday: 'long', day: 'numeric', month: 'long' });
+  const dateStr = now.toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' });
+  const selLabel = new Date(selDate + 'T00:00:00').toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' });
   const left = cards.filter(c => !c.known).sort((a, b) => a.seq - b.seq);
   const cur = left[0];
   const addCard = () => { if (!cq.trim() || !ca.trim()) return; setCards([...cards, { id: Date.now(), deck: '', q: cq.trim(), a: ca.trim(), known: false, seq: Date.now() }]); setCq(''); setCa(''); };
@@ -514,61 +516,61 @@ export default function Home() {
   const cells = [...Array(offset).fill(null), ...Array.from({ length: new Date(cy, cmo + 1, 0).getDate() }, (_, k) => cy + '-' + pad(cmo + 1) + '-' + pad(k + 1))];
   const planDays = {}; plan.days.forEach(d => { if (d.blocks.length) planDays[d.date] = true; });
   const hasDot = d => planDays[d] || evOn(d).length > 0 || open.some(i => i.due === d);
-  const monthName = new Date(cy, cmo, 1).toLocaleDateString('uk-UA', { month: 'long', year: 'numeric' });
+  const monthName = new Date(cy, cmo, 1).toLocaleDateString(loc(), { month: 'long', year: 'numeric' });
   const tt = tests.find(t => t.id === tview);
   const ev = f.kind === 'event';
 
   return (
     <div className="wrap">
-      {tab !== 'set' && <button className="gear" onClick={() => setTab('set')} aria-label="Налаштування"><Icon n="set" s={22} /></button>}
+      {tab !== 'set' && <button className="gear" onClick={() => setTab('set')} aria-label={tr("Налаштування")}><Icon n="set" s={22} /></button>}
 
       {tab === 'today' && <>
-        <div className="top"><div className="date">{selDate === today ? dateStr : selLabel}</div><h1>{selDate === today ? 'Сьогодні' : 'План дня'}</h1>
-          <div className="sub">{selDate === today ? 'Виконано: ' + doneToday + ', залишилось задач на ' + r1(openH) + ' год' : 'Записів у плані: ' + timeline.length}</div>
-          <div className="daynav"><button className="chip" onClick={() => shiftDay(-1)} aria-label="Попередній день">‹</button>{selDate !== today && <button className="chip" onClick={() => setSel('')}>Сьогодні</button>}<button className="chip" onClick={() => shiftDay(1)} aria-label="Наступний день">›</button></div></div>
-        <div className="qa"><input placeholder="Швидко додати: стоматолог у пʼятницю о 13:00" value={qa} onChange={e => setQa(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') quickAdd(); }} /><button className="qab" onClick={quickAdd} disabled={qaBusy} aria-label="Додати">{qaBusy ? '…' : '+'}</button></div>
+        <div className="top"><div className="date">{selDate === today ? dateStr : selLabel}</div><h1>{selDate === today ? tr("Сьогодні") : tr("План дня")}</h1>
+          <div className="sub">{selDate === today ? tr("Виконано: ") + doneToday + tr(", залишилось задач на ") + r1(openH) + tr(" год") : tr("Записів у плані: ") + timeline.length}</div>
+          <div className="daynav"><button className="chip" onClick={() => shiftDay(-1)} aria-label={tr("Попередній день")}>‹</button>{selDate !== today && <button className="chip" onClick={() => setSel('')}>{tr("Сьогодні")}</button>}<button className="chip" onClick={() => shiftDay(1)} aria-label={tr("Наступний день")}>›</button></div></div>
+        <div className="qa"><input placeholder={tr("Швидко додати: стоматолог у пʼятницю о 13:00")} value={qa} onChange={e => setQa(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') quickAdd(); }} /><button className="qab" onClick={quickAdd} disabled={qaBusy} aria-label={tr("Додати")}>{qaBusy ? '…' : '+'}</button></div>
         {qaMsg && <div className="sub" style={{ margin: '-8px 0 16px' }}>{qaMsg}</div>}
-        {preview && <div className="card"><div className="sec">Додати це?</div>{preview.actions.map((a, i) => <div className="blk" key={i}><span>{act2text(a)}</span></div>)}{preview.reply && <div className="sub" style={{ marginTop: 8 }}>{preview.reply}</div>}
-          <div className="row"><button className="btn" onClick={confirmPreview}>Додати</button><button className="btn alt" onClick={() => setPreview(null)}>Скасувати</button></div></div>}
-        {selDate === today && overdue.length > 0 && <div className="card warn"><div className="sec">Прострочено</div>{overdue.map(row)}</div>}
+        {preview && <div className="card"><div className="sec">{tr("Додати це?")}</div>{preview.actions.map((a, i) => <div className="blk" key={i}><span>{act2text(a)}</span></div>)}{preview.reply && <div className="sub" style={{ marginTop: 8 }}>{preview.reply}</div>}
+          <div className="row"><button className="btn" onClick={confirmPreview}>{tr("Додати")}</button><button className="btn alt" onClick={() => setPreview(null)}>{tr("Скасувати")}</button></div></div>}
+        {selDate === today && overdue.length > 0 && <div className="card warn"><div className="sec">{tr("Прострочено")}</div>{overdue.map(row)}</div>}
         {timeline.length ? timeline.map(b => (
           <div className="tb" key={b.kind + b.id + '-' + b.s}>
             <div className="tm">{hm(b.s)}<span>{hm(b.e)}</span></div>
-            <div className={'tc ' + (b.kind === 'event' ? 'event' : b.area)} onClick={() => openEdit(items.find(i => i.id === b.id))}><div className="tt">{b.t}</div><div className="ts">{b.kind === 'event' ? 'Подія' : AREA[b.area]}{b.rep ? ', повтор' : ''}, {r1((b.e - b.s) / 60)} год</div></div>
-            {b.kind === 'event' ? <span /> : <input type="checkbox" checked={!!b.done} onChange={() => tog(b.id, selDate)} aria-label="Готово" />}
-          </div>)) : <div className="empty">{selDate < today ? 'Минулий день.' : 'На цей день нічого немає. Додайте рядком вище або кнопкою «+».'}</div>}
-        {selDate < today && doneOnDay.length > 0 && <div className="card"><div className="sec">Виконано</div>{doneOnDay.map(row)}</div>}
-        {selDate === today && plan.late.length > 0 && <div className="card warn"><div className="sec">Не вміщується в план</div>{plan.late.map((l, i) => <div className="blk" key={i}><span>{l.t}</span><span>{r1(l.left)} год</span></div>)}</div>}
-        {selDate === today && <button className="btn" onClick={() => { setTab('ai'); ask('Що мені краще зробити сьогодні і в якому порядку?'); }}>Запитати ШІ, з чого почати</button>}
+            <div className={'tc ' + (b.kind === 'event' ? 'event' : b.area)} onClick={() => openEdit(items.find(i => i.id === b.id))}><div className="tt">{b.t}</div><div className="ts">{b.kind === 'event' ? tr("Подія") : tr(AREA[b.area])}{b.rep ? tr(", повтор") : ''}, {r1((b.e - b.s) / 60)} {tr(" год")}</div></div>
+            {b.kind === 'event' ? <span /> : <input type="checkbox" checked={!!b.done} onChange={() => tog(b.id, selDate)} aria-label={tr("Готово")} />}
+          </div>)) : <div className="empty">{selDate < today ? tr("Минулий день.") : tr("На цей день нічого немає. Додайте рядком вище або кнопкою «+».")}</div>}
+        {selDate < today && doneOnDay.length > 0 && <div className="card"><div className="sec">{tr("Виконано")}</div>{doneOnDay.map(row)}</div>}
+        {selDate === today && plan.late.length > 0 && <div className="card warn"><div className="sec">{tr("Не вміщується в план")}</div>{plan.late.map((l, i) => <div className="blk" key={i}><span>{l.t}</span><span>{r1(l.left)} {tr(" год")}</span></div>)}</div>}
+        {selDate === today && <button className="btn" onClick={() => { setTab('ai'); ask(tr("Що мені краще зробити сьогодні і в якому порядку?")); }}>{tr("Запитати ШІ, з чого почати")}</button>}
       </>}
 
       {tab === 'cal' && <>
-        <div className="top"><h1>Календар</h1><div className="sub">Крапка означає, що в цей день щось заплановано</div></div>
-        <div className="cmh"><button className="chip" onClick={() => setCalM(cm - 1)} aria-label="Попередній місяць">‹</button><span>{monthName}</span><button className="chip" onClick={() => setCalM(cm + 1)} aria-label="Наступний місяць">›</button></div>
+        <div className="top"><h1>{tr("Календар")}</h1><div className="sub">{tr("Крапка означає, що в цей день щось заплановано")}</div></div>
+        <div className="cmh"><button className="chip" onClick={() => setCalM(cm - 1)} aria-label={tr("Попередній місяць")}>‹</button><span>{monthName}</span><button className="chip" onClick={() => setCalM(cm + 1)} aria-label={tr("Наступний місяць")}>›</button></div>
         <div className="cal">
-          {['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'].map(w => <div className="cw" key={w}>{w}</div>)}
+          {[tr("Пн"), tr("Вт"), tr("Ср"), tr("Чт"), tr("Пт"), tr("Сб"), tr("Нд")].map(w => <div className="cw" key={w}>{w}</div>)}
           {cells.map((d, i) => d ? <button key={i} className={'cd' + (d === today ? ' td' : '') + (d === selDate ? ' sel' : '')} onClick={() => setSel(d === today ? '' : d)}>{+d.slice(8)}{hasDot(d) && <i className="dot" />}</button> : <div key={i} />)}
         </div>
         <div className="card" style={{ marginTop: 22 }}>
           <div className="sec">{selLabel}</div>
-          {evOn(selDate).map(e => <div className="blk" key={'e' + e.id} onClick={() => openEdit(e)}><span>{e.time} {e.t}</span><span className="sub">Подія</span></div>)}
-          {dayPlan && dayPlan.blocks.map((b, i) => <div className="blk" key={'p' + i} onClick={() => openEdit(items.find(x => x.id === b.id))}><span>{b.t}</span><span className="sub">{r1(b.h)} год</span></div>)}
+          {evOn(selDate).map(e => <div className="blk" key={'e' + e.id} onClick={() => openEdit(e)}><span>{e.time} {e.t}</span><span className="sub">{tr("Подія")}</span></div>)}
+          {dayPlan && dayPlan.blocks.map((b, i) => <div className="blk" key={'p' + i} onClick={() => openEdit(items.find(x => x.id === b.id))}><span>{b.t}</span><span className="sub">{r1(b.h)} {tr(" год")}</span></div>)}
           {open.filter(i => i.due === selDate).map(row)}
-          {!evOn(selDate).length && !(dayPlan && dayPlan.blocks.length) && !open.some(i => i.due === selDate) && <div className="empty">На цей день нічого немає.</div>}
-          <div style={{ marginTop: 12 }}><button className="chip" onClick={() => setTab('today')}>Відкрити план дня</button></div>
+          {!evOn(selDate).length && !(dayPlan && dayPlan.blocks.length) && !open.some(i => i.due === selDate) && <div className="empty">{tr("На цей день нічого немає.")}</div>}
+          <div style={{ marginTop: 12 }}><button className="chip" onClick={() => setTab('today')}>{tr("Відкрити план дня")}</button></div>
         </div>
       </>}
 
       {tab === 'tasks' && <>
-        <div className="top"><h1>Задачі</h1><div className="sub">Відкритих: {open.length}. Торкніться запису, щоб змінити.</div></div>
-        {!items.length && <div className="card"><div className="empty">Поки порожньо. Натисніть «+», щоб додати задачу або подію.</div></div>}
-        {section('Прострочено', overdue)}{section('Події', upEv)}{section('З терміном', soon)}{section('Без терміну', nodue)}{section('Повторювані', repList)}{section('Виконано', doneList)}
+        <div className="top"><h1>{tr("Задачі")}</h1><div className="sub">{tr("Відкритих: ")}{open.length}{tr(". Торкніться запису, щоб змінити.")}</div></div>
+        {!items.length && <div className="card"><div className="empty">{tr("Поки порожньо. Натисніть «+», щоб додати задачу або подію.")}</div></div>}
+        {section(tr("Прострочено"), overdue)}{section(tr("Події"), upEv)}{section(tr("З терміном"), soon)}{section(tr("Без терміну"), nodue)}{section(tr("Повторювані"), repList)}{section(tr("Виконано"), doneList)}
       </>}
 
       {tab === 'folders' && fview == null && <>
-        <div className="top"><h1>Папки</h1><div className="sub">Групуйте нотатки й задачі. Торкніться плитки, щоб відкрити, або «+», щоб створити папку.</div></div>
+        <div className="top"><h1>{tr("Папки")}</h1><div className="sub">{tr("Групуйте нотатки й задачі. Торкніться плитки, щоб відкрити, або «+», щоб створити папку.")}</div></div>
         <div className="fgrid">
-          <div className="ftile plain" onClick={() => setFview('all')}><div className="fname">Усі нотатки</div><div className="fsub">{notes.length}</div></div>
+          <div className="ftile plain" onClick={() => setFview('all')}><div className="fname">{tr("Усі нотатки")}</div><div className="fsub">{notes.length}</div></div>
           {folders.filter(fo => fo.parent === '').map(folderTile)}
         </div>
         <Docs folderId={null} folders={folders} onNewNote={newNote} />
@@ -579,146 +581,147 @@ export default function Home() {
         const nl = notes.filter(n => fview === 'all' || n.folder === fview).filter(n => n.text.toLowerCase().includes(nq.toLowerCase()));
         const il = fo ? items.filter(i => i.folder === fo.id) : [];
         return <>
-          <div className="top"><button className="chip" data-fid={fo && fo.parent !== '' && fo.parent != null ? fo.parent : ''} onClick={() => { setFview(fo && fo.parent !== '' && fo.parent != null ? fo.parent : null); setNq(''); }} onDragOver={e => e.preventDefault()} onDrop={e => dropDoc(e, fo && fo.parent !== '' && fo.parent != null ? fo.parent : '')}>‹ {fo && fo.parent !== '' && fo.parent != null ? ((folders.find(x => x.id === fo.parent) || {}).name || 'Назад') : 'Папки'}</button><h1>{fo ? fo.name : 'Усі нотатки'}</h1>{fo && <div className="sub">{folderPath(folders, fo.id)}</div>}
-            <div className="daynav"><button className="chip" onClick={() => openNote('new')}>Нова нотатка</button>{fo && <button className="chip" onClick={openNew}>Нова задача</button>}{fo && <button className="chip" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: fo.id })}>Нова підпапка</button>}{fo && <button className="chip" onClick={() => setFform({ ...fo })}>Змінити</button>}</div></div>
+          <div className="top"><button className="chip" data-fid={fo && fo.parent !== '' && fo.parent != null ? fo.parent : ''} onClick={() => { setFview(fo && fo.parent !== '' && fo.parent != null ? fo.parent : null); setNq(''); }} onDragOver={e => e.preventDefault()} onDrop={e => dropDoc(e, fo && fo.parent !== '' && fo.parent != null ? fo.parent : '')}>‹ {fo && fo.parent !== '' && fo.parent != null ? ((folders.find(x => x.id === fo.parent) || {}).name || tr("Назад")) : tr("Папки")}</button><h1>{fo ? fo.name : tr("Усі нотатки")}</h1>{fo && <div className="sub">{folderPath(folders, fo.id)}</div>}
+            <div className="daynav"><button className="chip" onClick={() => openNote('new')}>{tr("Нова нотатка")}</button>{fo && <button className="chip" onClick={openNew}>{tr("Нова задача")}</button>}{fo && <button className="chip" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: fo.id })}>{tr("Нова підпапка")}</button>}{fo && <button className="chip" onClick={() => setFform({ ...fo })}>{tr("Змінити")}</button>}</div></div>
           {fo && folders.some(x => x.parent === fo.id) && <div className="fgrid" style={{ marginBottom: 16 }}>{folders.filter(x => x.parent === fo.id).map(folderTile)}</div>}
-          <input placeholder="Пошук нотаток" value={nq} onChange={e => setNq(e.target.value)} style={{ marginBottom: 14 }} />
-          {il.length > 0 && <div className="card"><div className="sec">Задачі й події</div>{il.map(row)}</div>}
+          <input placeholder={tr("Пошук нотаток")} value={nq} onChange={e => setNq(e.target.value)} style={{ marginBottom: 14 }} />
+          {il.length > 0 && <div className="card"><div className="sec">{tr("Задачі й події")}</div>{il.map(row)}</div>}
           {nl.map(n => (
             <div className="card" key={n.id} onClick={() => openNote(n.id)}>
               <div className="t" style={{ fontWeight: 600 }}>{n.text.split('\n')[0].slice(0, 60)}</div>
               <div className="note">{n.text.slice(0, 120)}</div>
-              <div className="meta"><span>{new Date(n.upd).toLocaleDateString('uk-UA')}</span><span>{n.text.split(/\s+/).filter(Boolean).length} слів</span></div>
+              <div className="meta"><span>{new Date(n.upd).toLocaleDateString(loc())}</span><span>{n.text.split(/\s+/).filter(Boolean).length} {tr(" слів")}</span></div>
             </div>))}
-          {!nl.length && !il.length && <div className="card"><div className="empty">Тут поки порожньо.</div></div>}
+          {!nl.length && !il.length && <div className="card"><div className="empty">{tr("Тут поки порожньо.")}</div></div>}
           <Docs folderId={fview} folders={folders} onNewNote={newNote} />
         </>;
       })()}
 
       {tab === 'cards' && <>
-        <div className="top"><h1>Навчання</h1>
-          <div className="seg" style={{ marginTop: 14 }}><button className={stab === 'cards' ? 'on' : ''} onClick={() => setStab('cards')}>Картки</button><button className={stab === 'tests' ? 'on' : ''} onClick={() => setStab('tests')}>Тести</button></div></div>
+        <div className="top"><h1>{tr("Навчання")}</h1>
+          <div className="seg" style={{ marginTop: 14 }}><button className={stab === 'cards' ? 'on' : ''} onClick={() => setStab('cards')}>{tr("Картки")}</button><button className={stab === 'tests' ? 'on' : ''} onClick={() => setStab('tests')}>{tr("Тести")}</button></div></div>
 
         {stab === 'cards' && <>
-          <div className="sub" style={{ marginBottom: 12 }}>Залишилось {left.length} з {cards.length}</div>
-          {cur ? <div className="flip" onClick={() => setShow(!show)}><div className="sub">{cur.deck || 'Без колоди'}</div><div className="fq">{show ? cur.a : cur.q}</div><div className="sub">{show ? 'Відповідь' : 'Торкніться, щоб побачити відповідь'}</div></div>
-            : <div className="card"><div className="empty">{cards.length ? 'Усі картки вивчено!' : 'Карток ще немає. Попросіть ШІ створити їх за темою, додайте вручну або створіть із помилок у тесті.'}</div></div>}
+          <div className="sub" style={{ marginBottom: 12 }}>{tr("Залишилось ")}{left.length} {tr(" з ")}{cards.length}</div>
+          {cur ? <div className="flip" onClick={() => setShow(!show)}><div className="sub">{cur.deck || tr("Без колоди")}</div><div className="fq">{show ? cur.a : cur.q}</div><div className="sub">{show ? tr("Відповідь") : tr("Торкніться, щоб побачити відповідь")}</div></div>
+            : <div className="card"><div className="empty">{cards.length ? tr("Усі картки вивчено!") : tr("Карток ще немає. Попросіть ШІ створити їх за темою, додайте вручну або створіть із помилок у тесті.")}</div></div>}
           {cur && show && <div className="row">
-            <button className="btn" onClick={() => { setCards(cards.map(c => c.id === cur.id ? { ...c, known: true } : c)); setShow(false); }}>Знаю</button>
-            <button className="btn alt" onClick={() => { setCards(cards.map(c => c.id === cur.id ? { ...c, seq: Date.now() } : c)); setShow(false); }}>Ще раз</button></div>}
-          <div className="card"><div className="sec">Нова картка</div>
-            <input placeholder="Питання" value={cq} onChange={e => setCq(e.target.value)} />
-            <div className="row"><input placeholder="Відповідь" value={ca} onChange={e => setCa(e.target.value)} /></div>
-            <button className="btn" onClick={addCard}>Додати картку</button>
-            {cards.length > 0 && <div style={{ marginTop: 10 }}><button className="chip" onClick={() => setCards(cards.map(c => ({ ...c, known: false })))}>Почати спочатку</button>{cur && <button className="chip" onClick={() => { setCards(cards.filter(c => c.id !== cur.id)); setShow(false); }}>Видалити цю картку</button>}</div>}
+            <button className="btn" onClick={() => { setCards(cards.map(c => c.id === cur.id ? { ...c, known: true } : c)); setShow(false); }}>{tr("Знаю")}</button>
+            <button className="btn alt" onClick={() => { setCards(cards.map(c => c.id === cur.id ? { ...c, seq: Date.now() } : c)); setShow(false); }}>{tr("Ще раз")}</button></div>}
+          <div className="card"><div className="sec">{tr("Нова картка")}</div>
+            <input placeholder={tr("Питання")} value={cq} onChange={e => setCq(e.target.value)} />
+            <div className="row"><input placeholder={tr("Відповідь")} value={ca} onChange={e => setCa(e.target.value)} /></div>
+            <button className="btn" onClick={addCard}>{tr("Додати картку")}</button>
+            {cards.length > 0 && <div style={{ marginTop: 10 }}><button className="chip" onClick={() => setCards(cards.map(c => ({ ...c, known: false })))}>{tr("Почати спочатку")}</button>{cur && <button className="chip" onClick={() => { setCards(cards.filter(c => c.id !== cur.id)); setShow(false); }}>{tr("Видалити цю картку")}</button>}</div>}
           </div>
         </>}
 
         {stab === 'tests' && <>
-          <div className="card"><div className="sec">Новий тест</div>
-            <textarea rows={4} placeholder="Тема або матеріал. Наприклад: Present Perfect, німецькі артиклі, анатомія зуба, або вставте свій конспект" value={tcfg.topic} onChange={e => setTcfg({ ...tcfg, topic: e.target.value })} />
-            <div className="row"><select value={tcfg.n} onChange={e => setTcfg({ ...tcfg, n: e.target.value })}><option value={5}>5 питань</option><option value={10}>10 питань</option><option value={15}>15 питань</option></select>
-              <select value={tcfg.kind} onChange={e => setTcfg({ ...tcfg, kind: e.target.value })}><option value="mix">Змішаний</option><option value="choice">Тільки з варіантами</option><option value="open">Відкриті питання</option></select></div>
-            <button className="btn" onClick={createTest} disabled={tbusy}>{tbusy ? 'Складаю тест…' : 'Створити тест'}</button>
+          <div className="card"><div className="sec">{tr("Новий тест")}</div>
+            <textarea rows={4} placeholder={tr("Тема або матеріал. Наприклад: Present Perfect, німецькі артиклі, анатомія зуба, або вставте свій конспект")} value={tcfg.topic} onChange={e => setTcfg({ ...tcfg, topic: e.target.value })} />
+            <div className="row"><select value={tcfg.n} onChange={e => setTcfg({ ...tcfg, n: e.target.value })}><option value={5}>{tr("5 питань")}</option><option value={10}>{tr("10 питань")}</option><option value={15}>{tr("15 питань")}</option></select>
+              <select value={tcfg.kind} onChange={e => setTcfg({ ...tcfg, kind: e.target.value })}><option value="mix">{tr("Змішаний")}</option><option value="choice">{tr("Тільки з варіантами")}</option><option value="open">{tr("Відкриті питання")}</option></select></div>
+            <button className="btn" onClick={createTest} disabled={tbusy}>{tbusy ? tr("Складаю тест…") : tr("Створити тест")}</button>
             {tmsg && <div className="sub" style={{ marginTop: 10 }}>{tmsg}</div>}</div>
-          {tests.length > 0 && <div className="card"><div className="sec">Мої тести</div>{tests.map(t => (
+          {tests.length > 0 && <div className="card"><div className="sec">{tr("Мої тести")}</div>{tests.map(t => (
             <div className="it" key={t.id}><div className="b" onClick={() => { setTview(t.id); setQi(0); setTmsg(''); }}><div className="t">{t.title}</div>
-              <div className="meta"><span>{new Date(t.created).toLocaleDateString('uk-UA')}</span><span>{t.done ? r1(tScore(t)) + ' з ' + t.qs.length : 'не завершено'}</span></div></div>
-              <button className="x" onClick={() => setTests(tests.filter(x => x.id !== t.id))} aria-label="Видалити">×</button></div>))}</div>}
+              <div className="meta"><span>{new Date(t.created).toLocaleDateString(loc())}</span><span>{t.done ? r1(tScore(t)) + tr(" з ") + t.qs.length : tr("не завершено")}</span></div></div>
+              <button className="x" onClick={() => setTests(tests.filter(x => x.id !== t.id))} aria-label={tr("Видалити")}>×</button></div>))}</div>}
         </>}
       </>}
 
       {tab === 'ai' && aiPanel(false)}
 
       {tab === 'set' && <>
-        <div className="top"><h1>Налаштування</h1></div>
-        <div className="card"><div className="sec">Тема</div><div className="seg">{[['dark', 'Темна'], ['light', 'Світла'], ['auto', 'Авто']].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>
-        <div className="card"><div className="sec">Колір акценту</div><div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (ui.accent === c ? ' on' : '')} style={{ background: c }} onClick={() => setUi({ ...ui, accent: c })} aria-label={c} />)}<input type="color" value={ui.accent} onChange={e => setUi({ ...ui, accent: e.target.value })} aria-label="Свій колір" /></div></div>
-        <div className="card"><div className="sec">Шрифт</div>{Object.entries(FONTN).map(([k, n]) => <button key={k} className={'fopt' + (ui.font === k ? ' on' : '')} style={{ fontFamily: FONTS[k] }} onClick={() => setUi({ ...ui, font: k })}>{n}</button>)}</div>
-        <div className="card"><div className="sec">Пароль застосунку для ШІ</div>
-          <input type="password" placeholder="Пароль" defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>
-        <div className="card"><div className="sec">О котрій годині починаєте займатися</div>
+        <div className="top"><h1>{tr("Налаштування")}</h1></div>
+        <div className="card"><div className="sec">Мова / Sprache</div><div className="seg">{[['uk', 'Українська'], ['de', 'Deutsch']].map(([k, n]) => <button key={k} className={ui.lang === k ? 'on' : ''} onClick={() => setUi({ ...ui, lang: k })}>{n}</button>)}</div></div>
+        <div className="card"><div className="sec">{tr("Тема")}</div><div className="seg">{[['dark', tr("Темна")], ['light', tr("Світла")], ['auto', tr("Авто")]].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>
+        <div className="card"><div className="sec">{tr("Колір акценту")}</div><div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (ui.accent === c ? ' on' : '')} style={{ background: c }} onClick={() => setUi({ ...ui, accent: c })} aria-label={c} />)}<input type="color" value={ui.accent} onChange={e => setUi({ ...ui, accent: e.target.value })} aria-label={tr("Свій колір")} /></div></div>
+        <div className="card"><div className="sec">{tr("Шрифт")}</div>{Object.entries(FONTN).map(([k, n]) => <button key={k} className={'fopt' + (ui.font === k ? ' on' : '')} style={{ fontFamily: FONTS[k] }} onClick={() => setUi({ ...ui, font: k })}>{tr(n)}</button>)}</div>
+        <div className="card"><div className="sec">{tr("Пароль застосунку для ШІ")}</div>
+          <input type="password" placeholder={tr("Пароль")} defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>
+        <div className="card"><div className="sec">{tr("О котрій годині починаєте займатися")}</div>
           <input type="number" min="0" max="23" value={start} onChange={e => setStart(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))} /></div>
-        <div className="card"><div className="sec">Годин на день для задач</div>
-          {[1, 2, 3, 4, 5, 6, 0].map(i => <div className="row" style={{ alignItems: 'center' }} key={i}><span style={{ width: 36 }}>{DN[i]}</span>
+        <div className="card"><div className="sec">{tr("Годин на день для задач")}</div>
+          {[1, 2, 3, 4, 5, 6, 0].map(i => <div className="row" style={{ alignItems: 'center' }} key={i}><span style={{ width: 36 }}>{tr(DN[i])}</span>
             <input type="number" min="0" max="16" step="0.5" value={cap[i]} onChange={e => setCap(cap.map((c, j) => j === i ? Math.max(0, parseFloat(e.target.value) || 0) : c))} /></div>)}</div>
-        <button className="btn alt" onClick={() => setTab('today')}>Назад</button>
+        <button className="btn alt" onClick={() => setTab('today')}>{tr("Назад")}</button>
       </>}
 
-      {(tab === 'today' || tab === 'tasks' || tab === 'cal') && <button className="fab" onClick={openNew} aria-label="Додати">+</button>}
-      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: '' })} aria-label="Нова папка">+</button>}
+      {(tab === 'today' || tab === 'tasks' || tab === 'cal') && <button className="fab" onClick={openNew} aria-label={tr("Додати")}>+</button>}
+      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: '' })} aria-label={tr("Нова папка")}>+</button>}
 
       {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" onClick={e => e.stopPropagation()}>
-        <div className="seg"><button className={!ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'task' })}>Задача</button><button className={ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'event' })}>Подія</button></div>
-        <input style={{ marginTop: 12 }} autoFocus placeholder={ev ? 'Наприклад: стоматолог' : 'Що потрібно зробити або вивчити'} value={f.t} onChange={e => setF({ ...f, t: e.target.value })} />
-        <div className="row"><select value={f.area} onChange={e => setF({ ...f, area: e.target.value })}>{Object.entries(AREA).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-          {ev ? <input type="time" value={f.time} onChange={e => setF({ ...f, time: e.target.value })} /> : <input type="number" min="0.5" step="0.5" placeholder="Годин" value={f.h} onChange={e => setF({ ...f, h: e.target.value })} />}</div>
+        <div className="seg"><button className={!ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'task' })}>{tr("Задача")}</button><button className={ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'event' })}>{tr("Подія")}</button></div>
+        <input style={{ marginTop: 12 }} autoFocus placeholder={ev ? tr("Наприклад: стоматолог") : tr("Що потрібно зробити або вивчити")} value={f.t} onChange={e => setF({ ...f, t: e.target.value })} />
+        <div className="row"><select value={f.area} onChange={e => setF({ ...f, area: e.target.value })}>{Object.entries(AREA).map(([k, v]) => <option key={k} value={k}>{tr(v)}</option>)}</select>
+          {ev ? <input type="time" value={f.time} onChange={e => setF({ ...f, time: e.target.value })} /> : <input type="number" min="0.5" step="0.5" placeholder={tr("Годин")} value={f.h} onChange={e => setF({ ...f, h: e.target.value })} />}</div>
         <div className="row"><input type="date" value={f.due} onChange={e => setF({ ...f, due: e.target.value })} />
-          {ev ? <input type="number" min="0.5" step="0.5" placeholder="Тривалість, год" value={f.h} onChange={e => setF({ ...f, h: e.target.value })} /> : <select value={f.pri} onChange={e => setF({ ...f, pri: e.target.value })}><option value={1}>Звичайна</option><option value={2}>Важлива</option></select>}</div>
-        <div className="row"><select value={f.repeat} onChange={e => setF({ ...f, repeat: e.target.value })}>{Object.entries(REP).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
-        {folders.length > 0 && <div className="row"><select value={f.folder} onChange={e => setF({ ...f, folder: e.target.value })}><option value="">Без папки</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select></div>}
-        <textarea rows={2} placeholder="Нотатка (необов’язково)" value={f.note} onChange={e => setF({ ...f, note: e.target.value })} />
-        <div className="row"><button className="btn" onClick={saveTask}>{sheet === 'new' ? 'Додати' : 'Зберегти'}</button>
-          {sheet !== 'new' && <button className="btn alt" onClick={() => del(sheet)}>Видалити</button>}</div>
+          {ev ? <input type="number" min="0.5" step="0.5" placeholder={tr("Тривалість, год")} value={f.h} onChange={e => setF({ ...f, h: e.target.value })} /> : <select value={f.pri} onChange={e => setF({ ...f, pri: e.target.value })}><option value={1}>{tr("Звичайна")}</option><option value={2}>{tr("Важлива")}</option></select>}</div>
+        <div className="row"><select value={f.repeat} onChange={e => setF({ ...f, repeat: e.target.value })}>{Object.entries(REP).map(([k, v]) => <option key={k} value={k}>{tr(v)}</option>)}</select></div>
+        {folders.length > 0 && <div className="row"><select value={f.folder} onChange={e => setF({ ...f, folder: e.target.value })}><option value="">{tr("Без папки")}</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select></div>}
+        <textarea rows={2} placeholder={tr("Нотатка (необов’язково)")} value={f.note} onChange={e => setF({ ...f, note: e.target.value })} />
+        <div className="row"><button className="btn" onClick={saveTask}>{sheet === 'new' ? tr("Додати") : tr("Зберегти")}</button>
+          {sheet !== 'new' && <button className="btn alt" onClick={() => del(sheet)}>{tr("Видалити")}</button>}</div>
       </div></div>}
 
       {fform && <div className="ov" onClick={() => setFform(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
-        <b>{fform.id ? 'Папка' : 'Нова папка'}</b>
-        <input style={{ marginTop: 12 }} autoFocus placeholder="Назва папки" value={fform.name} onChange={e => setFform({ ...fform, name: e.target.value })} />
-        <div className="sec" style={{ marginTop: 14 }}>Розташування</div>
+        <b>{fform.id ? tr("Папка") : tr("Нова папка")}</b>
+        <input style={{ marginTop: 12 }} autoFocus placeholder={tr("Назва папки")} value={fform.name} onChange={e => setFform({ ...fform, name: e.target.value })} />
+        <div className="sec" style={{ marginTop: 14 }}>{tr("Розташування")}</div>
         <select value={fform.parent == null ? '' : fform.parent} onChange={e => setFform({ ...fform, parent: e.target.value === '' ? '' : Number(e.target.value) })}>
-          <option value="">Головний рівень</option>{folders.filter(x => x.id !== fform.id && (!fform.id || canMoveFolder(folders, fform.id, x.id))).map(x => <option key={x.id} value={x.id}>{folderPath(folders, x.id)}</option>)}</select>
-        <div className="sec" style={{ marginTop: 14 }}>Колір</div>
+          <option value="">{tr("Головний рівень")}</option>{folders.filter(x => x.id !== fform.id && (!fform.id || canMoveFolder(folders, fform.id, x.id))).map(x => <option key={x.id} value={x.id}>{folderPath(folders, x.id)}</option>)}</select>
+        <div className="sec" style={{ marginTop: 14 }}>{tr("Колір")}</div>
         <div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (fform.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setFform({ ...fform, color: c })} aria-label={c} />)}</div>
-        <div className="sec" style={{ marginTop: 14 }}>Обкладинка</div>
+        <div className="sec" style={{ marginTop: 14 }}>{tr("Обкладинка")}</div>
         <div className="cover" style={fform.cover ? { backgroundImage: 'url(' + fform.cover + ')' } : { background: fform.color }} />
-        <div className="row"><label className="chip fileb">Обрати фото<input type="file" accept="image/*" className="hidefile" onChange={e => { pickCover(e.target.files && e.target.files[0]); e.target.value = ''; }} /></label>
-          {fform.cover && <button className="chip" onClick={() => setFform({ ...fform, cover: '' })}>Прибрати фото</button>}</div>
-        <div className="row"><button className="btn" onClick={saveFolder}>Зберегти</button>{fform.id && <button className="btn alt" onClick={delFolder}>Видалити</button>}</div>
+        <div className="row"><label className="chip fileb">{tr("Обрати фото")}<input type="file" accept="image/*" className="hidefile" onChange={e => { pickCover(e.target.files && e.target.files[0]); e.target.value = ''; }} /></label>
+          {fform.cover && <button className="chip" onClick={() => setFform({ ...fform, cover: '' })}>{tr("Прибрати фото")}</button>}</div>
+        <div className="row"><button className="btn" onClick={saveFolder}>{tr("Зберегти")}</button>{fform.id && <button className="btn alt" onClick={delFolder}>{tr("Видалити")}</button>}</div>
       </div></div>}
 
       {nview != null && <div className="nv">
-        <div className="nvbar"><button className="chip" onClick={closeNote}>Закрити</button><span className="sub">{ntext.split(/\s+/).filter(Boolean).length} слів</span>
-          {flow ? <button className="chip" onClick={() => setFlow(false)}>Готово</button> : <button className="chip" onClick={() => setFlow(true)}>Писати в потоці</button>}</div>
+        <div className="nvbar"><button className="chip" onClick={closeNote}>{tr("Закрити")}</button><span className="sub">{ntext.split(/\s+/).filter(Boolean).length} {tr(" слів")}</span>
+          {flow ? <button className="chip" onClick={() => setFlow(false)}>{tr("Готово")}</button> : <button className="chip" onClick={() => setFlow(true)}>{tr("Писати в потоці")}</button>}</div>
         {flow ? (() => { const ws = ntext.split(/\s+/).filter(Boolean); const tail = ws.slice(-7); return (
           <div className="flow" onClick={() => taRef.current && taRef.current.focus()}>
             <textarea ref={taRef} className="hid" autoFocus value={ntext} onChange={e => setNtext(e.target.value)} />
             <div className="fade">{tail.map((w, i) => <span key={ws.length - tail.length + i} style={{ opacity: Math.pow((i + 1) / tail.length, 2) }}>{w} </span>)}<span className="cur" /></div>
-            <div className="sub fh">Пишіть без зупинки. Текст з’явиться, коли натиснете «Готово»</div>
+            <div className="sub fh">{tr("Пишіть без зупинки. Текст з’явиться, коли натиснете «Готово»")}</div>
           </div>); })() : <>
-          <textarea className="ned" value={ntext} onChange={e => setNtext(e.target.value)} placeholder="Почніть писати…" />
-          {folders.length > 0 && <select value={(notes.find(n => n.id === nview) || {}).folder || ''} onChange={e => setNotes(notes.map(n => n.id === nview ? { ...n, folder: e.target.value === '' ? '' : Number(e.target.value) } : n))} style={{ marginBottom: 10 }}><option value="">Без папки</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select>}
-          <button className="chip" onClick={delNote}>Видалити нотатку</button></>}
+          <textarea className="ned" value={ntext} onChange={e => setNtext(e.target.value)} placeholder={tr("Почніть писати…")} />
+          {folders.length > 0 && <select value={(notes.find(n => n.id === nview) || {}).folder || ''} onChange={e => setNotes(notes.map(n => n.id === nview ? { ...n, folder: e.target.value === '' ? '' : Number(e.target.value) } : n))} style={{ marginBottom: 10 }}><option value="">{tr("Без папки")}</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select>}
+          <button className="chip" onClick={delNote}>{tr("Видалити нотатку")}</button></>}
       </div>}
 
       {tt && <div className="nv">
-        <div className="nvbar"><button className="chip" onClick={() => setTview(null)}>Закрити</button><span className="sub">{tt.done ? 'Результат' : (qi + 1) + ' з ' + tt.qs.length}</span><span /></div>
+        <div className="nvbar"><button className="chip" onClick={() => setTview(null)}>{tr("Закрити")}</button><span className="sub">{tt.done ? tr("Результат") : (qi + 1) + tr(" з ") + tt.qs.length}</span><span /></div>
         {!tt.done ? (() => { const q = tt.qs[qi]; return (
           <div className="quiz">
             <div className="qq">{q.q}</div>
             {q.type === 'choice' ? q.options.map((o, j) => <button key={j} className={'opt' + (tt.ans[qi] === j ? ' on' : '')} onClick={() => setAns(tt, qi, j)}>{o}</button>)
-              : <textarea rows={6} value={tt.ans[qi] || ''} onChange={e => setAns(tt, qi, e.target.value)} placeholder="Ваша відповідь" />}
-            <div className="row" style={{ marginTop: 16 }}>{qi > 0 && <button className="btn alt" onClick={() => setQi(qi - 1)}>Назад</button>}
-              {qi < tt.qs.length - 1 ? <button className="btn" onClick={() => setQi(qi + 1)}>Далі</button> : <button className="btn" onClick={() => patchTest(tt.id, { done: true })}>Завершити</button>}</div>
+              : <textarea rows={6} value={tt.ans[qi] || ''} onChange={e => setAns(tt, qi, e.target.value)} placeholder={tr("Ваша відповідь")} />}
+            <div className="row" style={{ marginTop: 16 }}>{qi > 0 && <button className="btn alt" onClick={() => setQi(qi - 1)}>{tr("Назад")}</button>}
+              {qi < tt.qs.length - 1 ? <button className="btn" onClick={() => setQi(qi + 1)}>{tr("Далі")}</button> : <button className="btn" onClick={() => patchTest(tt.id, { done: true })}>{tr("Завершити")}</button>}</div>
           </div>); })() : (
           <div className="quiz">
-            <div className="big">{r1(tScore(tt))} з {tt.qs.length}</div><div className="sub" style={{ marginBottom: 16 }}>{Math.round(tScore(tt) / tt.qs.length * 100)}%</div>
-            {tt.qs.some((q, i) => q.type === 'open' && (tt.ans[i] || '').trim() && !(tt.grades && tt.grades[i])) && <button className="btn" style={{ marginBottom: 14 }} onClick={() => gradeOpen(tt)} disabled={tbusy}>{tbusy ? 'Перевіряю…' : 'Оцінити відкриті відповіді через ШІ'}</button>}
+            <div className="big">{r1(tScore(tt))} {tr(" з ")}{tt.qs.length}</div><div className="sub" style={{ marginBottom: 16 }}>{Math.round(tScore(tt) / tt.qs.length * 100)}%</div>
+            {tt.qs.some((q, i) => q.type === 'open' && (tt.ans[i] || '').trim() && !(tt.grades && tt.grades[i])) && <button className="btn" style={{ marginBottom: 14 }} onClick={() => gradeOpen(tt)} disabled={tbusy}>{tbusy ? tr("Перевіряю…") : tr("Оцінити відкриті відповіді через ШІ")}</button>}
             {tt.qs.map((q, i) => { const ok = okOf(tt, q, i); return (
-              <div className="card" key={i}><div className="sec">Питання {i + 1}</div><div className="t">{q.q}</div>
-                <div className={'verdict ' + (ok === true ? 'ok' : ok === false ? 'bad' : '')}>{ok === true ? 'Вірно' : ok === false ? 'Невірно' : 'Чекає на оцінку'}</div>
-                {q.type === 'choice' ? <><div className="sub">Ваша відповідь: {tt.ans[i] != null ? q.options[tt.ans[i]] : '—'}</div>{ok === false && <div className="sub">Правильна: {q.options[q.answer]}</div>}</>
-                  : <><div className="sub">Ваша відповідь: {tt.ans[i] || '—'}</div><div className="sub">Еталон: {q.answer}</div>{tt.grades && tt.grades[i] && <div className="sub">{r1(tt.grades[i].score)}: {tt.grades[i].comment}</div>}</>}
+              <div className="card" key={i}><div className="sec">{tr("Питання ")}{i + 1}</div><div className="t">{q.q}</div>
+                <div className={'verdict ' + (ok === true ? 'ok' : ok === false ? 'bad' : '')}>{ok === true ? tr("Вірно") : ok === false ? tr("Невірно") : tr("Чекає на оцінку")}</div>
+                {q.type === 'choice' ? <><div className="sub">{tr("Ваша відповідь: ")}{tt.ans[i] != null ? q.options[tt.ans[i]] : '—'}</div>{ok === false && <div className="sub">{tr("Правильна: ")}{q.options[q.answer]}</div>}</>
+                  : <><div className="sub">{tr("Ваша відповідь: ")}{tt.ans[i] || '—'}</div><div className="sub">{tr("Еталон: ")}{q.answer}</div>{tt.grades && tt.grades[i] && <div className="sub">{r1(tt.grades[i].score)}: {tt.grades[i].comment}</div>}</>}
                 {q.explain && <div className="note">{q.explain}</div>}</div>); })}
-            <div className="row"><button className="btn alt" onClick={() => cardsFromTest(tt)}>Картки з помилок</button><button className="btn alt" onClick={() => { patchTest(tt.id, { ans: {}, grades: {}, done: false }); setQi(0); setTmsg(''); }}>Пройти знову</button></div>
+            <div className="row"><button className="btn alt" onClick={() => cardsFromTest(tt)}>{tr("Картки з помилок")}</button><button className="btn alt" onClick={() => { patchTest(tt.id, { ans: {}, grades: {}, done: false }); setQi(0); setTmsg(''); }}>{tr("Пройти знову")}</button></div>
             {tmsg && <div className="sub">{tmsg}</div>}
           </div>)}
       </div>}
 
-      {!aiOpen && tab !== 'ai' && !(nview != null && flow) && <button className="aifab" onClick={() => setAiOpen(true)} aria-label="Помічник ШІ"><Icon n="ai" s={26} /></button>}
+      {!aiOpen && tab !== 'ai' && !(nview != null && flow) && <button className="aifab" onClick={() => setAiOpen(true)} aria-label={tr("Помічник ШІ")}><Icon n="ai" s={26} /></button>}
       {aiOpen && <div className="ov ai" onClick={() => setAiOpen(false)}><div className="sheet aisheet" onClick={e => e.stopPropagation()}>{aiPanel(true)}</div></div>}
 
-      <nav className="tabbar">{TABS.map(([k, n]) => <button key={k} className={k === tab ? 'on' : ''} onClick={() => setTab(k)} aria-label={n}><Icon n={k} s={26} /></button>)}</nav>
+      <nav className="tabbar">{TABS.map(([k, n]) => <button key={k} className={k === tab ? 'on' : ''} onClick={() => setTab(k)} aria-label={tr(n)}><Icon n={k} s={26} /><span className="lbl">{tr(n)}</span></button>)}</nav>
     </div>
   );
 }

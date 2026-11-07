@@ -82,8 +82,11 @@ const gradePrompt = 'Ти перевіряєш відкриті відповід
 export async function POST(req) {
   const pass = process.env.APP_PASSWORD;
   if (pass && req.headers.get('x-pass') !== pass) return Response.json({ error: 'Нужен пароль' }, { status: 401 });
-  const { messages = [], ctx = {}, mode = 'chat' } = await req.json();
-  const system = mode === 'quiz' ? quizPrompt(ctx) : mode === 'grade' ? gradePrompt : appPrompt(ctx, mode === 'parse');
+  const { messages = [], ctx = {}, mode = 'chat', lang = 'uk' } = await req.json();
+  const de = lang === 'de';
+  const LANG_DE = '\n\nМОВА (найважливіше): усі тексти для користувача (поле reply, пояснення, назви задач і подій, питання та відповіді тестів, картки) пиши НІМЕЦЬКОЮ мовою (Deutsch), з правильною німецькою граматикою. Ключі JSON і службові значення (type, area, repeat, kind, template тощо) залишай точно за специфікацією. Питання тесту пиши мовою теми матеріалу (наприклад, англійською для англійської граматики), а пояснення до відповідей німецькою. Назви днів тижня й місяців німецькі.';
+  const base = mode === 'quiz' ? quizPrompt(ctx) : mode === 'grade' ? gradePrompt : appPrompt(ctx, mode === 'parse');
+  const system = de ? base + LANG_DE : base;
   const order = (process.env.AI_ORDER || 'gemini,deepseek').split(',').map(s => s.trim()).filter(s => PROVIDERS[s]);
   const errs = [];
   for (const name of order) {
@@ -91,5 +94,5 @@ export async function POST(req) {
     if (res.ok && res.text) return Response.json({ text: res.text });
     errs.push(name + ': ' + (res.err || 'пустой ответ'));
   }
-  return Response.json({ error: 'ШІ зараз недоступний. ' + errs.join(' | ') }, { status: 502 });
+  return Response.json({ error: (de ? 'Die KI ist gerade nicht erreichbar. ' : 'ШІ зараз недоступний. ') + errs.join(' | ') }, { status: 502 });
 }
