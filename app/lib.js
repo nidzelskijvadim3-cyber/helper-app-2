@@ -61,3 +61,11 @@ export function newDoc(type, title, folder, tpl, cover) {
     pages: [{ w: board ? 1600 : 1200, h: board ? 1200 : 1600, tpl: tpl || (board ? 'blank' : 'lined'), strokes: [] }],
   };
 }
+
+// Підгонка сторінки під екран: звичайна сторінка заповнює ширину і за потреби подовжується до висоти екрана
+// (без порожніх смуг); фото/скани вписуються цілком.
+export function fitPage(p, W, H) {
+  const sc = p.img ? Math.min(W / p.w, H / p.h) : W / p.w;
+  const pageH = !p.img && p.h * sc < H - 1 ? Math.ceil(H / sc) : p.h;
+  return { scale: sc, pageH, cssW: Math.round(p.w * sc), cssH: Math.round(pageH * sc) };
+}

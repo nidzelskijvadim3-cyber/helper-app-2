@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { listMeta, getDoc, saveDoc, putMeta, putDoc, delDoc, duplicateDoc, reparentDocs, moveDoc } from './store';
-import { newDoc, newId, filterDocs, sortDocs, recentDocs, folderPath } from './lib';
+import { newDoc, newId, filterDocs, sortDocs, recentDocs, folderPath, fitPage } from './lib';
 import { t as tr, loc } from './i18n';
 
 export { putDoc, delDoc, newDoc, reparentDocs, moveDoc };
@@ -39,6 +39,31 @@ async function prepImage(file, scan) {
   return { src: c.toDataURL('image/jpeg', 0.82), w: c.width, h: c.height };
 }
 
+const EI = {
+  check: <path d="M5 13l4 4L19 7" />,
+  pen: <><path d="M4 20l4-1 11-11a2.1 2.1 0 0 0-3-3L5 16z" /><path d="M14 7l3 3" /></>,
+  hl: <><path d="M14 4l6 6-8 8H6v-6z" /><path d="M4 21h16" /></>,
+  eraser: <><path d="M4 15l8-8 8 8-4 4H8z" /><path d="M12 19h8" /></>,
+  line: <path d="M5 19L19 5" />,
+  rect: <rect x="4" y="6" width="16" height="12" rx="1.5" />,
+  oval: <ellipse cx="12" cy="12" rx="8" ry="6" />,
+  text: <path d="M5 6V4h14v2M12 4v16M9 20h6" />,
+  hand: <path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V10M12 10V4.5a1.5 1.5 0 0 1 3 0V11M15 11V7a1.5 1.5 0 0 1 3 0v6a7 7 0 0 1-7 7 6 6 0 0 1-5-3l-2-3a1.5 1.5 0 0 1 2.5-1.6L9 14z" />,
+  undo: <><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-3" /></>,
+  redo: <><path d="M15 14l5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h3" /></>,
+  pages: <><rect x="5" y="3" width="11" height="15" rx="2" /><path d="M8 21h9a2 2 0 0 0 2-2V8" /></>,
+  share: <><path d="M12 15V3M8 7l4-4 4 4" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7" /></>,
+  more: <><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></>,
+  plus: <path d="M12 5v14M5 12h14" />,
+  trash: <><path d="M5 7h14M10 7V4h4v3" /><path d="M7 7l1 13h8l1-13" /></>,
+  left: <path d="M15 5l-7 7 7 7" />,
+  right: <path d="M9 5l7 7-7 7" />,
+  zin: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4-4M8.5 11h5M11 8.5v5" /></>,
+  zout: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4-4M8.5 11h5" /></>,
+};
+const TOOLN = { pen: 'Ручка', hl: 'Маркер', eraser: 'Гумка', line: 'Лінія', rect: 'Рамка', oval: 'Овал', text: 'Текст', hand: 'Рука' };
+function EIcon({ n, size = 22 }) { return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{EI[n]}</svg>; }
+function IB({ n, label, on, onClick, disabled }) { return <button className={'ib' + (on ? ' on' : '')} onClick={onClick} aria-label={label} title={label} disabled={disabled}><EIcon n={n} /></button>; }
 const pressureOf = e => Math.min(1, Math.max(0.05, e.pressure || 0.5));
 function drawStroke(g, s, ws) {
   g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = s.c; g.fillStyle = s.c; g.globalAlpha = s.a || 1; g.lineWidth = (s.w || 3) * ws;
@@ -106,6 +131,9 @@ function Editor({ doc, onSave, onClose }) {
   const [tick, setTick] = useState(0);
   const [tin, setTin] = useState(null);
   const [strip, setStrip] = useState(false);
+  const [pop, setPop] = useState(null);
+  const [popTop, setPopTop] = useState(96);
+  const barRef = useRef(null);
   const [thumbs, setThumbs] = useState([]);
   const cvRef = useRef(null), boxRef = useRef(null), imgRef = useRef(null), cur = useRef(null), hist = useRef([]), redo = useRef([]), dRef = useRef(d), piRef = useRef(0), saved = useRef(doc.pages), touches = useRef(new Map()), gest = useRef(null);
   dRef.current = d; piRef.current = pi;
@@ -124,9 +152,14 @@ function Editor({ doc, onSave, onClose }) {
   }, []);
   useEffect(() => {
     const el = boxRef.current; if (!el) return;
-    const f = () => { const sc = Math.min(el.clientWidth / page.w, el.clientHeight / page.h); setFit({ w: Math.floor(page.w * sc), h: Math.floor(page.h * sc) }); };
+    const f = () => {
+      const W = el.clientWidth, H = el.clientHeight; if (!W || !H) return;
+      const r = fitPage(page, W, H);
+      if (r.pageH !== page.h) setPage({ ...page, h: r.pageH });
+      setFit({ w: r.cssW, h: r.cssH });
+    };
     f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect();
-  }, [page.w, page.h]);
+  }, [page.w, page.h, page.img]);
   useEffect(() => {
     let off = false;
     if (!page.img) { imgRef.current = null; setTick(t => t + 1); return; }
@@ -224,7 +257,8 @@ function Editor({ doc, onSave, onClose }) {
   };
   const swap = (from, to) => { const h = from.current.pop(); if (!h) return; to.current.push({ pi: h.pi, strokes: d.pages[h.pi].strokes }); setD(o => ({ ...o, pages: o.pages.map((q, i) => i === h.pi ? { ...q, strokes: h.strokes } : q) })); };
   const addText = () => { if (tin && tin.v.trim()) commit({ k: 'text', c: color, x: tin.x, y: tin.y, t: tin.v.trim(), s: 44 }); setTin(null); };
-  const goPage = n => { setPi(Math.max(0, Math.min(d.pages.length - 1, n))); hist.current = []; redo.current = []; };
+  const goPage = n => { setPi(Math.max(0, Math.min(d.pages.length - 1, n))); hist.current = []; redo.current = []; if (boxRef.current) boxRef.current.scrollTop = 0; };
+  const openPop = k => { if (pop === k) { setPop(null); return; } if (barRef.current) setPopTop(Math.round(barRef.current.getBoundingClientRect().bottom + 8)); setPop(k); };
   const addPage = () => { setD(o => ({ ...o, pages: [...o.pages, { w: page.w, h: page.h, tpl: page.img ? 'blank' : page.tpl, strokes: [] }] })); setPi(d.pages.length); hist.current = []; redo.current = []; };
   const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; redo.current = []; };
   useEffect(() => {
@@ -245,32 +279,49 @@ function Editor({ doc, onSave, onClose }) {
     }, 'image/png');
   };
   const close = async () => { try { const t = await makeThumb(d); await flush({ thumb: t }); } catch (e) {} onClose(); };
-  const TOOLS = [['pen', tr("Ручка")], ['hl', tr("Маркер")], ['eraser', tr("Гумка")], ['line', tr("Лінія")], ['rect', tr("Рамка")], ['oval', tr("Овал")], ['text', tr("Текст")], ['hand', tr("Рука")]];
+  const TOOLS = ['pen', 'hl', 'eraser', 'line', 'rect', 'oval', 'text', 'hand'];
 
   return (
     <div className="nv ed">
-      <div className="edtop"><button className="chip" onClick={close}>{tr("Готово")}</button><input value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label={tr("Назва")} /></div>
-      <div className="edbox" ref={boxRef}>
+      <div className="edbar" ref={barRef}>
+        <div className="edrow2">
+          <IB n="check" label={tr("Готово")} onClick={close} />
+          <input className="edtitle" value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label={tr("Назва")} />
+          <IB n="undo" label={tr("Скасувати")} onClick={() => swap(hist, redo)} />
+          <IB n="redo" label={tr("Вперед")} onClick={() => swap(redo, hist)} />
+          <IB n="pages" label={tr("Сторінки")} on={strip} onClick={() => setStrip(!strip)} />
+          <IB n="share" label={tr("Поділитися")} onClick={share} />
+          <IB n="more" label={tr("Ще")} on={pop === 'more'} onClick={() => openPop('more')} />
+        </div>
+        <div className="edrow2">
+          {TOOLS.map(k => <IB key={k} n={k} label={tr(TOOLN[k])} on={tool === k} onClick={() => { setTool(k); setPop(null); }} />)}
+          <button className={'ib' + (pop === 'style' ? ' on' : '')} onClick={() => openPop('style')} aria-label={tr("Колір і товщина")} title={tr("Колір і товщина")}><span className="cdotbig" style={{ background: color }} /></button>
+        </div>
+      </div>
+      <div className="edbox" ref={boxRef} style={page.img ? { background: 'var(--fill)' } : undefined}>
         <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w * zoom, height: fit.h * zoom, touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
       </div>
-      {strip && <div className="strip">{thumbs.map((t, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + t + ')' }} aria-label={tr("Сторінка ") + (i + 1)}><span>{i + 1}</span></button>)}</div>}
-      <div className="edtools">
-        <div className="edrow">{TOOLS.map(([k, n]) => <button key={k} className={'chip' + (tool === k ? ' on' : '')} onClick={() => setTool(k)}>{n}</button>)}</div>
-        <div className="edrow">{COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={c} />)}
-          {[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={tr("Товщина ") + w}><i style={{ width: w * 2, height: w * 2 }} /></button>)}</div>
-        <div className="edrow">
-          <button className="chip" onClick={() => swap(hist, redo)}>{tr("Скасувати")}</button><button className="chip" onClick={() => swap(redo, hist)}>{tr("Вперед")}</button>
-          <button className="chip" onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))}>−</button><span className="sub">{Math.round(zoom * 100)}%</span><button className="chip" onClick={() => setZoom(Math.min(4, +(zoom + 0.5).toFixed(1)))}>+</button>
-          <button className="chip" onClick={share}>{tr("Поділитися")}</button></div>
-        <div className="edrow">
-          <button className="chip" onClick={() => goPage(pi - 1)}>‹</button><span className="sub">{pi + 1} {tr(" з ")}{d.pages.length}</span><button className="chip" onClick={() => goPage(pi + 1)}>›</button>
-          <button className={'chip' + (strip ? ' on' : '')} onClick={() => setStrip(!strip)}>{tr("Сторінки")}</button>
-          <button className="chip" onClick={addPage}>{tr("+ Сторінка")}</button>{d.pages.length > 1 && <button className="chip" onClick={delPage}>{tr("Видалити")}</button>}</div>
-        <div className="edrow">
-          {d.type === 'notebook' && !page.img && [['blank', tr("Чиста")], ['lined', tr("Лінійка")], ['grid', tr("Клітинка")], ['dots', tr("Крапки")]].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} onClick={() => setPage({ ...page, tpl: k })}>{n}</button>)}
-          <button className={'chip' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)}>{tr("Лише Apple Pencil")}</button>
-          <button className={'chip' + (pressure ? ' on' : '')} onClick={() => setPressure(!pressure)}>{tr("Чутливість до нажиму")}</button></div>
+      {strip && <div className="strip">{thumbs.map((th, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + th + ')' }} aria-label={tr("Сторінка") + ' ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
+      <div className="pgnav">
+        <IB n="left" label={tr("Попередня сторінка")} onClick={() => goPage(pi - 1)} disabled={pi === 0} />
+        <span>{pi + 1} / {d.pages.length}</span>
+        <IB n="right" label={tr("Наступна сторінка")} onClick={() => goPage(pi + 1)} disabled={pi >= d.pages.length - 1} />
+        <IB n="plus" label={tr("Додати сторінку")} onClick={addPage} />
       </div>
+      {pop && <div className="popback" onClick={() => setPop(null)}><div className="pop" style={{ top: popTop }} onClick={e => e.stopPropagation()}>
+        {pop === 'style' && <>
+          <div className="prow">{COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={c} />)}
+            <input type="color" className="cpick" value={color} onChange={e => { setColor(e.target.value); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={tr("Свій колір")} /></div>
+          <div className="prow">{[2, 3, 6, 10, 16].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={tr("Товщина") + ' ' + w}><i style={{ width: Math.min(w * 2, 28), height: Math.min(w * 2, 28) }} /></button>)}</div>
+        </>}
+        {pop === 'more' && <>
+          <div className="prow"><IB n="zout" label={tr("Масштаб")} onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))} /><span className="sub">{Math.round(zoom * 100)}%</span><IB n="zin" label={tr("Масштаб")} onClick={() => setZoom(Math.min(5, +(zoom + 0.5).toFixed(1)))} /></div>
+          {d.type === 'notebook' && !page.img && <div className="prow">{[['blank', 'Чиста'], ['lined', 'Лінійка'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} style={{ margin: 0 }} onClick={() => setPage({ ...page, tpl: k })}>{tr(n)}</button>)}</div>}
+          <button className={'tg' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)}><span>{tr("Лише Apple Pencil")}</span><b>{penOnly ? '✓' : ''}</b></button>
+          <button className={'tg' + (pressure ? ' on' : '')} onClick={() => setPressure(!pressure)}><span>{tr("Чутливість до нажиму")}</span><b>{pressure ? '✓' : ''}</b></button>
+          {d.pages.length > 1 && <button className="tg" onClick={() => { delPage(); setPop(null); }}><span>{tr("Видалити сторінку")}</span><EIcon n="trash" size={20} /></button>}
+        </>}
+      </div></div>}
       {tin && <div className="ov" onClick={() => setTin(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
         <b>{tr("Текст на сторінці")}</b>
         <textarea style={{ marginTop: 12 }} rows={3} autoFocus value={tin.v} onChange={e => setTin({ ...tin, v: e.target.value })} placeholder={tr("Введіть текст")} />

@@ -271,7 +271,14 @@ export const DE = {
  "щотижня": "wöchentlich",
  "★ Прибрати з обраного": "★ Aus Favoriten entfernen",
  "☆ Додати в обране": "☆ Zu Favoriten hinzufügen",
- "Чутливість до нажиму": "Druckempfindlich"
+ "Чутливість до нажиму": "Druckempfindlich",
+ "Колір і товщина": "Farbe und Stärke",
+ "Ще": "Mehr",
+ "Масштаб": "Zoom",
+ "Додати сторінку": "Seite hinzufügen",
+ "Видалити сторінку": "Seite löschen",
+ "Попередня сторінка": "Vorherige Seite",
+ "Наступна сторінка": "Nächste Seite"
 };
 // Повертає переклад; крайні пробіли ключа зберігаються. Невідомий ключ повертається без змін.
 export function t(s) {
