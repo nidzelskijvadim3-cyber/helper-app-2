@@ -18,6 +18,17 @@ export async function shrink(file, max = 1024, q = 0.72) {
   return c.toDataURL('image/jpeg', q);
 }
 const COLORS = ['#1c1c1e', '#0a84ff', '#ff375f', '#30d158', '#ff9f0a', '#bf5af2'];
+const TOOL_GLYPHS = {
+  pen: <><path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="m14.8 6.2 3 3"/></>,
+  hl: <><path d="m4 16 9.8-9.8a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8L8 19H4z"/><path d="M3 21h18"/></>,
+  eraser: <><path d="m7 16 8.8-8.8a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8L12 20H7l-4-4 4-4"/><path d="m9 14 6 6"/></>,
+  line: <><path d="M5 19 19 5"/><path d="M5 5v14h14" opacity=".25"/></>,
+  rect: <><rect x="4" y="5" width="16" height="14" rx="1.5"/></>,
+  oval: <><ellipse cx="12" cy="12" rx="8" ry="6"/></>,
+  text: <><path d="M4 6V4h16v2M12 4v16M8 20h8"/></>,
+  hand: <><path d="M8 12V6a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v7-3a1.5 1.5 0 0 1 3 0v5c0 4-2.5 7-6.5 7h-1c-2 0-3.2-.8-4.5-2.5L4 15a1.7 1.7 0 0 1 2.5-2.2L8 14"/></>
+};
+function ToolIcon({ name }) { return <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TOOL_GLYPHS[name]}</svg>; }
 
 function idb() {
   return new Promise((res, rej) => {
@@ -254,7 +265,7 @@ function Editor({ doc, onSave, onClose }) {
     try { const t = await makeThumb(d); await onSave({ ...d, thumb: t, upd: Date.now() }); setSaveStatus('saved'); onClose(); }
     catch (e) { setSaveStatus('error'); }
   };
-  const TOOLS = [['pen', 'Ручка'], ['hl', 'Маркер'], ['eraser', 'Гумка'], ['line', 'Лінія'], ['rect', 'Рамка'], ['oval', 'Овал'], ['text', 'Текст'], ['hand', 'Рука']];
+  const TOOLS = [['pen', 'Ручка'], ['hl', 'Маркер'], ['eraser', 'Ластик'], ['line', 'Лінія'], ['rect', 'Прямокутник'], ['oval', 'Еліпс'], ['text', 'Текст'], ['hand', 'Переміщення']];
 
   return (
     <div className="nv">
@@ -264,7 +275,7 @@ function Editor({ doc, onSave, onClose }) {
       </div>
       {strip && <div className="strip">{thumbs.map((t, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + t + ')' }} aria-label={'Сторінка ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
       <div className="edtools">
-        <div className="edrow">{TOOLS.map(([k, n]) => <button key={k} className={'chip' + (tool === k ? ' on' : '')} onClick={() => setTool(k)}>{n}</button>)}</div>
+        <div className="edrow tool-icon-row">{TOOLS.map(([k, n]) => <button key={k} type="button" className={'tool-icon' + (tool === k ? ' on' : '')} onClick={() => setTool(k)} title={n} aria-label={n}><ToolIcon name={k} /></button>)}</div>
         <div className="edrow">{COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={c} />)}
           {[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={'Товщина ' + w}><i style={{ width: w * 2, height: w * 2 }} /></button>)}</div>
         <div className="edrow">
