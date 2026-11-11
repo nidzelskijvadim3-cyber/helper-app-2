@@ -280,3 +280,36 @@ input[type=checkbox]:checked{background:var(--ac);border-color:var(--ac)}
 .ai-icon-btn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 .ai-icon-btn.fileb{position:relative;margin:0}
 .ai-icon-btn.fileb input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+
+
+/* Unified minimal interface: pill controls, softer surfaces, precise icon alignment */
+:root{--control-radius:999px}
+.btn,.chip,.seg button,.menu button,.fopt,.opt,.toolbar-picker{border-radius:var(--control-radius)}
+.btn{min-height:46px;padding:12px 22px;font-weight:600;letter-spacing:-.01em;transition:transform .16s ease,opacity .16s ease,background .16s ease}
+.btn:active,.chip:active,.ai-icon-btn:active{transform:scale(.98)}
+.btn.alt{background:var(--fill);color:var(--tx)}
+.chip{min-height:36px;padding:8px 15px;font-size:14px;font-weight:550;line-height:1.2;white-space:nowrap}
+.seg{border-radius:999px;padding:3px;gap:3px}
+.seg button{min-height:34px;padding:7px 13px}
+.seg button.on{border-radius:999px;box-shadow:none}
+input,select,textarea{border-radius:17px;background:var(--fill);transition:background .18s ease}
+input:focus,select:focus,textarea:focus{background:color-mix(in srgb,var(--fill) 78%,var(--ac) 22%)}
+.card{border-radius:22px;background:color-mix(in srgb,var(--card) 82%,transparent);padding:15px 17px}
+.menu button,.fopt,.opt{padding:12px 17px}
+.folder-icon,.tool-icon,.edtools-top .primary-tools .tool-icon,.toolbar-history .tool-icon,.edtools-top .more-toggle{border-radius:50%}
+.toolbar-picker{border:0;border-radius:999px;min-height:32px;padding:0 12px;background:var(--fill)}
+.toolbar-picker-pop,.toolbar-more,.sheet{border-radius:22px}
+.dlist>div{border:0;border-radius:18px;background:color-mix(in srgb,var(--card) 82%,transparent)}
+.dthumb{border-radius:14px}
+.ai-action-row{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;padding:2px 0 0;flex-wrap:nowrap}
+.ai-action-row .ai-icon-btn{appearance:none;-webkit-appearance:none;position:relative;display:grid;place-items:center;box-sizing:border-box;width:42px;min-width:42px;max-width:42px;height:42px;min-height:42px;max-height:42px;flex:0 0 42px;margin:0;padding:0;overflow:hidden;border:0;border-radius:50%;background:var(--fill);color:var(--mu);line-height:0}
+.ai-action-row .ai-icon-btn svg{display:block;width:19px;height:19px;min-width:19px;max-width:19px;flex:none;overflow:visible}
+.ai-action-row .ai-icon-btn.fileb{display:grid;position:relative}
+.ai-action-row .ai-icon-btn.fileb input.hidefile{display:block!important;position:absolute;inset:0;width:100%;height:100%;min-width:0;margin:0;padding:0;opacity:0;cursor:pointer}
+.ai-action-row .ai-icon-btn:hover,.ai-action-row .ai-icon-btn.on{color:var(--ac);background:color-mix(in srgb,var(--ac) 13%,var(--fill))}
+.ai-action-row .ai-icon-btn:focus-visible{outline:2px solid var(--ac);outline-offset:3px}
+.ai-action-row .ai-icon-btn:active{transform:scale(.96)}
+@media(max-width:380px){
+ .ai-action-row{gap:9px}
+ .ai-action-row .ai-icon-btn{width:40px;min-width:40px;max-width:40px;height:40px;min-height:40px;max-height:40px;flex-basis:40px}
+}
