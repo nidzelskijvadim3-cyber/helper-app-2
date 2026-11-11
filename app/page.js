@@ -10,6 +10,7 @@ const REPS = { daily: 'щодня', weekdays: 'у будні', weekly: 'щоти
 const FONTS = { sf: '-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif', serif: 'ui-serif,"New York",Georgia,"Times New Roman",serif', rounded: 'ui-rounded,"SF Pro Rounded",system-ui,sans-serif', mono: 'ui-monospace,"SF Mono",Menlo,monospace' };
 const FONTN = { sf: 'Класичний (SF)', serif: 'Строгий (із засічками)', rounded: 'Округлий', mono: 'Моноширинний' };
 const ACCENTS = ['#0a84ff', '#ff375f', '#ff9f0a', '#30d158', '#bf5af2', '#64d2ff', '#ffd60a', '#ff453a'];
+const FOLDER_ICONS = ['📚', '📁', '📖', '✏️', '📝', '🎓', '🧠', '🔬', '🌍', '💻', '🎨', '📐', '🗂️', '⭐'];
 const UI0 = { theme: 'dark', accent: '#0a84ff', font: 'sf' };
 const onColor = h => { const n = parseInt(String(h).slice(1), 16) || 0; return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150 ? '#000' : '#fff'; };
 const TABS = [['today', 'План'], ['cal', 'Календар'], ['tasks', 'Задачі'], ['folders', 'Папки'], ['cards', 'Навчання'], ['ai', 'ШІ']];
@@ -289,7 +290,7 @@ export default function Home() {
   const del = id => { setItems(items.filter(i => i.id !== id)); closeSheet(); };
   const saveFolder = () => {
     if (!fform || !fform.name.trim()) return;
-    const fo = { id: fform.id || Date.now(), name: fform.name.trim(), color: fform.color, cover: fform.cover || '' };
+    const fo = { id: fform.id || Date.now(), name: fform.name.trim(), color: fform.color, cover: fform.cover || '', icon: fform.icon || '📚' };
     setFolders(fform.id ? folders.map(x => x.id === fo.id ? fo : x) : [...folders, fo]); setFform(null);
   };
   const delFolder = () => {
@@ -552,9 +553,9 @@ export default function Home() {
       {tab === 'folders' && fview == null && <>
         <div className="top"><h1>Папки</h1><div className="sub">Групуйте нотатки й задачі. Торкніться плитки, щоб відкрити, або «+», щоб створити папку.</div></div>
         <div className="fgrid">
-          <div className="ftile plain" onClick={() => setFview('all')}><div className="fname">Усі нотатки</div><div className="fsub">{notes.length}</div></div>
-          {folders.map(fo => <div className="ftile" key={fo.id} onClick={() => setFview(fo.id)} style={fo.cover ? { backgroundImage: 'url(' + fo.cover + ')' } : { background: fo.color }}>
-            <div className="fshade" /><div className="fname">{fo.name}</div><div className="fsub">{notes.filter(n => n.folder === fo.id).length + items.filter(i => i.folder === fo.id).length}</div></div>)}
+          <div className="folder-card folder-all" onClick={() => setFview('all')}><div className="folder-tab" /><div className="folder-face"><div className="folder-mark">🗂️</div><div className="folder-copy"><div className="fname">Усі нотатки</div><div className="fsub">{notes.length}</div></div></div></div>
+          {folders.map(fo => <div className="folder-card" key={fo.id} onClick={() => setFview(fo.id)} style={{ '--folder-color': fo.color || ACCENTS[0] }}>
+            <div className="folder-tab" /><div className="folder-face">{fo.cover && <div className="folder-cover" style={{ backgroundImage: 'url(' + fo.cover + ')' }} />}<div className="folder-mark">{fo.icon || '📚'}</div><div className="folder-copy"><div className="fname">{fo.name}</div><div className="fsub">{notes.filter(n => n.folder === fo.id).length + items.filter(i => i.folder === fo.id).length}</div></div></div></div>)}
         </div>
         <Docs folderId={null} folders={folders} onNewNote={newNote} />
       </>}
@@ -630,7 +631,7 @@ export default function Home() {
       </>}
 
       {(tab === 'today' || tab === 'tasks' || tab === 'cal') && <button className="fab" onClick={openNew} aria-label="Додати">+</button>}
-      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '' })} aria-label="Нова папка">+</button>}
+      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', icon: '📚' })} aria-label="Нова папка">+</button>}
 
       {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" onClick={e => e.stopPropagation()}>
         <div className="seg"><button className={!ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'task' })}>Задача</button><button className={ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'event' })}>Подія</button></div>
@@ -649,6 +650,8 @@ export default function Home() {
       {fform && <div className="ov" onClick={() => setFform(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
         <b>{fform.id ? 'Папка' : 'Нова папка'}</b>
         <input style={{ marginTop: 12 }} autoFocus placeholder="Назва папки" value={fform.name} onChange={e => setFform({ ...fform, name: e.target.value })} />
+        <div className="sec" style={{ marginTop: 14 }}>Значок папки</div>
+        <div className="folder-icons">{FOLDER_ICONS.map(ic => <button key={ic} type="button" className={'folder-icon' + ((fform.icon || '📚') === ic ? ' on' : '')} onClick={() => setFform({ ...fform, icon: ic })} aria-label={'Значок ' + ic}>{ic}</button>)}</div>
         <div className="sec" style={{ marginTop: 14 }}>Колір</div>
         <div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (fform.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setFform({ ...fform, color: c })} aria-label={c} />)}</div>
         <div className="sec" style={{ marginTop: 14 }}>Обкладинка</div>
