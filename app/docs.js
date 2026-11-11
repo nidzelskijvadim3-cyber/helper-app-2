@@ -286,20 +286,26 @@ function Editor({ doc, onSave, onClose }) {
     <div className="nv">
       <div className="edtop"><button className="chip" onClick={close}>Готово</button><input value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label="Назва" /><span className={'save-indicator ' + saveStatus}>{saveStatus === 'saving' ? 'Збереження…' : saveStatus === 'error' ? 'Помилка збереження' : saveStatus === 'exporting' ? 'Створення PDF…' : 'Збережено'}</span></div>
       <div className="edtools edtools-top">
-        <div className="edrow tool-icon-row">{TOOLS.map(([k, n]) => <button key={k} type="button" className={'tool-icon' + (tool === k ? ' on' : '')} onClick={() => setTool(k)} title={n} aria-label={n}><ToolIcon name={k} /></button>)}</div>
-        <div className="edrow">{COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={c} />)}
-          {[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={'Товщина ' + w}><i style={{ width: w * 2, height: w * 2 }} /></button>)}</div>
-        <div className="edrow tool-icon-row">
-          <button className="tool-icon" onClick={() => swap(hist, redo)} title="Скасувати" aria-label="Скасувати"><ToolIcon name="undo" /></button><button className="tool-icon" onClick={() => swap(redo, hist)} title="Повторити" aria-label="Повторити"><ToolIcon name="redo" /></button>
-          <button className="tool-icon" onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))} title="Зменшити" aria-label="Зменшити"><ToolIcon name="zoomOut" /></button><span className="sub">{Math.round(zoom * 100)}%</span><button className="tool-icon" onClick={() => setZoom(Math.min(4, +(zoom + 0.5).toFixed(1)))} title="Збільшити" aria-label="Збільшити"><ToolIcon name="zoomIn" /></button>
-          <button className="tool-icon" onClick={share} title="Поділитися PNG" aria-label="Поділитися PNG"><ToolIcon name="share" /></button><button className="tool-icon" onClick={exportPdf} title="Експорт PDF" aria-label="Експорт PDF"><ToolIcon name="export" /></button></div>
-        <div className="edrow tool-icon-row">
-          <button className="tool-icon" onClick={() => goPage(pi - 1)} title="Попередня сторінка" aria-label="Попередня сторінка"><ToolIcon name="prev" /></button><span className="sub">{pi + 1}/{d.pages.length}</span><button className="tool-icon" onClick={() => goPage(pi + 1)} title="Наступна сторінка" aria-label="Наступна сторінка"><ToolIcon name="next" /></button>
+        <div className="edrow tool-icon-row primary-tools">
+          {TOOLS.map(([k, n]) => <button key={k} type="button" className={'tool-icon' + (tool === k ? ' on' : '')} onClick={() => setTool(k)} title={n} aria-label={n}><ToolIcon name={k} /></button>)}
+        </div>
+        <div className="edrow compact-options">
+          {COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={c} />)}
+          {[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={'Товщина ' + w}><i style={{ width: w * 2, height: w * 2 }} /></button>)}
+          <span className="toolbar-separator" />
+          <button className="tool-icon" onClick={() => swap(hist, redo)} title="Скасувати" aria-label="Скасувати"><ToolIcon name="undo" /></button>
+          <button className="tool-icon" onClick={() => swap(redo, hist)} title="Повторити" aria-label="Повторити"><ToolIcon name="redo" /></button>
+          <button className="tool-icon" onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))} title="Зменшити" aria-label="Зменшити"><ToolIcon name="zoomOut" /></button><span className="sub zoom-label">{Math.round(zoom * 100)}%</span><button className="tool-icon" onClick={() => setZoom(Math.min(4, +(zoom + 0.5).toFixed(1)))} title="Збільшити" aria-label="Збільшити"><ToolIcon name="zoomIn" /></button>
+          <span className="toolbar-separator" />
+          <button className="tool-icon" onClick={share} title="Поділитися PNG" aria-label="Поділитися PNG"><ToolIcon name="share" /></button>
+          <button className="tool-icon" onClick={exportPdf} title="Експорт PDF" aria-label="Експорт PDF"><ToolIcon name="export" /></button>
+          <button className="tool-icon" onClick={() => goPage(pi - 1)} title="Попередня сторінка" aria-label="Попередня сторінка"><ToolIcon name="prev" /></button><span className="sub page-label">{pi + 1}/{d.pages.length}</span><button className="tool-icon" onClick={() => goPage(pi + 1)} title="Наступна сторінка" aria-label="Наступна сторінка"><ToolIcon name="next" /></button>
           <button className={'tool-icon' + (strip ? ' on' : '')} onClick={() => setStrip(!strip)} title="Мініатюри сторінок" aria-label="Мініатюри сторінок"><ToolIcon name="pages" /></button>
-          <button className="tool-icon" onClick={addPage} title="Додати сторінку" aria-label="Додати сторінку"><ToolIcon name="addPage" /></button>{d.pages.length > 1 && <button className="tool-icon" onClick={delPage} title="Видалити сторінку" aria-label="Видалити сторінку"><ToolIcon name="deletePage" /></button>}</div>
-        <div className="edrow">
+          <button className="tool-icon" onClick={addPage} title="Додати сторінку" aria-label="Додати сторінку"><ToolIcon name="addPage" /></button>
+          {d.pages.length > 1 && <button className="tool-icon" onClick={delPage} title="Видалити сторінку" aria-label="Видалити сторінку"><ToolIcon name="deletePage" /></button>}
           {d.type === 'notebook' && !page.img && ['blank', 'lined', 'grid', 'dots'].map(k => <button key={k} className={'tool-icon' + (page.tpl === k ? ' on' : '')} onClick={() => setPage({ ...page, tpl: k })} title={{ blank: 'Чиста сторінка', lined: 'Лінійка', grid: 'Клітинка', dots: 'Крапки' }[k]} aria-label={{ blank: 'Чиста сторінка', lined: 'Лінійка', grid: 'Клітинка', dots: 'Крапки' }[k]}><ToolIcon name={k} /></button>)}
-          <button className={'tool-icon' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)} title="Лише Apple Pencil" aria-label="Лише Apple Pencil"><ToolIcon name="pencil" /></button></div>
+          <button className={'tool-icon' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)} title="Лише Apple Pencil" aria-label="Лише Apple Pencil"><ToolIcon name="pencil" /></button>
+        </div>
       </div>
       <div className="edbox" ref={boxRef}>
         <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w * zoom, height: fit.h * zoom, touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
