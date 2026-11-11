@@ -286,7 +286,7 @@ function Editor({ doc, onSave, onClose }) {
     try { const t = await makeThumb(d); await onSave({ ...d, thumb: t, upd: Date.now() }); setSaveStatus('saved'); onClose(); }
     catch (e) { setSaveStatus('error'); }
   };
-  const TOOLS = [['pen', 'Ручка'], ['fountain', 'Перо'], ['pencil', 'Карандаш'], ['hl', 'Маркер'], ['eraser', 'Ластик'], ['line', 'Лінія'], ['rect', 'Прямокутник'], ['oval', 'Еліпс'], ['text', 'Текст'], ['hand', 'Переміщение']];
+  const TOOLS = [['pen', 'Ручка'], ['fountain', 'Перо'], ['pencil', 'Карандаш'], ['hl', 'Маркер'], ['eraser', 'Ластик'], ['line', 'Лінія'], ['rect', 'Прямокутник'], ['oval', 'Еліпс'], ['text', 'Текст'], ['hand', 'Переміщення']];
 
   return (
     <div className="nv">
