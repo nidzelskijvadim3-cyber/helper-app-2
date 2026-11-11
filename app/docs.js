@@ -285,11 +285,7 @@ function Editor({ doc, onSave, onClose }) {
   return (
     <div className="nv">
       <div className="edtop"><button className="chip" onClick={close}>Готово</button><input value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label="Назва" /><span className={'save-indicator ' + saveStatus}>{saveStatus === 'saving' ? 'Збереження…' : saveStatus === 'error' ? 'Помилка збереження' : saveStatus === 'exporting' ? 'Створення PDF…' : 'Збережено'}</span></div>
-      <div className="edbox" ref={boxRef}>
-        <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w * zoom, height: fit.h * zoom, touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
-      </div>
-      {strip && <div className="strip">{thumbs.map((t, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + t + ')' }} aria-label={'Сторінка ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
-      <div className="edtools">
+      <div className="edtools edtools-top">
         <div className="edrow tool-icon-row">{TOOLS.map(([k, n]) => <button key={k} type="button" className={'tool-icon' + (tool === k ? ' on' : '')} onClick={() => setTool(k)} title={n} aria-label={n}><ToolIcon name={k} /></button>)}</div>
         <div className="edrow">{COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={c} />)}
           {[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={'Товщина ' + w}><i style={{ width: w * 2, height: w * 2 }} /></button>)}</div>
@@ -305,6 +301,10 @@ function Editor({ doc, onSave, onClose }) {
           {d.type === 'notebook' && !page.img && ['blank', 'lined', 'grid', 'dots'].map(k => <button key={k} className={'tool-icon' + (page.tpl === k ? ' on' : '')} onClick={() => setPage({ ...page, tpl: k })} title={{ blank: 'Чиста сторінка', lined: 'Лінійка', grid: 'Клітинка', dots: 'Крапки' }[k]} aria-label={{ blank: 'Чиста сторінка', lined: 'Лінійка', grid: 'Клітинка', dots: 'Крапки' }[k]}><ToolIcon name={k} /></button>)}
           <button className={'tool-icon' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)} title="Лише Apple Pencil" aria-label="Лише Apple Pencil"><ToolIcon name="pencil" /></button></div>
       </div>
+      <div className="edbox" ref={boxRef}>
+        <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w * zoom, height: fit.h * zoom, touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
+      </div>
+      {strip && <div className="strip">{thumbs.map((t, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + t + ')' }} aria-label={'Сторінка ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
       {tin && <div className="ov" onClick={() => setTin(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
         <b>Текст на сторінці</b>
         <textarea style={{ marginTop: 12 }} rows={3} autoFocus value={tin.v} onChange={e => setTin({ ...tin, v: e.target.value })} placeholder="Введіть текст" />
