@@ -163,3 +163,27 @@ input[type=checkbox]:checked{background:var(--ac);border-color:var(--ac)}
 .tool-icon{width:42px;height:42px;flex:0 0 42px;border:0;border-radius:13px;background:var(--fill);color:var(--tx);display:grid;place-items:center;padding:0}
 .tool-icon.on{background:var(--ac);color:var(--on);box-shadow:0 2px 8px rgba(10,132,255,.22)}
 @media(max-width:380px){.folder-face{padding:11px}.folder-mark{font-size:27px}.tool-icon{width:39px;height:39px;flex-basis:39px}}
+
+
+/* Full-screen writing workspace: top toolbars, canvas uses all remaining space */
+.nv{max-width:none;width:100%;margin:0;padding:calc(7px + env(safe-area-inset-top)) 10px calc(7px + env(safe-area-inset-bottom));gap:0}
+.edtop{flex:0 0 auto;min-height:42px;margin-bottom:7px}
+.edtools-top{flex:0 0 auto;display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:5px;padding:0 0 7px;margin:0;max-height:34vh;overflow-y:auto;overscroll-behavior:contain}
+.edtools-top .edrow{width:100%;min-height:38px;justify-content:flex-start;flex-wrap:nowrap;gap:6px}
+.edtools-top .tool-icon-row{overflow-x:auto;justify-content:flex-start;scrollbar-width:none}
+.edtools-top .tool-icon-row::-webkit-scrollbar{display:none}
+.edtools-top .tool-icon{width:38px;height:38px;flex:0 0 38px;border-radius:11px}
+.edtools-top .cdot{width:25px;height:25px;flex:0 0 25px}
+.edtools-top .wdot{width:30px;height:30px;flex:0 0 30px}
+.edbox{flex:1 1 0;min-height:0;width:100%;border-radius:0;background:var(--bg);overflow:auto;overscroll-behavior:contain}
+.edbox canvas{box-shadow:0 1px 8px rgba(0,0,0,.22)}
+.strip{flex:0 0 auto;max-height:92px;overflow-x:auto;padding:7px 0 2px}
+@media(min-width:700px){
+  .edtools-top{max-height:180px;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px}
+  .edtools-top .edrow{min-width:0}
+  .edtools-top .edrow:nth-child(1){grid-column:1 / -1}
+  .edtools-top .edrow:nth-child(2){grid-column:1}
+  .edtools-top .edrow:nth-child(3){grid-column:2}
+  .edtools-top .edrow:nth-child(4){grid-column:1 / -1}
+  .edtools-top .edrow:nth-child(5){grid-column:1 / -1}
+}
