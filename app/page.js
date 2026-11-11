@@ -22,7 +22,10 @@ const ICONS = {
   cards: <><rect x="3" y="7" width="14" height="12" rx="2" /><path d="M7 4h12a2 2 0 0 1 2 2v10" /></>,
   ai: <><path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" /><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 20l-.7-1.8-1.8-.7 1.8-.7z" /></>,
   folders: <><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>,
-  set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>
+  set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>,
+  photo: <><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 15-5-5L5 20"/></>,
+  screen: <><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></>,
+  clear: <><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6"/></>
 };
 const Icon = ({ n, s = 24 }) => <svg viewBox="0 0 24 24" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[n]}</svg>;
 
@@ -388,10 +391,10 @@ export default function Home() {
     <div className={sheetMode ? 'aicomp' : 'card'} style={sheetMode ? {} : { marginTop: 12 }}>
       {att.length > 0 && <div className="atts">{att.map((u, i) => <div className="att" key={i} style={{ backgroundImage: 'url(' + u + ')' }}><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label="Прибрати">×</button></div>)}</div>}
       <textarea rows={sheetMode ? 2 : 3} placeholder="Напишіть, що зробити або що пояснити" value={inp} onChange={e => setInp(e.target.value)} />
-      <div className="row" style={{ flexWrap: 'wrap' }}>
-        <label className="chip fileb">Фото<input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
-        <button className={'chip' + (see ? ' on' : '')} style={{ margin: 0 }} onClick={() => setSee(!see)}>Показати ШІ цей екран</button>
-        <button className="chip" style={{ margin: 0 }} onClick={() => setMsgs([])}>Очистити</button>
+      <div className="ai-action-row" aria-label="Додаткові дії">
+        <label className="ai-icon-btn fileb" title="Додати фото" aria-label="Додати фото"><Icon n="photo" s={20} /><input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
+        <button type="button" className={'ai-icon-btn' + (see ? ' on' : '')} title={see ? 'Не показувати екран ШІ' : 'Показати ШІ цей екран'} aria-label={see ? 'Не показувати екран ШІ' : 'Показати ШІ цей екран'} aria-pressed={see} onClick={() => setSee(!see)}><Icon n="screen" s={20} /></button>
+        <button type="button" className="ai-icon-btn" title="Очистити історію" aria-label="Очистити історію" onClick={() => setMsgs([])}><Icon n="clear" s={20} /></button>
       </div>
       <button className="btn" onClick={() => ask(inp)} disabled={busy}>{busy ? 'Думаю…' : 'Надіслати'}</button>
     </div>
