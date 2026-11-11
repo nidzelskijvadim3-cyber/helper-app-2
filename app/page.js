@@ -653,7 +653,7 @@ export default function Home() {
         <div className="sec" style={{ marginTop: 14 }}>Значок папки</div>
         <div className="folder-icons">{FOLDER_ICONS.map(ic => <button key={ic} type="button" className={'folder-icon' + ((fform.icon || '📚') === ic ? ' on' : '')} onClick={() => setFform({ ...fform, icon: ic })} aria-label={'Значок ' + ic}>{ic}</button>)}</div>
         <div className="sec" style={{ marginTop: 14 }}>Колір</div>
-        <div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (fform.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setFform({ ...fform, color: c })} aria-label={c} />)}</div>
+        <div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (fform.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setFform({ ...fform, color: c })} aria-label={c} />)}<input type="color" value={fform.color || ACCENTS[0]} onChange={e => setFform({ ...fform, color: e.target.value })} aria-label="Власний колір папки" /></div>
         <div className="sec" style={{ marginTop: 14 }}>Обкладинка</div>
         <div className="cover" style={fform.cover ? { backgroundImage: 'url(' + fform.cover + ')' } : { background: fform.color }} />
         <div className="row"><label className="chip fileb">Обрати фото<input type="file" accept="image/*" className="hidefile" onChange={e => { pickCover(e.target.files && e.target.files[0]); e.target.value = ''; }} /></label>
