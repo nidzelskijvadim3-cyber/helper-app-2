@@ -271,3 +271,12 @@ input[type=checkbox]:checked{background:var(--ac);border-color:var(--ac)}
  .toolbar-picker{height:28px;padding:0 7px;min-width:78px;font-size:10px}
  .width-picker{min-width:76px}
 }
+
+
+/* Compact icon-only actions in the AI composer */
+.ai-action-row{display:flex;align-items:center;gap:9px;margin-top:8px}
+.ai-icon-btn{width:40px;height:40px;flex:0 0 40px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--glassb);border-radius:13px;background:var(--fill);color:var(--mu);padding:0;cursor:pointer}
+.ai-icon-btn:hover,.ai-icon-btn.on{color:var(--ac);background:color-mix(in srgb,var(--ac) 12%,var(--fill));border-color:color-mix(in srgb,var(--ac) 40%,var(--glassb))}
+.ai-icon-btn:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.ai-icon-btn.fileb{position:relative;margin:0}
+.ai-icon-btn.fileb input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
