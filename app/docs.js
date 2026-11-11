@@ -26,7 +26,22 @@ const TOOL_GLYPHS = {
   rect: <><rect x="4" y="5" width="16" height="14" rx="1.5"/></>,
   oval: <><ellipse cx="12" cy="12" rx="8" ry="6"/></>,
   text: <><path d="M4 6V4h16v2M12 4v16M8 20h8"/></>,
-  hand: <><path d="M8 12V6a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v7-3a1.5 1.5 0 0 1 3 0v5c0 4-2.5 7-6.5 7h-1c-2 0-3.2-.8-4.5-2.5L4 15a1.7 1.7 0 0 1 2.5-2.2L8 14"/></>
+  hand: <><path d="M8 12V6a1.5 1.5 0 0 1 3 0v5-7a1.5 1.5 0 0 1 3 0v7-5a1.5 1.5 0 0 1 3 0v7-3a1.5 1.5 0 0 1 3 0v5c0 4-2.5 7-6.5 7h-1c-2 0-3.2-.8-4.5-2.5L4 15a1.7 1.7 0 0 1 2.5-2.2L8 14"/></>,
+  undo: <><path d="M9 14 4 9l5-5"/><path d="M4 9h9a7 7 0 0 1 0 14h-2"/></>,
+  redo: <><path d="m15 14 5-5-5-5"/><path d="M20 9h-9a7 7 0 0 0 0 14h2"/></>,
+  zoomOut: <><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5M7.8 10.8h6"/></>,
+  zoomIn: <><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5M7.8 10.8h6M10.8 7.8v6"/></>,
+  share: <><path d="M12 15V3m-4 4 4-4 4 4"/><path d="M5 12v8h14v-8"/></>,
+  export: <><path d="M12 3v12m-4-4 4 4 4-4"/><path d="M5 17v4h14v-4"/></>,
+  prev: <><path d="m15 18-6-6 6-6"/></>, next: <><path d="m9 18 6-6-6-6"/></>,
+  pages: <><rect x="7" y="4" width="13" height="16" rx="2"/><path d="M4 7v14h12"/></>,
+  addPage: <><rect x="4" y="4" width="13" height="16" rx="2"/><path d="M19 8v8m-4-4h8"/></>,
+  deletePage: <><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 10l6 6m0-6-6 6"/></>,
+  blank: <><rect x="5" y="3" width="14" height="18" rx="2"/></>,
+  lined: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 9h8M8 13h8M8 17h8"/></>,
+  grid: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M10 3v18M15 3v18M5 9h14M5 15h14"/></>,
+  dots: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h.01M13 8h.01M17 8h.01M9 12h.01M13 12h.01M17 12h.01M9 16h.01M13 16h.01M17 16h.01"/></>,
+  pencil: <><path d="m4 20 4.2-1L19 8.2a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="m14.8 6.2 3 3"/></>
 };
 function ToolIcon({ name }) { return <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TOOL_GLYPHS[name]}</svg>; }
 
@@ -278,17 +293,17 @@ function Editor({ doc, onSave, onClose }) {
         <div className="edrow tool-icon-row">{TOOLS.map(([k, n]) => <button key={k} type="button" className={'tool-icon' + (tool === k ? ' on' : '')} onClick={() => setTool(k)} title={n} aria-label={n}><ToolIcon name={k} /></button>)}</div>
         <div className="edrow">{COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={c} />)}
           {[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={'Товщина ' + w}><i style={{ width: w * 2, height: w * 2 }} /></button>)}</div>
+        <div className="edrow tool-icon-row">
+          <button className="tool-icon" onClick={() => swap(hist, redo)} title="Скасувати" aria-label="Скасувати"><ToolIcon name="undo" /></button><button className="tool-icon" onClick={() => swap(redo, hist)} title="Повторити" aria-label="Повторити"><ToolIcon name="redo" /></button>
+          <button className="tool-icon" onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))} title="Зменшити" aria-label="Зменшити"><ToolIcon name="zoomOut" /></button><span className="sub">{Math.round(zoom * 100)}%</span><button className="tool-icon" onClick={() => setZoom(Math.min(4, +(zoom + 0.5).toFixed(1)))} title="Збільшити" aria-label="Збільшити"><ToolIcon name="zoomIn" /></button>
+          <button className="tool-icon" onClick={share} title="Поділитися PNG" aria-label="Поділитися PNG"><ToolIcon name="share" /></button><button className="tool-icon" onClick={exportPdf} title="Експорт PDF" aria-label="Експорт PDF"><ToolIcon name="export" /></button></div>
+        <div className="edrow tool-icon-row">
+          <button className="tool-icon" onClick={() => goPage(pi - 1)} title="Попередня сторінка" aria-label="Попередня сторінка"><ToolIcon name="prev" /></button><span className="sub">{pi + 1}/{d.pages.length}</span><button className="tool-icon" onClick={() => goPage(pi + 1)} title="Наступна сторінка" aria-label="Наступна сторінка"><ToolIcon name="next" /></button>
+          <button className={'tool-icon' + (strip ? ' on' : '')} onClick={() => setStrip(!strip)} title="Мініатюри сторінок" aria-label="Мініатюри сторінок"><ToolIcon name="pages" /></button>
+          <button className="tool-icon" onClick={addPage} title="Додати сторінку" aria-label="Додати сторінку"><ToolIcon name="addPage" /></button>{d.pages.length > 1 && <button className="tool-icon" onClick={delPage} title="Видалити сторінку" aria-label="Видалити сторінку"><ToolIcon name="deletePage" /></button>}</div>
         <div className="edrow">
-          <button className="chip" onClick={() => swap(hist, redo)}>Назад</button><button className="chip" onClick={() => swap(redo, hist)}>Вперед</button>
-          <button className="chip" onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))}>−</button><span className="sub">{Math.round(zoom * 100)}%</span><button className="chip" onClick={() => setZoom(Math.min(4, +(zoom + 0.5).toFixed(1)))}>+</button>
-          <button className="chip" onClick={share}>Поділитися PNG</button><button className="chip" onClick={exportPdf}>Експорт PDF</button></div>
-        <div className="edrow">
-          <button className="chip" onClick={() => goPage(pi - 1)}>‹</button><span className="sub">{pi + 1} з {d.pages.length}</span><button className="chip" onClick={() => goPage(pi + 1)}>›</button>
-          <button className={'chip' + (strip ? ' on' : '')} onClick={() => setStrip(!strip)}>Сторінки</button>
-          <button className="chip" onClick={addPage}>+ Сторінка</button>{d.pages.length > 1 && <button className="chip" onClick={delPage}>Видалити</button>}</div>
-        <div className="edrow">
-          {d.type === 'notebook' && !page.img && [['blank', 'Чиста'], ['lined', 'Лінійка'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} onClick={() => setPage({ ...page, tpl: k })}>{n}</button>)}
-          <button className={'chip' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)}>Лише Apple Pencil</button></div>
+          {d.type === 'notebook' && !page.img && ['blank', 'lined', 'grid', 'dots'].map(k => <button key={k} className={'tool-icon' + (page.tpl === k ? ' on' : '')} onClick={() => setPage({ ...page, tpl: k })} title={{ blank: 'Чиста сторінка', lined: 'Лінійка', grid: 'Клітинка', dots: 'Крапки' }[k]} aria-label={{ blank: 'Чиста сторінка', lined: 'Лінійка', grid: 'Клітинка', dots: 'Крапки' }[k]}><ToolIcon name={k} /></button>)}
+          <button className={'tool-icon' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)} title="Лише Apple Pencil" aria-label="Лише Apple Pencil"><ToolIcon name="pencil" /></button></div>
       </div>
       {tin && <div className="ov" onClick={() => setTin(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
         <b>Текст на сторінці</b>
