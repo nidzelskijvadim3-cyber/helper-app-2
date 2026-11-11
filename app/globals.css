@@ -196,3 +196,42 @@ input[type=checkbox]:checked{background:var(--ac);border-color:var(--ac)}
  .edtools-top .edrow{gap:4px;min-height:33px}
  .edtools-top .cdot{width:18px;height:18px;flex-basis:18px}
 }
+
+
+/* Fixed, non-scrolling notebook toolbar with contextual controls and an overflow panel */
+.nv{padding-left:10px;padding-right:10px}
+.edtools-top{position:relative;gap:5px;padding:0 0 7px}
+.edtools-top .edrow{min-height:34px;gap:4px}
+.edtools-top .primary-tools{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px;overflow:visible;padding:0}
+.edtools-top .primary-tools .tool-icon{width:100%;min-width:0;height:34px;flex:initial;border-radius:10px}
+.edtools-top .tool-icon svg{width:19px;height:19px}
+.edtools-top .compact-options{display:flex;align-items:center;justify-content:flex-start;overflow:visible;gap:7px;padding:0;min-height:32px}
+.toolbar-colors,.toolbar-widths,.toolbar-history{display:flex;align-items:center;gap:5px;flex:0 0 auto}
+.edtools-top .cdot{width:17px;height:17px;flex:0 0 17px}
+.edtools-top .cdot.on{box-shadow:0 0 0 1.5px var(--bg),0 0 0 3px var(--tx)}
+.edtools-top .wdot{width:24px;height:24px;flex:0 0 24px}
+.edtools-top .toolbar-history .tool-icon,.edtools-top .more-toggle{width:29px;height:29px;flex:0 0 29px;border-radius:9px}
+.toolbar-more{position:absolute;z-index:30;top:calc(100% - 2px);right:0;width:min(330px,calc(100vw - 20px));max-height:min(58vh,430px);overflow:auto;padding:12px;border:1px solid var(--glassb);border-radius:15px;background:var(--card);box-shadow:0 12px 34px rgba(0,0,0,.28);display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.toolbar-more-group{min-width:0;display:flex;flex-direction:column;gap:6px}
+.toolbar-more-group>span{font-size:11px;color:var(--mu);font-weight:600}
+.toolbar-more-controls{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.toolbar-more-controls .tool-icon{width:29px;height:29px;flex:0 0 29px;border-radius:8px}
+.toolbar-more-controls .tool-icon svg{width:17px;height:17px}
+.toolbar-more-controls b{font-size:11px;min-width:30px;text-align:center;font-weight:600;color:var(--mu)}
+@media(min-width:700px){
+ .nv{padding-left:16px;padding-right:16px}
+ .edtools-top .primary-tools{grid-template-columns:repeat(8,38px);justify-content:start;gap:6px}
+ .edtools-top .primary-tools .tool-icon{height:36px}
+ .toolbar-more{width:360px}
+}
+@media(max-width:360px){
+ .nv{padding-left:7px;padding-right:7px}
+ .edtools-top .primary-tools{gap:3px}
+ .edtools-top .primary-tools .tool-icon{height:32px}
+ .edtools-top .tool-icon svg{width:18px;height:18px}
+ .edtools-top .compact-options{gap:5px}
+ .toolbar-colors,.toolbar-widths,.toolbar-history{gap:4px}
+ .edtools-top .cdot{width:16px;height:16px;flex-basis:16px}
+ .edtools-top .wdot{width:22px;height:22px;flex-basis:22px}
+ .edtools-top .toolbar-history .tool-icon,.edtools-top .more-toggle{width:27px;height:27px;flex-basis:27px}
+}
