@@ -17,7 +17,7 @@ export async function shrink(file, max = 1024, q = 0.72) {
   c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
   return c.toDataURL('image/jpeg', q);
 }
-const COLORS = ['#1c1c1e', '#0a84ff', '#ff375f', '#30d158', '#ff9f0a', '#bf5af2'];
+const COLORS = ['#171717', '#6b7280', '#a3a3a3', '#ffffff', '#1d4ed8', '#2563eb', '#38bdf8', '#06b6d4', '#0f766e', '#16a34a', '#65a30d', '#eab308', '#f59e0b', '#ea580c', '#dc2626', '#f43f5e', '#db2777', '#9333ea', '#7c3aed', '#92400e'];
 const TOOL_GLYPHS = {
   pen: <><path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="m14.8 6.2 3 3"/></>,
   hl: <><path d="m4 16 9.8-9.8a2 2 0 0 1 2.8 0l1.2 1.2a2 2 0 0 1 0 2.8L8 19H4z"/><path d="M3 21h18"/></>,
@@ -41,7 +41,8 @@ const TOOL_GLYPHS = {
   lined: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 9h8M8 13h8M8 17h8"/></>,
   grid: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M10 3v18M15 3v18M5 9h14M5 15h14"/></>,
   dots: <><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h.01M13 8h.01M17 8h.01M9 12h.01M13 12h.01M17 12h.01M9 16h.01M13 16h.01M17 16h.01"/></>,
-  pencil: <><path d="m4 20 4.2-1L19 8.2a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="m14.8 6.2 3 3"/></>
+  pencil: <><path d="m4 20 4.2-1L19 8.2a2.1 2.1 0 0 0-3-3L5.2 16z"/><path d="m14.8 6.2 3 3"/></>,
+  fountain: <><path d="M12 3 4 11l9 9 8-8-9-9Z"/><path d="m4 11 8-8M13 20l-1-6 6-1M8 15l-4 5"/></>
 };
 function ToolIcon({ name }) { return <svg viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TOOL_GLYPHS[name]}</svg>; }
 
@@ -100,6 +101,8 @@ async function prepImage(file, scan) {
 
 function drawStroke(g, s, ws) {
   g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = s.c; g.fillStyle = s.c; g.globalAlpha = s.a || 1; g.lineWidth = (s.w || 3) * ws;
+  if (s.style === 'pencil') { g.globalAlpha *= 0.62; g.lineWidth *= 0.82; g.globalCompositeOperation = 'multiply'; }
+  if (s.style === 'fountain') g.lineWidth *= 1.18;
   if (s.k === 'text') {
     g.font = (s.s * ws) + 'px -apple-system, system-ui, sans-serif';
     s.t.split('\n').forEach((ln, i) => g.fillText(ln, s.x, s.y + i * s.s * ws * 1.25));
@@ -150,7 +153,9 @@ function Editor({ doc, onSave, onClose }) {
   const [pi, setPi] = useState(0);
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState(COLORS[0]);
-  const [wd, setWd] = useState(4);
+  const [wd, setWd] = useState(2.5);
+  const [colorOpen, setColorOpen] = useState(false);
+  const [widthOpen, setWidthOpen] = useState(false);
   const [penOnly, setPenOnly] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [fit, setFit] = useState({ w: 300, h: 400 });
@@ -224,7 +229,7 @@ function Editor({ doc, onSave, onClose }) {
     if (tool === 'text') { setTin({ x, y, v: '' }); return; }
     if (tool === 'eraser') { cur.current = { erase: true }; eraseAt(x, y); return; }
     if (tool === 'line' || tool === 'rect' || tool === 'oval') { cur.current = { k: tool, c: color, w: wd, p: [x, y, x, y] }; return; }
-    cur.current = { c: color, w: tool === 'hl' ? wd * 4 : wd, a: tool === 'hl' ? 0.35 : 1, p: [x, y] };
+    cur.current = { c: color, w: tool === 'hl' ? wd * 4 : tool === 'pencil' ? wd * 0.82 : tool === 'fountain' ? wd * 1.18 : wd, a: tool === 'hl' ? 0.35 : tool === 'pencil' ? 0.62 : 1, style: tool === 'pencil' ? 'pencil' : tool === 'fountain' ? 'fountain' : 'pen', p: [x, y] };
   };
   const move = e => {
     const s = cur.current; if (!s) return;
@@ -236,7 +241,7 @@ function Editor({ doc, onSave, onClose }) {
     if (Math.hypot(x - lx, y - ly) < 2) return;
     q.push(x, y);
     if (s.a < 1) { renderPage(g, page, imgRef.current); drawStroke(g, s, ws); }
-    else { g.save(); g.lineCap = 'round'; g.strokeStyle = s.c; g.lineWidth = s.w * ws; g.beginPath(); g.moveTo(lx, ly); g.lineTo(x, y); g.stroke(); g.restore(); }
+    else { g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = s.c; g.globalAlpha = s.a || 1; g.lineWidth = s.w * ws; if (s.style === 'pencil') { g.globalAlpha *= 0.62; g.lineWidth *= 0.82; g.globalCompositeOperation = 'multiply'; } if (s.style === 'fountain') g.lineWidth *= 1.18; g.beginPath(); g.moveTo(lx, ly); g.lineTo(x, y); g.stroke(); g.restore(); }
   };
   const up = () => {
     const s = cur.current; cur.current = null; if (!s) return;
@@ -281,7 +286,7 @@ function Editor({ doc, onSave, onClose }) {
     try { const t = await makeThumb(d); await onSave({ ...d, thumb: t, upd: Date.now() }); setSaveStatus('saved'); onClose(); }
     catch (e) { setSaveStatus('error'); }
   };
-  const TOOLS = [['pen', 'Ручка'], ['hl', 'Маркер'], ['eraser', 'Ластик'], ['line', 'Лінія'], ['rect', 'Прямокутник'], ['oval', 'Еліпс'], ['text', 'Текст'], ['hand', 'Переміщення']];
+  const TOOLS = [['pen', 'Ручка'], ['fountain', 'Перо'], ['pencil', 'Карандаш'], ['hl', 'Маркер'], ['eraser', 'Ластик'], ['line', 'Лінія'], ['rect', 'Прямокутник'], ['oval', 'Еліпс'], ['text', 'Текст'], ['hand', 'Переміщение']];
 
   return (
     <div className="nv">
@@ -292,8 +297,21 @@ function Editor({ doc, onSave, onClose }) {
         </div>
         <div className="edrow compact-options">
           {tool !== 'hand' && tool !== 'eraser' && <>
-            <div className="toolbar-colors">{COLORS.map(c => <button key={c} className={'cdot' + (color === c ? ' on' : '')} style={{ background: c }} onClick={() => setColor(c)} aria-label={'Колір ' + c} title={'Колір ' + c} />)}</div>
-            <div className="toolbar-widths">{[3, 6, 10].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={'Товщина ' + w} title={'Товщина ' + w}><i style={{ width: w * 1.5, height: w * 1.5 }} /></button>)}</div>
+            <div className="toolbar-picker-wrap">
+              <button className="toolbar-picker color-picker" onClick={() => { setColorOpen(v => !v); setWidthOpen(false); }} aria-label="Вибрати колір" aria-expanded={colorOpen}><i style={{ background: color }} />Колір <ToolIcon name="next" /></button>
+              {colorOpen && <div className="toolbar-picker-pop color-pop">
+                <div className="palette-grid">{COLORS.map(c => <button key={c} className={'palette-swatch' + (color === c ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); setColorOpen(false); }} aria-label={'Колір ' + c} title={c} />)}</div>
+                <label className="custom-color">Свій колір <input type="color" value={color} onChange={e => setColor(e.target.value)} /></label>
+              </div>}
+            </div>
+            <div className="toolbar-picker-wrap">
+              <button className="toolbar-picker width-picker" onClick={() => { setWidthOpen(v => !v); setColorOpen(false); }} aria-label="Вибрати товщину" aria-expanded={widthOpen}><span className="width-preview" style={{ height: Math.max(2, wd * 1.2) }} />{wd.toFixed(1).replace('.0','')} px <ToolIcon name="next" /></button>
+              {widthOpen && <div className="toolbar-picker-pop width-pop">
+                <div className="width-pop-head"><b>Товщина пера</b><strong>{wd.toFixed(1).replace('.0','')} px</strong></div>
+                <input className="width-range" type="range" min="0.5" max="20" step="0.5" value={wd} onChange={e => setWd(Number(e.target.value))} aria-label="Товщина пера" />
+                <div className="width-samples"><span>Тонко</span><i style={{ height: Math.max(1, wd) }} /><span>Толсто</span></div>
+              </div>}
+            </div>
           </>}
           <div className="toolbar-history">
             <button className="tool-icon" onClick={() => swap(hist, redo)} title="Скасувати" aria-label="Скасувати"><ToolIcon name="undo" /></button>
@@ -338,7 +356,7 @@ function Editor({ doc, onSave, onClose }) {
         </div>}
       </div>
       <div className="edbox" ref={boxRef}>
-        <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w * zoom, height: fit.h * zoom, touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
+        <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w * zoom * 1.06, height: fit.h * zoom * 1.06, touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
       </div>
       {strip && <div className="strip">{thumbs.map((t, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + t + ')' }} aria-label={'Сторінка ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
       {tin && <div className="ov" onClick={() => setTin(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
