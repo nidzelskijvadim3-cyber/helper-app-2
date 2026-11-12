@@ -1,7 +1,8 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Docs, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, moveDoc } from './docs';
-import { canMoveFolder, folderPath } from './lib';
+import { canMoveFolder, folderPath, shade } from './lib';
+import { syncNow, syncStatus, getSyncMeta, setSyncOn } from './sync';
 import { t as tr, loc, setLang, getLang } from './i18n';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
@@ -14,18 +15,6 @@ const FONTN = { sf: 'Класичний (SF)', serif: 'Строгий (із за
 const ACCENTS = ['#0a84ff', '#ff375f', '#ff9f0a', '#30d158', '#bf5af2', '#64d2ff', '#ffd60a', '#ff453a'];
 const UI0 = { theme: 'dark', accent: '#0a84ff', font: 'sf', lang: 'uk' };
 const onColor = h => { const n = parseInt(String(h).slice(1), 16) || 0; return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150 ? '#000' : '#fff'; };
-const shade = (h, a) => { const n = parseInt(String(h).slice(1), 16) || 0; const f = v => Math.max(0, Math.min(255, Math.round(v + (a < 0 ? v : 255 - v) * a))); return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(v => f(v & 255).toString(16).padStart(2, '0')).join(''); };
-const FICONS = ['📚', '📝', '🎓', '💼', '🏠', '❤️', '⭐', '💡', '🎵', '🎨', '✈️', '🛒', '💪', '🍎', '💻', '📷', '🔬', '🌱', '🎮', '💰', '📅', '🧠', '🔥', '🌙'];
-function FolderArt({ color, cover, icon }) {
-  const c = color || '#0a84ff';
-  return (
-    <div className="fshape" style={{ '--fc': c, '--fd': shade(c, -0.28), '--fl': shade(c, 0.18) }}>
-      <div className="fback" /><div className="fpaper" />
-      <div className="ffront" style={cover ? { backgroundImage: 'url(' + cover + ')' } : undefined}>
-        {icon ? <span className="ficon">{icon}</span> : null}
-      </div>
-    </div>);
-}
 const TABS = [['today', 'План'], ['cal', 'Календар'], ['tasks', 'Задачі'], ['folders', 'Папки'], ['cards', 'Навчання'], ['ai', 'ШІ']];
 const ICONS = {
   today: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
@@ -148,7 +137,7 @@ function applyActions(acts, st) {
     } else if (a.type === 'add_note' && a.text) {
       notes.unshift({ id: nid(), text: String(a.text), upd: Date.now(), folder: resolveF(a.folder) }); n++;
     } else if (a.type === 'create_folder' && a.name) {
-      folders.push({ id: nid(), name: String(a.name).slice(0, 40), color: /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : ACCENTS[folders.length % ACCENTS.length], cover: '', parent: resolveF(a.parent) }); n++;
+      folders.push({ id: nid(), name: String(a.name).slice(0, 40), color: /^#[0-9a-f]{6}$/i.test(a.color || '') ? a.color : ACCENTS[folders.length % ACCENTS.length], cover: '', icon: typeof a.icon === 'string' ? a.icon.slice(0, 4) : '', parent: resolveF(a.parent) }); n++;
     } else if (a.type === 'rename_folder' && a.name) {
       folders = folders.map(f => { if (f.id !== aid) return f; n++; return { ...f, name: String(a.name).slice(0, 40) }; });
     } else if (a.type === 'move_note') {
@@ -199,6 +188,21 @@ async function callAI(body) {
   return d.text;
 }
 
+const FOLDER_ICONS = ['📁', '🦷', '📚', '✏️', '🧪', '🔬', '💉', '🩺', '🇩🇪', '🇬🇧', '🇺🇦', '💼', '🏠', '🛒', '✈️', '🎓', '📝', '💡', '⭐', '❤️', '🎨', '🎵', '📌', '🧠', '💻', '🍎', '🏃', '💰', '🌸', '🌿', '🐱', '☕'];
+function FolderArt({ fo, name, sub }) {
+  const c = fo.color || '#0a84ff';
+  return (
+    <div className="fold" style={{ '--fb': shade(c, -0.28), '--ff': shade(c, 0.14), '--fc': c }}>
+      <div className="fback"><i className="ftab" /></div>
+      <div className="fsheet" />
+      <div className="ffront" style={fo.cover ? { backgroundImage: 'url(' + fo.cover + ')' } : undefined}>
+        {fo.cover && <div className="fshade" />}
+        {fo.icon ? <span className={'fglyph' + (fo.cover ? ' sm' : '')}>{fo.icon}</span> : null}
+        <div className="fname">{name}</div>{sub != null && <div className="fsub">{sub}</div>}
+      </div>
+    </div>);
+}
+
 export default function Home() {
   const [tab, setTab] = useState('today');
   const [items, setItems] = useState([]);
@@ -240,6 +244,7 @@ export default function Home() {
   const [fform, setFform] = useState(null);
   const [nfold, setNfold] = useState('');
   const [aiOpen, setAiOpen] = useState(false);
+  const [sy, setSy] = useState({ on: false, state: 'idle', last: 0, msg: '', configured: null });
   const [see, setSee] = useState(false);
   const [att, setAtt] = useState([]);
   const [docUndo, setDocUndo] = useState([]);
@@ -251,7 +256,7 @@ export default function Home() {
     try {
       const s = JSON.parse(localStorage.getItem('helper-next') || '{}');
       if (s.items) setItems(s.items); if (s.cap) setCap(s.cap); if (s.msgs) setMsgs(s.msgs);
-      if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes); if (s.tests) setTests(s.tests); if (s.folders) setFolders(s.folders.map(f => ({ parent: '', ...f }))); if (s.ui) setUi({ ...UI0, ...s.ui });
+      if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes); if (s.tests) setTests(s.tests); { const sm = getSyncMeta(); setSy(x => ({ ...x, on: !!sm.on, last: sm.last || 0 })); } if (s.folders) setFolders(s.folders.map(f => ({ parent: '', ...f }))); if (s.ui) setUi({ ...UI0, ...s.ui });
     } catch (e) {}
     setReady(true);
   }, []);
@@ -263,7 +268,38 @@ export default function Home() {
   }, [ui, ready]);
   useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [msgs, busy, tab]);
   const plan = useMemo(() => makePlan(items, cap), [items, cap]);
-  stRef.current = { items, cap, start, cards, notes, folders };
+  stRef.current = { items, cap, start, cards, notes, folders, tests, ui };
+  const syncing = useRef(false);
+  const applySync = ns => {
+    stRef.current = { ...stRef.current, ...ns };
+    setItems(ns.items); setNotes(ns.notes); setFolders(ns.folders); setCards(ns.cards); setTests(ns.tests); setCap(ns.cap); setStart(ns.start); setUi(ns.ui);
+  };
+  const syncErr = e => (e.code === 401 ? tr("Невірний пароль") : e.code === 503 ? tr("Сервер синхронізації не налаштований. Див. інструкцію.") : (e.message || 'Error'));
+  const runSync = async () => {
+    if (syncing.current) return;
+    syncing.current = true; setSy(s => ({ ...s, state: 'syncing', msg: '' }));
+    try { await syncNow({ getState: () => stRef.current, setState: applySync, pass: localStorage.getItem('helper-pass') || '' }); setSy(s => ({ ...s, state: 'idle', last: Date.now(), msg: '' })); }
+    catch (e) { setSy(s => ({ ...s, state: 'error', msg: syncErr(e) })); }
+    syncing.current = false;
+  };
+  const toggleSync = async () => {
+    if (sy.on) { setSyncOn(false); setSy(s => ({ ...s, on: false })); return; }
+    try {
+      const st = await syncStatus(localStorage.getItem('helper-pass') || '');
+      if (!st.configured) { setSy(s => ({ ...s, configured: false, msg: tr("Сервер синхронізації не налаштований. Див. інструкцію.") })); return; }
+    } catch (e) { setSy(s => ({ ...s, msg: syncErr(e) })); return; }
+    setSyncOn(true); setSy(s => ({ ...s, on: true, configured: true, msg: '' }));
+  };
+  useEffect(() => {
+    if (!ready || !sy.on) return;
+    let tm; const kick = () => { if (document.visibilityState === 'visible') runSync(); };
+    const later = () => { clearTimeout(tm); tm = setTimeout(kick, 4000); };
+    kick();
+    document.addEventListener('visibilitychange', kick); window.addEventListener('online', kick); window.addEventListener('docs-changed', later);
+    const iv = setInterval(kick, 60000);
+    return () => { clearTimeout(tm); clearInterval(iv); document.removeEventListener('visibilitychange', kick); window.removeEventListener('online', kick); window.removeEventListener('docs-changed', later); };
+  }, [ready, sy.on]);
+  useEffect(() => { if (!ready || !sy.on) return; const tm = setTimeout(() => runSync(), 4000); return () => clearTimeout(tm); }, [items, notes, folders, cards, tests, cap, start, ui, ready, sy.on]);
   useEffect(() => {
     if (nview == null || !ntext.trim()) return;
     setNotes(p => p.some(n => n.id === nview)
@@ -320,11 +356,9 @@ export default function Home() {
     if (id) { try { await moveDoc(id, fid); } catch (er) {} }
   };
   const folderTile = fo => (
-    <div className="ftile" key={fo.id} data-fid={fo.id} onClick={() => setFview(fo.id)}
+    <div className="foldw" key={fo.id} data-fid={fo.id} onClick={() => setFview(fo.id)}
       onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('drop'); }} onDragLeave={e => e.currentTarget.classList.remove('drop')} onDrop={e => dropDoc(e, fo.id)}>
-      <FolderArt color={fo.color} cover={fo.cover} icon={fo.icon} />
-      <div className="fname">{fo.name}</div>
-      <div className="fsub">{notes.filter(n => n.folder === fo.id).length + items.filter(i => i.folder === fo.id).length + folders.filter(x => x.parent === fo.id).length}</div>
+      <FolderArt fo={fo} name={fo.name} sub={notes.filter(n => n.folder === fo.id).length + items.filter(i => i.folder === fo.id).length + folders.filter(x => x.parent === fo.id).length} />
     </div>);
   const pickCover = file => {
     if (!file) return;
@@ -582,7 +616,7 @@ export default function Home() {
       {tab === 'folders' && fview == null && <>
         <div className="top"><h1>{tr("Папки")}</h1><div className="sub">{tr("Групуйте нотатки й задачі. Торкніться плитки, щоб відкрити, або «+», щоб створити папку.")}</div></div>
         <div className="fgrid">
-          <div className="ftile" onClick={() => setFview('all')}><FolderArt color="#8e8e93" icon="🗂️" /><div className="fname">{tr("Усі нотатки")}</div><div className="fsub">{notes.length}</div></div>
+          <div className="foldw" onClick={() => setFview('all')}><FolderArt fo={{ color: '#8e8e93', icon: '🗂️' }} name={tr("Усі нотатки")} sub={notes.length} /></div>
           {folders.filter(fo => fo.parent === '').map(folderTile)}
         </div>
         <Docs folderId={null} folders={folders} onNewNote={newNote} />
@@ -647,6 +681,11 @@ export default function Home() {
       {tab === 'set' && <>
         <div className="top"><h1>{tr("Налаштування")}</h1></div>
         <div className="card"><div className="sec">Мова / Sprache</div><div className="seg">{[['uk', 'Українська'], ['de', 'Deutsch']].map(([k, n]) => <button key={k} className={ui.lang === k ? 'on' : ''} onClick={() => setUi({ ...ui, lang: k })}>{n}</button>)}</div></div>
+        <div className="card"><div className="sec">{tr("Синхронізація")}</div>
+          <div className="sub" style={{ marginBottom: 10 }}>{sy.on ? tr("Увімкнено") : tr("Вимкнено")}{sy.last ? ', ' + tr("остання синхронізація") + ': ' + new Date(sy.last).toLocaleString(loc(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</div>
+          {sy.msg && <div className="sub" style={{ color: 'var(--wn)', marginBottom: 10 }}>{sy.msg}</div>}
+          <button className="btn" onClick={() => { if (sy.on) runSync(); else toggleSync(); }} disabled={sy.state === 'syncing'}>{sy.state === 'syncing' ? tr("Синхронізую…") : tr("Синхронізувати зараз")}</button>
+          <button className={'tg' + (sy.on ? ' on' : '')} onClick={toggleSync}><span>{tr("Автосинхронізація")}</span><b>{sy.on ? '✓' : ''}</b></button></div>
         <div className="card"><div className="sec">{tr("Тема")}</div><div className="seg">{[['dark', tr("Темна")], ['light', tr("Світла")], ['auto', tr("Авто")]].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>
         <div className="card"><div className="sec">{tr("Колір акценту")}</div><div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (ui.accent === c ? ' on' : '')} style={{ background: c }} onClick={() => setUi({ ...ui, accent: c })} aria-label={c} />)}<input type="color" value={ui.accent} onChange={e => setUi({ ...ui, accent: e.target.value })} aria-label={tr("Свій колір")} /></div></div>
         <div className="card"><div className="sec">{tr("Шрифт")}</div>{Object.entries(FONTN).map(([k, n]) => <button key={k} className={'fopt' + (ui.font === k ? ' on' : '')} style={{ fontFamily: FONTS[k] }} onClick={() => setUi({ ...ui, font: k })}>{tr(n)}</button>)}</div>
@@ -661,7 +700,7 @@ export default function Home() {
       </>}
 
       {(tab === 'today' || tab === 'tasks' || tab === 'cal') && <button className="fab" onClick={openNew} aria-label={tr("Додати")}>+</button>}
-      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', icon: '', parent: '' })} aria-label={tr("Нова папка")}>+</button>}
+      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: '' })} aria-label={tr("Нова папка")}>+</button>}
 
       {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" onClick={e => e.stopPropagation()}>
         <div className="seg"><button className={!ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'task' })}>{tr("Задача")}</button><button className={ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'event' })}>{tr("Подія")}</button></div>
@@ -679,21 +718,17 @@ export default function Home() {
 
       {fform && <div className="ov" onClick={() => setFform(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
         <b>{fform.id ? tr("Папка") : tr("Нова папка")}</b>
+        <div className="foldprev"><FolderArt fo={fform} name={fform.name || tr("Назва папки")} /></div>
         <input style={{ marginTop: 12 }} autoFocus placeholder={tr("Назва папки")} value={fform.name} onChange={e => setFform({ ...fform, name: e.target.value })} />
         <div className="sec" style={{ marginTop: 14 }}>{tr("Розташування")}</div>
         <select value={fform.parent == null ? '' : fform.parent} onChange={e => setFform({ ...fform, parent: e.target.value === '' ? '' : Number(e.target.value) })}>
           <option value="">{tr("Головний рівень")}</option>{folders.filter(x => x.id !== fform.id && (!fform.id || canMoveFolder(folders, fform.id, x.id))).map(x => <option key={x.id} value={x.id}>{folderPath(folders, x.id)}</option>)}</select>
-        <div style={{ margin: '16px auto 4px', width: 150 }}><FolderArt color={fform.color} cover={fform.cover} icon={fform.icon} /></div>
         <div className="sec" style={{ marginTop: 14 }}>{tr("Колір")}</div>
         <div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (fform.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setFform({ ...fform, color: c })} aria-label={c} />)}
-          <input type="color" value={/^#[0-9a-f]{6}$/i.test(fform.color || '') ? fform.color : '#0a84ff'} onChange={e => setFform({ ...fform, color: e.target.value })} aria-label={tr("Свій колір")} /></div>
-        <div className="sec" style={{ marginTop: 14 }}>{tr("Значок")}</div>
-        <div className="icgrid">
-          <button className={'icb' + (!fform.icon ? ' on' : '')} onClick={() => setFform({ ...fform, icon: '' })} aria-label={tr("Без значка")}>∅</button>
-          {FICONS.map(ic => <button key={ic} className={'icb' + (fform.icon === ic ? ' on' : '')} onClick={() => setFform({ ...fform, icon: ic })}>{ic}</button>)}
-        </div>
-        <input style={{ marginTop: 8 }} placeholder={tr("Або введіть свій емодзі чи символ")} maxLength={4} value={fform.icon && !FICONS.includes(fform.icon) ? fform.icon : ''} onChange={e => setFform({ ...fform, icon: e.target.value })} />
-        <div className="sec" style={{ marginTop: 14 }}>{tr("Картинка на папці")}</div>
+          <input type="color" className="cpick" value={fform.color} onChange={e => setFform({ ...fform, color: e.target.value })} aria-label={tr("Свій колір")} /></div>
+        <div className="sec" style={{ marginTop: 14 }}>{tr("Іконка")}</div>
+        <div className="icogrid"><button className={'ico' + (!fform.icon ? ' on' : '')} onClick={() => setFform({ ...fform, icon: '' })} aria-label={tr("Без іконки")}>∅</button>{FOLDER_ICONS.map(ic => <button key={ic} className={'ico' + (fform.icon === ic ? ' on' : '')} onClick={() => setFform({ ...fform, icon: ic })}>{ic}</button>)}</div>
+        <div className="sec" style={{ marginTop: 14 }}>{tr("Обкладинка")}</div>
         <div className="row"><label className="chip fileb">{tr("Обрати фото")}<input type="file" accept="image/*" className="hidefile" onChange={e => { pickCover(e.target.files && e.target.files[0]); e.target.value = ''; }} /></label>
           {fform.cover && <button className="chip" onClick={() => setFform({ ...fform, cover: '' })}>{tr("Прибрати фото")}</button>}</div>
         <div className="row"><button className="btn" onClick={saveFolder}>{tr("Зберегти")}</button>{fform.id && <button className="btn alt" onClick={delFolder}>{tr("Видалити")}</button>}</div>

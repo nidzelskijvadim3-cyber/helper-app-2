@@ -37,6 +37,11 @@ async function run(stores, mode, fn) {
   });
 }
 const range = id => IDBKeyRange.bound(id + ':', id + ':\uffff');
+// Надгробки видалених документів (для синхронізації), зберігаються у localStorage.
+const TOMB = 'helper-doc-tombs';
+export const readTombs = () => { try { return JSON.parse(localStorage.getItem(TOMB) || '[]'); } catch (e) { return []; } };
+const writeTombs = a => { try { localStorage.setItem(TOMB, JSON.stringify(a)); } catch (e) {} };
+export const clearTombs = ids => writeTombs(readTombs().filter(t => !ids.includes(t.id)));
 const notify = () => { try { window.dispatchEvent(new Event('docs-changed')); } catch (e) {} };
 
 export const listMeta = async () => { try { return await run(['docs'], 'readonly', ds => ds.getAll()); } catch (e) { return []; } };
@@ -48,21 +53,38 @@ export async function getDoc(id) {
 }
 // dirty: 'all' або масив індексів змінених сторінок. Метадані пишуться завжди.
 export async function saveDoc(d, dirty) {
-  const { meta, pages } = splitDoc(d);
+  const { meta, pages } = splitDoc(d), now = Date.now();
+  meta._su = now;
   await run(['docs', 'pages'], 'readwrite', (ds, ps) => {
     ds.put(meta);
     const idx = dirty === 'all' || !dirty ? pages.map((_, i) => i) : dirty;
-    idx.forEach(i => { if (pages[i]) ps.put(pages[i], pageKey(meta.id, i)); });
+    idx.forEach(i => { if (pages[i]) ps.put({ ...pages[i], _u: now }, pageKey(meta.id, i)); });
     if (dirty === 'all') ps.delete(IDBKeyRange.bound(pageKey(meta.id, pages.length), meta.id + ':\uffff'));
   });
   notify();
 }
-export async function putMeta(meta) { await run(['docs'], 'readwrite', ds => ds.put(meta)); notify(); }
+export async function putMeta(meta) { await run(['docs'], 'readwrite', ds => ds.put({ ...meta, _su: Date.now() })); notify(); }
 export async function putDoc(d) { if (Array.isArray(d.pages)) await saveDoc(d, 'all'); else await putMeta(d); }
 export async function delDoc(id) {
   await run(['docs', 'pages'], 'readwrite', (ds, ps) => { ds.delete(id); ps.delete(range(id)); });
+  writeTombs([...readTombs().filter(t => t.id !== id), { id, u: Date.now() }]);
   notify();
 }
+// --- допоміжні функції для синхронізації (без міток часу й надгробків) ---
+export const getDocMeta = id => run(['docs'], 'readonly', ds => ds.get(id));
+export async function getPagesSince(id, since, fallback) {
+  const rows = await run(['pages'], 'readonly', ps => ps.getAll(range(id)));
+  return rows.map((page, idx) => ({ idx, page })).filter(x => (x.page._u ?? fallback ?? 0) > since);
+}
+export async function getPageStamp(id, idx) { const p = await run(['pages'], 'readonly', ps => ps.get(pageKey(id, idx))); return p ? (p._u ?? 0) : null; }
+export async function applyRemoteMeta(meta) {
+  await run(['docs', 'pages'], 'readwrite', (ds, ps) => {
+    ds.put(meta);
+    if (typeof meta.pageCount === 'number') ps.delete(IDBKeyRange.bound(pageKey(meta.id, meta.pageCount), meta.id + ':\uffff'));
+  });
+}
+export const applyRemotePage = (id, idx, page) => run(['pages'], 'readwrite', ps => ps.put(page, pageKey(id, idx)));
+export const delDocRaw = id => run(['docs', 'pages'], 'readwrite', (ds, ps) => { ds.delete(id); ps.delete(range(id)); });
 export async function duplicateDoc(id) {
   const d = await getDoc(id); if (!d) return null;
   const nd = { ...d, id: newId(), title: String(d.title) + ' (копія)', fav: false, created: Date.now(), upd: Date.now() };

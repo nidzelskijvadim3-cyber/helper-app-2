@@ -95,11 +95,6 @@ export const DE = {
  "Керує задачами, подіями, папками, документами й карточками. Розуміє фото.": "Verwaltet Aufgaben, Termine, Ordner, Dokumente und Karteikarten. Versteht Fotos.",
  "Класичний (SF)": "Klassisch (SF)",
  "Клітинка": "Kariert",
- "Свій колір": "Eigene Farbe",
- "Значок": "Symbol",
- "Без значка": "Kein Symbol",
- "Або введіть свій емодзі чи символ": "Oder eigenes Emoji/Zeichen eingeben",
- "Картинка на папці": "Bild auf dem Ordner",
  "Колір": "Farbe",
  "Колір акценту": "Akzentfarbe",
  "Крапка означає, що в цей день щось заплановано": "Ein Punkt bedeutet, dass an diesem Tag etwas geplant ist",
@@ -283,7 +278,18 @@ export const DE = {
  "Додати сторінку": "Seite hinzufügen",
  "Видалити сторінку": "Seite löschen",
  "Попередня сторінка": "Vorherige Seite",
- "Наступна сторінка": "Nächste Seite"
+ "Наступна сторінка": "Nächste Seite",
+ "Синхронізація": "Synchronisierung",
+ "Сервер синхронізації не налаштований. Див. інструкцію.": "Der Sync-Server ist nicht eingerichtet. Siehe Anleitung.",
+ "Увімкнено": "Eingeschaltet",
+ "Вимкнено": "Ausgeschaltet",
+ "остання синхронізація": "letzte Synchronisierung",
+ "Синхронізую…": "Synchronisiere…",
+ "Синхронізувати зараз": "Jetzt synchronisieren",
+ "Автосинхронізація": "Automatisch synchronisieren",
+ "Невірний пароль": "Falsches Passwort",
+ "Іконка": "Symbol",
+ "Без іконки": "Ohne Symbol"
 };
 // Повертає переклад; крайні пробіли ключа зберігаються. Невідомий ключ повертається без змін.
 export function t(s) {

@@ -69,3 +69,11 @@ export function fitPage(p, W, H) {
   const pageH = !p.img && p.h * sc < H - 1 ? Math.ceil(H / sc) : p.h;
   return { scale: sc, pageH, cssW: Math.round(p.w * sc), cssH: Math.round(pageH * sc) };
 }
+
+// Освітлити (amt > 0) або затемнити (amt < 0) колір #rrggbb.
+export function shade(hex, amt) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '')); if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const f = c => Math.max(0, Math.min(255, Math.round(amt >= 0 ? c + (255 - c) * amt : c * (1 + amt))));
+  return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(f).map(v => v.toString(16).padStart(2, '0')).join('');
+}
