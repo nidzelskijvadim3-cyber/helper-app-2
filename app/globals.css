@@ -313,3 +313,19 @@ input:focus,select:focus,textarea:focus{background:color-mix(in srgb,var(--fill)
  .ai-action-row{gap:9px}
  .ai-action-row .ai-icon-btn{width:40px;min-width:40px;max-width:40px;height:40px;min-height:40px;max-height:40px;flex-basis:40px}
 }
+
+
+/* AI composer: actions and send control occupy separate, non-overlapping columns */
+.ai-composer-actions{display:flex;align-items:center;gap:12px;width:100%;min-width:0;margin-top:10px}
+.ai-composer-actions .ai-action-row{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;width:auto;min-width:0;padding:0;margin:0}
+.ai-composer-actions .ai-send-btn{display:block;flex:1 1 auto;width:auto;min-width:0;min-height:42px;margin:0;padding:10px 14px;white-space:nowrap}
+.test-settings{align-items:flex-end}
+.test-settings>select{flex:1;min-width:0}
+.test-count{display:flex;flex-direction:column;gap:6px;flex:0 0 112px;min-width:0;color:var(--mu);font-size:12px}
+.test-count input{width:100%;min-height:44px;font-size:16px;color:var(--tx)}
+@media(max-width:360px){
+ .ai-composer-actions{gap:8px}
+ .ai-composer-actions .ai-action-row{gap:6px}
+ .ai-composer-actions .ai-icon-btn{width:38px;min-width:38px;max-width:38px;height:38px;min-height:38px;max-height:38px;flex-basis:38px}
+ .ai-composer-actions .ai-send-btn{padding-left:8px;padding-right:8px;font-size:14px}
+}
