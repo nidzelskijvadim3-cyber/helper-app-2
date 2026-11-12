@@ -391,12 +391,14 @@ export default function Home() {
     <div className={sheetMode ? 'aicomp' : 'card'} style={sheetMode ? {} : { marginTop: 12 }}>
       {att.length > 0 && <div className="atts">{att.map((u, i) => <div className="att" key={i} style={{ backgroundImage: 'url(' + u + ')' }}><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label="Прибрати">×</button></div>)}</div>}
       <textarea rows={sheetMode ? 2 : 3} placeholder="Напишіть, що зробити або що пояснити" value={inp} onChange={e => setInp(e.target.value)} />
-      <div className="ai-action-row" aria-label="Додаткові дії">
-        <label className="ai-icon-btn fileb" title="Додати фото" aria-label="Додати фото"><Icon n="photo" s={20} /><input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
-        <button type="button" className={'ai-icon-btn' + (see ? ' on' : '')} title={see ? 'Не показувати екран ШІ' : 'Показати ШІ цей екран'} aria-label={see ? 'Не показувати екран ШІ' : 'Показати ШІ цей екран'} aria-pressed={see} onClick={() => setSee(!see)}><Icon n="screen" s={20} /></button>
-        <button type="button" className="ai-icon-btn" title="Очистити історію" aria-label="Очистити історію" onClick={() => setMsgs([])}><Icon n="clear" s={20} /></button>
+      <div className="ai-composer-actions">
+        <div className="ai-action-row" aria-label="Додаткові дії">
+          <label className="ai-icon-btn fileb" title="Додати фото" aria-label="Додати фото"><Icon n="photo" s={20} /><input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
+          <button type="button" className={'ai-icon-btn' + (see ? ' on' : '')} title={see ? 'Не показувати екран ШІ' : 'Показати ШІ цей екран'} aria-label={see ? 'Не показувати екран ШІ' : 'Показати ШІ цей екран'} aria-pressed={see} onClick={() => setSee(!see)}><Icon n="screen" s={20} /></button>
+          <button type="button" className="ai-icon-btn" title="Очистити історію" aria-label="Очистити історію" onClick={() => setMsgs([])}><Icon n="clear" s={20} /></button>
+        </div>
+        <button className="btn ai-send-btn" onClick={() => ask(inp)} disabled={busy}>{busy ? 'Думаю…' : 'Надіслати'}</button>
       </div>
-      <button className="btn" onClick={() => ask(inp)} disabled={busy}>{busy ? 'Думаю…' : 'Надіслати'}</button>
     </div>
   </>);
 
@@ -431,9 +433,10 @@ export default function Home() {
 
   async function createTest() {
     if (!tcfg.topic.trim() || tbusy) return;
+    const count = Math.min(100, Math.max(1, Math.round(Number(tcfg.n) || 5)));
     setTbusy(true); setTmsg('');
     try {
-      const raw = await callAI({ mode: 'quiz', messages: [{ role: 'user', text: tcfg.topic }], ctx: { n: Number(tcfg.n), kind: tcfg.kind } });
+      const raw = await callAI({ mode: 'quiz', messages: [{ role: 'user', text: tcfg.topic }], ctx: { n: count, kind: tcfg.kind } });
       const q = parseQuiz(raw);
       if (!q) throw new Error('ШІ повернув тест у неправильному форматі. Спробуйте ще раз.');
       const t = { id: Date.now(), title: q.title || tcfg.topic.slice(0, 40), qs: q.questions, ans: {}, grades: {}, done: false, created: Date.now() };
@@ -443,18 +446,34 @@ export default function Home() {
   }
   const patchTest = (id, p) => setTests(tests.map(t => t.id === id ? { ...t, ...p } : t));
   const setAns = (t, i, v) => patchTest(t.id, { ans: { ...t.ans, [i]: v } });
-  async function gradeOpen(t) {
-    if (tbusy) return;
-    const list = t.qs.map((q, i) => ({ i, q: q.q, ref: q.answer, user: t.ans[i] || '' })).filter((x, j) => t.qs[j].type === 'open' && x.user.trim() && !(t.grades && t.grades[x.i]));
-    if (!list.length) return;
-    setTbusy(true); setTmsg('');
+  async function gradeOpen(t, finish = false) {
+    if (tbusy) return false;
+    const list = t.qs.map((q, i) => ({ i, q: q.q, ref: q.answer, user: t.ans[i] || '' }))
+      .filter((x, j) => t.qs[j].type === 'open' && !(t.grades && t.grades[x.i]));
+    if (!list.length) {
+      if (finish) patchTest(t.id, { done: true });
+      return true;
+    }
+    setTbusy(true); setTmsg(finish ? 'Перевіряю відповіді перед підрахунком результату…' : '');
     try {
       const raw = await callAI({ mode: 'grade', messages: [{ role: 'user', text: JSON.stringify(list) }], ctx: {} });
       const o = JSON.parse(clean(raw)); const g = { ...(t.grades || {}) };
-      (o.grades || []).forEach(x => { const i = Number(x.i); if (t.qs[i]) g[i] = { score: Math.min(1, Math.max(0, Number(x.score) || 0)), comment: String(x.comment || '') }; });
-      patchTest(t.id, { grades: g });
-    } catch (e) { setTmsg('Не вдалося оцінити відповіді. Спробуйте ще раз.'); }
-    setTbusy(false);
+      (o.grades || []).forEach(x => {
+        const i = Number(x.i);
+        if (t.qs[i] && t.qs[i].type === 'open') g[i] = { score: Math.min(1, Math.max(0, Number(x.score) || 0)), comment: String(x.comment || '') };
+      });
+      patchTest(t.id, finish ? { grades: g, done: true } : { grades: g });
+      return true;
+    } catch (e) {
+      setTmsg('Не вдалося перевірити відкриті відповіді. Спробуйте ще раз — тест поки не завершено.');
+      return false;
+    } finally { setTbusy(false); }
+  }
+  async function finishTest(t) {
+    if (tbusy) return;
+    const ok = await gradeOpen(t, true);
+    if (!ok) return;
+    setTmsg('');
   }
   const cardsFromTest = t => {
     const bad = t.qs.map((q, i) => ({ q, i })).filter(({ q, i }) => okOf(t, q, i) !== true);
@@ -605,8 +624,10 @@ export default function Home() {
         {stab === 'tests' && <>
           <div className="card"><div className="sec">Новий тест</div>
             <textarea rows={4} placeholder="Тема або матеріал. Наприклад: Present Perfect, німецькі артиклі, анатомія зуба, або вставте свій конспект" value={tcfg.topic} onChange={e => setTcfg({ ...tcfg, topic: e.target.value })} />
-            <div className="row"><select value={tcfg.n} onChange={e => setTcfg({ ...tcfg, n: e.target.value })}><option value={5}>5 питань</option><option value={10}>10 питань</option><option value={15}>15 питань</option></select>
-              <select value={tcfg.kind} onChange={e => setTcfg({ ...tcfg, kind: e.target.value })}><option value="mix">Змішаний</option><option value="choice">Тільки з варіантами</option><option value="open">Відкриті питання</option></select></div>
+            <div className="row test-settings">
+              <label className="test-count"><span>Кількість питань</span><input type="number" inputMode="numeric" min="1" max="100" step="1" value={tcfg.n} onChange={e => setTcfg({ ...tcfg, n: e.target.value === '' ? '' : Math.min(100, Math.max(1, Number(e.target.value))) })} /></label>
+              <select value={tcfg.kind} onChange={e => setTcfg({ ...tcfg, kind: e.target.value })}><option value="mix">Змішаний</option><option value="choice">Тільки з варіантами</option><option value="open">Відкриті питання</option></select>
+            </div>
             <button className="btn" onClick={createTest} disabled={tbusy}>{tbusy ? 'Складаю тест…' : 'Створити тест'}</button>
             {tmsg && <div className="sub" style={{ marginTop: 10 }}>{tmsg}</div>}</div>
           {tests.length > 0 && <div className="card"><div className="sec">Мої тести</div>{tests.map(t => (
@@ -686,7 +707,7 @@ export default function Home() {
             {q.type === 'choice' ? q.options.map((o, j) => <button key={j} className={'opt' + (tt.ans[qi] === j ? ' on' : '')} onClick={() => setAns(tt, qi, j)}>{o}</button>)
               : <textarea rows={6} value={tt.ans[qi] || ''} onChange={e => setAns(tt, qi, e.target.value)} placeholder="Ваша відповідь" />}
             <div className="row" style={{ marginTop: 16 }}>{qi > 0 && <button className="btn alt" onClick={() => setQi(qi - 1)}>Назад</button>}
-              {qi < tt.qs.length - 1 ? <button className="btn" onClick={() => setQi(qi + 1)}>Далі</button> : <button className="btn" onClick={() => patchTest(tt.id, { done: true })}>Завершити</button>}</div>
+              {qi < tt.qs.length - 1 ? <button className="btn" onClick={() => setQi(qi + 1)}>Далі</button> : <button className="btn" onClick={() => finishTest(tt)} disabled={tbusy}>{tbusy ? 'Перевіряю…' : 'Завершити тест'}</button>}</div>
           </div>); })() : (
           <div className="quiz">
             <div className="big">{r1(tScore(tt))} з {tt.qs.length}</div><div className="sub" style={{ marginBottom: 16 }}>{Math.round(tScore(tt) / tt.qs.length * 100)}%</div>
@@ -694,9 +715,9 @@ export default function Home() {
             {tt.qs.map((q, i) => { const ok = okOf(tt, q, i); return (
               <div className="card" key={i}><div className="sec">Питання {i + 1}</div><div className="t">{q.q}</div>
                 <div className={'verdict ' + (ok === true ? 'ok' : ok === false ? 'bad' : '')}>{ok === true ? 'Вірно' : ok === false ? 'Невірно' : 'Чекає на оцінку'}</div>
-                {q.type === 'choice' ? <><div className="sub">Ваша відповідь: {tt.ans[i] != null ? q.options[tt.ans[i]] : '—'}</div>{ok === false && <div className="sub">Правильна: {q.options[q.answer]}</div>}</>
-                  : <><div className="sub">Ваша відповідь: {tt.ans[i] || '—'}</div><div className="sub">Еталон: {q.answer}</div>{tt.grades && tt.grades[i] && <div className="sub">{r1(tt.grades[i].score)}: {tt.grades[i].comment}</div>}</>}
-                {q.explain && <div className="note">{q.explain}</div>}</div>); })}
+                {q.type === 'choice' ? <><div className="sub">Ваш ответ: {tt.ans[i] != null ? q.options[tt.ans[i]] : 'Без ответа'}</div>{ok === false && <div className="sub">Правильный ответ: {q.options[q.answer]}</div>}</>
+                  : <><div className="sub">Ваш ответ: {(tt.ans[i] || '').trim() || 'Без ответа'}</div><div className="sub">Правильный ответ: {q.answer}</div>{tt.grades && tt.grades[i] && <div className="sub"><b>Разбор ответа:</b> {tt.grades[i].comment}</div>}</>}
+                {q.explain && <div className="note"><b>Почему это правильно:</b> {q.explain}</div>}</div>); })}
             <div className="row"><button className="btn alt" onClick={() => cardsFromTest(tt)}>Картки з помилок</button><button className="btn alt" onClick={() => { patchTest(tt.id, { ans: {}, grades: {}, done: false }); setQi(0); setTmsg(''); }}>Пройти знову</button></div>
             {tmsg && <div className="sub">{tmsg}</div>}
           </div>)}
