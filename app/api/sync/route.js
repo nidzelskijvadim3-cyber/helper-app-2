@@ -1,6 +1,14 @@
 export const maxDuration = 30;
 
-const baseUrl = () => (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+// Адреса проєкту має бути виду https://xxxx.supabase.co. Помилки вводу (зайвий шлях, адреса панелі, лише ідентифікатор) виправляємо.
+const baseUrl = () => {
+  let u = (process.env.SUPABASE_URL || '').trim().replace(/^["']|["']$/g, '');
+  if (!u) return '';
+  const m = u.match(/supabase\.com\/dashboard\/project\/([a-z0-9]+)/i);
+  if (m) return 'https://' + m[1] + '.supabase.co';
+  if (/^[a-z0-9]{15,25}$/i.test(u)) return 'https://' + u + '.supabase.co';
+  try { if (!/^https?:\/\//i.test(u)) u = 'https://' + u; return new URL(u).origin; } catch (e) { return ''; }
+};
 const secretKey = () => process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_KEY || '';
 const configured = () => !!(baseUrl() && secretKey());
 let lastSrv = 0;
@@ -14,7 +22,10 @@ async function sb(path, opts = {}) {
   const r = await fetch(baseUrl() + '/rest/v1/' + path, { ...opts, headers: headers(opts.headers) });
   const text = await r.text(); let j = null;
   try { j = text ? JSON.parse(text) : null; } catch (e) {}
-  if (!r.ok) throw new Error((j && (j.message || j.hint || j.error)) || 'Supabase ' + r.status);
+  if (!r.ok) {
+    const msg = (j && (j.message || j.hint || j.error)) || 'Supabase ' + r.status;
+    throw new Error(/invalid path/i.test(msg) ? 'Wrong SUPABASE_URL: it must look like https://xxxx.supabase.co (' + msg + ')' : msg);
+  }
   return j;
 }
 const inList = keys => 'in.(' + keys.map(k => '"' + String(k).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"').join(',') + ')';
