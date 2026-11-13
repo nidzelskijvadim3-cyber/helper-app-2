@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { listMeta, getDoc, saveDoc, putMeta, putDoc, delDoc, duplicateDoc, reparentDocs, moveDoc } from './store';
 import { newDoc, newId, filterDocs, sortDocs, recentDocs, folderPath, fitPage } from './lib';
 import { t as tr, loc } from './i18n';
+import { drawStroke, ptsOf, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, PENS, SHAPES } from './draw';
 
 export { putDoc, delDoc, newDoc, reparentDocs, moveDoc };
 export const listDocs = listMeta;
@@ -58,58 +59,18 @@ const EI = {
   trash: <><path d="M5 7h14M10 7V4h4v3" /><path d="M7 7l1 13h8l1-13" /></>,
   left: <path d="M15 5l-7 7 7 7" />,
   right: <path d="M9 5l7 7-7 7" />,
+  ruler: <><path d="M3 16L16 3l5 5L8 21z" /><path d="M7 12l2.5 2.5M10 9l2 2M13 6l2.5 2.5" /></>,
+  arrow: <><path d="M5 19L19 5" /><path d="M10 5h9v9" /></>,
+  triangle: <path d="M12 5l8 14H4z" />,
   zin: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4-4M8.5 11h5M11 8.5v5" /></>,
   zout: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4-4M8.5 11h5" /></>,
 };
-const TOOLN = { pen: 'Ручка', hl: 'Маркер', eraser: 'Гумка', line: 'Лінія', rect: 'Рамка', oval: 'Овал', text: 'Текст', hand: 'Рука' };
+const TOOLN = { pen: 'Ручка', hl: 'Маркер', eraser: 'Гумка', shape: 'Фігури', text: 'Текст', ruler: 'Лінійка', hand: 'Рука' };
+const NIBN = { ball: 'Кулькова', fountain: 'Перова', pencil: 'Олівець', brush: 'Пензель', calli: 'Каліграфія' };
+const SHAPEN = { line: 'Лінія', arrow: 'Стрілка', rect: 'Рамка', oval: 'Овал', triangle: 'Трикутник' };
+const PALETTE = ['#000000', '#3a3a3c', '#8e8e93', '#d1d1d6', '#ffffff', '#5d4037', '#a1887f', '#f5deb3', '#ff3b30', '#ff9500', '#ffcc00', '#34c759', '#00c7be', '#32ade6', '#007aff', '#5856d6', '#af52de', '#ff2d55', '#ff6b6b', '#ffa94d', '#ffe066', '#69db7c', '#4dabf7', '#b197fc'];
 function EIcon({ n, size = 22 }) { return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{EI[n]}</svg>; }
 function IB({ n, label, on, onClick, disabled }) { return <button className={'ib' + (on ? ' on' : '')} onClick={onClick} aria-label={label} title={label} disabled={disabled}><EIcon n={n} /></button>; }
-const pressureOf = e => Math.min(1, Math.max(0.05, e.pressure || 0.5));
-function drawStroke(g, s, ws) {
-  g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = s.c; g.fillStyle = s.c; g.globalAlpha = s.a || 1; g.lineWidth = (s.w || 3) * ws;
-  if (s.k === 'text') {
-    g.font = (s.s * ws) + 'px -apple-system, system-ui, sans-serif';
-    s.t.split('\n').forEach((ln, i) => g.fillText(ln, s.x, s.y + i * s.s * ws * 1.25));
-    g.restore(); return;
-  }
-  if (s.a && s.a < 1) g.globalCompositeOperation = 'multiply';
-  const p = s.p;
-  if (!s.k && s.pr) {
-    if (p.length <= 2) { g.beginPath(); g.arc(p[0], p[1], (s.w || 3) * ws * (0.35 + 1.3 * s.pr[0]) / 2, 0, 7); g.fill(); g.restore(); return; }
-    for (let i = 2; i < p.length; i += 2) { g.beginPath(); g.moveTo(p[i - 2], p[i - 1]); g.lineTo(p[i], p[i + 1]); g.lineWidth = (s.w || 3) * ws * (0.35 + 1.3 * (s.pr[i / 2] || 0.5)); g.stroke(); }
-    g.restore(); return;
-  }
-  g.beginPath();
-  if (s.k === 'line') { g.moveTo(p[0], p[1]); g.lineTo(p[2], p[3]); }
-  else if (s.k === 'rect') g.rect(Math.min(p[0], p[2]), Math.min(p[1], p[3]), Math.abs(p[2] - p[0]), Math.abs(p[3] - p[1]));
-  else if (s.k === 'oval') g.ellipse((p[0] + p[2]) / 2, (p[1] + p[3]) / 2, Math.abs(p[2] - p[0]) / 2 || 0.1, Math.abs(p[3] - p[1]) / 2 || 0.1, 0, 0, Math.PI * 2);
-  else {
-    g.moveTo(p[0], p[1]);
-    if (p.length <= 2) g.lineTo(p[0] + 0.1, p[1]);
-    else { for (let i = 2; i < p.length - 2; i += 2) g.quadraticCurveTo(p[i], p[i + 1], (p[i] + p[i + 2]) / 2, (p[i + 1] + p[i + 3]) / 2); g.lineTo(p[p.length - 2], p[p.length - 1]); }
-  }
-  g.stroke(); g.restore();
-}
-function ptsOf(s, ws) {
-  if (s.k === 'text') { const w = s.t.length * s.s * ws * 0.55; return [s.x, s.y, s.x + w / 2, s.y, s.x + w, s.y, s.x, s.y - s.s * ws * 0.4]; }
-  if (s.k === 'line') { const o = []; for (let i = 0; i <= 12; i++) o.push(s.p[0] + (s.p[2] - s.p[0]) * i / 12, s.p[1] + (s.p[3] - s.p[1]) * i / 12); return o; }
-  if (s.k === 'rect') { const a = s.p[0], b = s.p[1], c = s.p[2], d = s.p[3], o = []; for (let i = 0; i <= 8; i++) { const t = i / 8; o.push(a + (c - a) * t, b, a + (c - a) * t, d, a, b + (d - b) * t, c, b + (d - b) * t); } return o; }
-  if (s.k === 'oval') { const o = []; for (let i = 0; i < 24; i++) { const t = i / 24 * Math.PI * 2; o.push((s.p[0] + s.p[2]) / 2 + Math.cos(t) * (s.p[2] - s.p[0]) / 2, (s.p[1] + s.p[3]) / 2 + Math.sin(t) * (s.p[3] - s.p[1]) / 2); } return o; }
-  return s.p;
-}
-function renderPage(g, p, im) {
-  const ws = p.w / 1200;
-  g.fillStyle = '#fff'; g.fillRect(0, 0, p.w, p.h);
-  if (im) g.drawImage(im, 0, 0, p.w, p.h);
-  if (p.tpl === 'lined' || p.tpl === 'grid') {
-    g.strokeStyle = '#cfd8e6'; g.lineWidth = 2 * ws; g.beginPath();
-    for (let y = 100 * ws; y < p.h; y += 60 * ws) { g.moveTo(0, y); g.lineTo(p.w, y); }
-    if (p.tpl === 'grid') for (let x = 60 * ws; x < p.w; x += 60 * ws) { g.moveTo(x, 0); g.lineTo(x, p.h); }
-    g.stroke();
-  }
-  if (p.tpl === 'dots') { g.fillStyle = '#b8c2d3'; for (let y = 60 * ws; y < p.h; y += 60 * ws) for (let x = 60 * ws; x < p.w; x += 60 * ws) { g.beginPath(); g.arc(x, y, 3 * ws, 0, 7); g.fill(); } }
-  for (const s of p.strokes) drawStroke(g, s, ws);
-}
 async function makeThumb(d) {
   const p = d.pages[0]; if (!p) return '';
   const im = p.img ? await loadImg(p.img).catch(() => null) : null;
@@ -123,7 +84,14 @@ function Editor({ doc, onSave, onClose }) {
   const [pi, setPi] = useState(0);
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState(COLORS[0]);
-  const [wd, setWd] = useState(4);
+  const [wd, setWd] = useState(PENS.ball.w);
+  const [nib, setNib] = useState('ball');
+  const [op, setOp] = useState(1);
+  const [ew, setEw] = useState(28);
+  const [shape, setShape] = useState('line');
+  const [ruler, setRuler] = useState({ on: false, x: 200, y: 400, a: 0, len: 700 });
+  const [recent, setRecent] = useState(() => { try { return JSON.parse(localStorage.getItem('helper-colors') || '[]'); } catch (e) { return []; } });
+  const rdrag = useRef(null);
   const [penOnly, setPenOnly] = useState(false);
   const [pressure, setPressure] = useState(true);
   const [zoom, setZoom] = useState(1);
@@ -190,7 +158,7 @@ function Editor({ doc, onSave, onClose }) {
   const pos = e => { const cv = cvRef.current, r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
   const commit = s => { hist.current.push({ pi, strokes: page.strokes }); if (hist.current.length > 40) hist.current.shift(); redo.current = []; setPage({ ...page, strokes: [...page.strokes, s] }); };
   const eraseAt = (x, y) => {
-    const ws = page.w / 1200, r = 24 * ws;
+    const ws = page.w / 1200, r = ew * ws;
     const keep = page.strokes.filter(s => { const q = ptsOf(s, ws); for (let i = 0; i < q.length; i += 2) if (Math.hypot(q[i] - x, q[i + 1] - y) < r + (s.w || 3) * ws / 2) return false; return true; });
     if (keep.length !== page.strokes.length) { if (cur.current && !cur.current.snap) cur.current.snap = page.strokes; setPage({ ...page, strokes: keep }); }
   };
@@ -208,12 +176,18 @@ function Editor({ doc, onSave, onClose }) {
       if (penOnly) { gest.current = { pan: true, m0: [e.clientX, e.clientY], sl: el.scrollLeft, st: el.scrollTop }; return; }
     }
     e.preventDefault(); cvRef.current.setPointerCapture(e.pointerId);
-    const [x, y] = pos(e);
+    let [x, y] = pos(e);
     if (tool === 'text') { setTin({ x, y, v: '' }); return; }
     if (tool === 'eraser') { cur.current = { erase: true }; eraseAt(x, y); return; }
-    if (tool === 'line' || tool === 'rect' || tool === 'oval') { cur.current = { k: tool, c: color, w: wd, p: [x, y, x, y] }; return; }
-    cur.current = { c: color, w: tool === 'hl' ? wd * 4 : wd, a: tool === 'hl' ? 0.35 : 1, p: [x, y] };
-    if (pressure && e.pointerType === 'pen' && tool !== 'hl') cur.current.pr = [pressureOf(e)];
+    const ws = page.w / 1200, snap = ruler.on ? rulerSnap(ruler, x, y, 40 * ws) : null;
+    if (snap) { x = snap.x; y = snap.y; }
+    if (tool === 'shape') { cur.current = { k: shape, c: color, w: wd, p: [x, y, x, y], lock: !!snap && (shape === 'line' || shape === 'arrow') }; if (op < 1) cur.current.a = op; return; }
+    const isPen = e.pointerType === 'pen', usesPr = tool === 'pen' && (nib === 'fountain' || nib === 'brush');
+    const st = tool === 'hl' ? { n: 'marker', c: color, w: wd * 4, a: op < 1 ? op : 0.35, p: [x, y] } : { n: nib, c: color, w: wd, p: [x, y], seed: Math.floor(Math.random() * 1e6) };
+    if (tool === 'pen' && op < 1) st.a = op;
+    if (tool === 'pen') { const p0 = isPen && pressure ? pressureOf(e) : (usesPr ? 0.6 : null); if (p0 != null) st.pr = [p0]; }
+    if (snap) st.lock = true;
+    cur.current = st;
   };
   const move = e => {
     if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) {
@@ -234,15 +208,18 @@ function Editor({ doc, onSave, onClose }) {
     const [x, y] = pos(e);
     if (s.erase) { eraseAt(x, y); return; }
     const g = cvRef.current.getContext('2d'), ws = page.w / 1200;
-    if (s.k) { s.p[2] = x; s.p[3] = y; renderPage(g, page, imgRef.current); drawStroke(g, s, ws); return; }
+    if (s.k) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p[2] = ex; s.p[3] = ey; renderPage(g, page, imgRef.current); drawStroke(g, s, ws); return; }
     const evs = e.pointerType === 'pen' && e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const ev of evs) {
-      const [px, py] = pos(ev), q = s.p, lx = q[q.length - 2], ly = q[q.length - 1];
-      if (Math.hypot(px - lx, py - ly) < 2) continue;
-      q.push(px, py);
-      const pr = s.pr ? pressureOf(ev) : 0; if (s.pr) s.pr.push(pr);
-      if (s.a < 1) { renderPage(g, page, imgRef.current); drawStroke(g, s, ws); }
-      else { g.save(); g.lineCap = 'round'; g.strokeStyle = s.c; g.lineWidth = s.w * ws * (s.pr ? 0.35 + 1.3 * pr : 1); g.beginPath(); g.moveTo(lx, ly); g.lineTo(px, py); g.stroke(); g.restore(); }
+      let [px, py] = pos(ev);
+      if (s.lock) { const q = rulerProject(ruler, px, py); px = q.x; py = q.y; }
+      const qq = s.p, lx = qq[qq.length - 2], ly = qq[qq.length - 1], dist = Math.hypot(px - lx, py - ly);
+      if (dist < 2) continue;
+      qq.push(px, py);
+      if (s.pr) s.pr.push(ev.pointerType === 'pen' && pressure ? pressureOf(ev) : synthPressure(s.pr[s.pr.length - 1], dist, s.lt != null ? ev.timeStamp - s.lt : 8));
+      s.lt = ev.timeStamp;
+      if (s.a < 1 || s.n === 'marker') { renderPage(g, page, imgRef.current); drawStroke(g, s, ws); }
+      else { g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; drawSeg(g, s, ws, qq.length / 2 - 1, true); g.restore(); }
     }
   };
   const up = e => {
@@ -253,11 +230,35 @@ function Editor({ doc, onSave, onClose }) {
     const s = cur.current; cur.current = null; if (!s) return;
     if (s.erase) { if (s.snap) { hist.current.push({ pi, strokes: s.snap }); redo.current = []; } return; }
     if (s.k && Math.hypot(s.p[2] - s.p[0], s.p[3] - s.p[1]) < 4) { renderPage(cvRef.current.getContext('2d'), page, imgRef.current); return; }
-    commit(s);
+    const { lock, lt, ...clean } = s;
+    commit(clean);
   };
   const swap = (from, to) => { const h = from.current.pop(); if (!h) return; to.current.push({ pi: h.pi, strokes: d.pages[h.pi].strokes }); setD(o => ({ ...o, pages: o.pages.map((q, i) => i === h.pi ? { ...q, strokes: h.strokes } : q) })); };
   const addText = () => { if (tin && tin.v.trim()) commit({ k: 'text', c: color, x: tin.x, y: tin.y, t: tin.v.trim(), s: 44 }); setTin(null); };
   const goPage = n => { setPi(Math.max(0, Math.min(d.pages.length - 1, n))); hist.current = []; redo.current = []; if (boxRef.current) boxRef.current.scrollTop = 0; };
+  const pickColor = c => {
+    setColor(c);
+    const r = [c, ...recent.filter(x => x !== c)].slice(0, 6); setRecent(r);
+    try { localStorage.setItem('helper-colors', JSON.stringify(r)); } catch (e) {}
+    if (tool === 'eraser' || tool === 'hand') setTool('pen');
+  };
+  const placeRuler = r => {
+    const el = boxRef.current, sc = (fit.w * zoom) / page.w;
+    return { on: true, x: (el.scrollLeft + el.clientWidth * 0.12) / sc, y: (el.scrollTop + el.clientHeight * 0.4) / sc, a: 0, len: Math.min(page.w * 0.85, (el.clientWidth * 0.76) / sc) };
+  };
+  const pickTool = k => {
+    if (k === 'ruler') { setRuler(r => (r.on ? { ...r, on: false } : placeRuler(r))); setPop(null); return; }
+    if (k === 'shape') { if (tool === 'shape') openPop('shape'); else { setTool('shape'); setPop(null); } return; }
+    if (k === 'pen' && tool === 'pen') { openPop('style'); return; }
+    setTool(k); setPop(null);
+  };
+  const rulerDown = (e, mode) => { e.stopPropagation(); e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); const [x, y] = pos(e); rdrag.current = { mode, x0: x, y0: y, r0: { ...ruler } }; };
+  const rulerMove = e => {
+    const d0 = rdrag.current; if (!d0) return;
+    const [x, y] = pos(e);
+    if (d0.mode === 'move') setRuler({ ...d0.r0, x: d0.r0.x + (x - d0.x0), y: d0.r0.y + (y - d0.y0) });
+    else setRuler({ ...d0.r0, a: Math.atan2(y - d0.r0.y, x - d0.r0.x), len: Math.max(160, Math.hypot(x - d0.r0.x, y - d0.r0.y)) });
+  };
   const openPop = k => { if (pop === k) { setPop(null); return; } if (barRef.current) setPopTop(Math.round(barRef.current.getBoundingClientRect().bottom + 8)); setPop(k); };
   const addPage = () => { setD(o => ({ ...o, pages: [...o.pages, { w: page.w, h: page.h, tpl: page.img ? 'blank' : page.tpl, strokes: [] }] })); setPi(d.pages.length); hist.current = []; redo.current = []; };
   const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; redo.current = []; };
@@ -279,7 +280,7 @@ function Editor({ doc, onSave, onClose }) {
     }, 'image/png');
   };
   const close = async () => { try { const t = await makeThumb(d); await flush({ thumb: t }); } catch (e) {} onClose(); };
-  const TOOLS = ['pen', 'hl', 'eraser', 'line', 'rect', 'oval', 'text', 'hand'];
+  const TOOLS = ['pen', 'hl', 'eraser', 'shape', 'text', 'ruler', 'hand'];
 
   return (
     <div className="nv ed">
@@ -294,12 +295,20 @@ function Editor({ doc, onSave, onClose }) {
           <IB n="more" label={tr("Ще")} on={pop === 'more'} onClick={() => openPop('more')} />
         </div>
         <div className="edrow2">
-          {TOOLS.map(k => <IB key={k} n={k} label={tr(TOOLN[k])} on={tool === k} onClick={() => { setTool(k); setPop(null); }} />)}
+          {TOOLS.map(k => <IB key={k} n={k === 'shape' ? shape : k} label={tr(TOOLN[k])} on={k === 'ruler' ? ruler.on : tool === k} onClick={() => pickTool(k)} />)}
           <button className={'ib' + (pop === 'style' ? ' on' : '')} onClick={() => openPop('style')} aria-label={tr("Колір і товщина")} title={tr("Колір і товщина")}><span className="cdotbig" style={{ background: color }} /></button>
         </div>
       </div>
       <div className="edbox" ref={boxRef} style={page.img ? { background: 'var(--fill)' } : undefined}>
-        <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: fit.w * zoom, height: fit.h * zoom, touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
+        <div className="cvwrap" style={{ width: fit.w * zoom, height: fit.h * zoom }}>
+          <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: '100%', height: '100%', touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
+          {ruler.on && (() => { const sc = (fit.w * zoom) / page.w; return (
+            <div className="ruler" style={{ left: ruler.x * sc, top: ruler.y * sc, width: ruler.len * sc, transform: 'rotate(' + ruler.a + 'rad)' }}>
+              <div className="rbody" />
+              <div className="rh rmove" onPointerDown={e => rulerDown(e, 'move')} onPointerMove={rulerMove} onPointerUp={() => { rdrag.current = null; }} onPointerCancel={() => { rdrag.current = null; }} />
+              <div className="rh rrot" onPointerDown={e => rulerDown(e, 'rot')} onPointerMove={rulerMove} onPointerUp={() => { rdrag.current = null; }} onPointerCancel={() => { rdrag.current = null; }} />
+            </div>); })()}
+        </div>
       </div>
       {strip && <div className="strip">{thumbs.map((th, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + th + ')' }} aria-label={tr("Сторінка") + ' ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
       <div className="pgnav">
@@ -310,13 +319,20 @@ function Editor({ doc, onSave, onClose }) {
       </div>
       {pop && <div className="popback" onClick={() => setPop(null)}><div className="pop" style={{ top: popTop }} onClick={e => e.stopPropagation()}>
         {pop === 'style' && <>
-          <div className="prow">{COLORS.map(c => <button key={c} className={'cdot' + (color === c && tool !== 'eraser' ? ' on' : '')} style={{ background: c }} onClick={() => { setColor(c); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={c} />)}
-            <input type="color" className="cpick" value={color} onChange={e => { setColor(e.target.value); if (tool === 'eraser' || tool === 'hand') setTool('pen'); }} aria-label={tr("Свій колір")} /></div>
-          <div className="prow">{[2, 3, 6, 10, 16].map(w => <button key={w} className={'wdot' + (wd === w ? ' on' : '')} onClick={() => setWd(w)} aria-label={tr("Товщина") + ' ' + w}><i style={{ width: Math.min(w * 2, 28), height: Math.min(w * 2, 28) }} /></button>)}</div>
+          {tool === 'pen' && <div className="prow">{Object.keys(PENS).map(k => <button key={k} className={'chip' + (nib === k ? ' on' : '')} style={{ margin: 0 }} onClick={() => { setNib(k); setWd(PENS[k].w); setOp(PENS[k].op); }}>{tr(NIBN[k])}</button>)}</div>}
+          {tool === 'eraser' ? <label className="srow"><span>{tr("Розмір гумки")}</span><input type="range" min="8" max="90" value={ew} onChange={e => setEw(+e.target.value)} /><b>{ew}</b></label> : <>
+            <div className="palette">{PALETTE.map(c => <button key={c} className={'pc' + (color === c ? ' on' : '')} style={{ background: c }} onClick={() => pickColor(c)} aria-label={c} />)}
+              <input type="color" className="pc cpick" value={color} onChange={e => pickColor(e.target.value)} aria-label={tr("Свій колір")} /></div>
+            {recent.length > 0 && <div className="prow"><span className="sub">{tr("Останні")}</span>{recent.map(c => <button key={c} className={'pc sm' + (color === c ? ' on' : '')} style={{ background: c }} onClick={() => pickColor(c)} aria-label={c} />)}</div>}
+            <label className="srow"><span>{tr("Товщина")}</span><input type="range" min="1" max="40" step="0.5" value={wd} onChange={e => setWd(+e.target.value)} /><b>{wd}</b></label>
+            <label className="srow"><span>{tr("Прозорість")}</span><input type="range" min="10" max="100" value={Math.round(op * 100)} onChange={e => setOp(+e.target.value / 100)} /><b>{Math.round(op * 100)}%</b></label>
+            <div className="wprev"><i style={{ height: Math.max(1, Math.min(wd * (tool === 'hl' ? 4 : 1), 40)), background: color, opacity: tool === 'hl' && op >= 1 ? 0.35 : op }} /></div>
+          </>}
         </>}
+        {pop === 'shape' && <div className="prow">{SHAPES.map(k => <IB key={k} n={k} label={tr(SHAPEN[k])} on={shape === k} onClick={() => { setShape(k); setTool('shape'); setPop(null); }} />)}</div>}
         {pop === 'more' && <>
           <div className="prow"><IB n="zout" label={tr("Масштаб")} onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))} /><span className="sub">{Math.round(zoom * 100)}%</span><IB n="zin" label={tr("Масштаб")} onClick={() => setZoom(Math.min(5, +(zoom + 0.5).toFixed(1)))} /></div>
-          {d.type === 'notebook' && !page.img && <div className="prow">{[['blank', 'Чиста'], ['lined', 'Лінійка'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} style={{ margin: 0 }} onClick={() => setPage({ ...page, tpl: k })}>{tr(n)}</button>)}</div>}
+          {d.type === 'notebook' && !page.img && <div className="prow">{[['blank', 'Чиста'], ['lined', 'У лінійку'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} style={{ margin: 0 }} onClick={() => setPage({ ...page, tpl: k })}>{tr(n)}</button>)}</div>}
           <button className={'tg' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)}><span>{tr("Лише Apple Pencil")}</span><b>{penOnly ? '✓' : ''}</b></button>
           <button className={'tg' + (pressure ? ' on' : '')} onClick={() => setPressure(!pressure)}><span>{tr("Чутливість до нажиму")}</span><b>{pressure ? '✓' : ''}</b></button>
           {d.pages.length > 1 && <button className="tg" onClick={() => { delPage(); setPop(null); }}><span>{tr("Видалити сторінку")}</span><EIcon n="trash" size={20} /></button>}
@@ -439,7 +455,7 @@ export default function Docs({ folderId, folders, onNewNote }) {
         <div className="sec" style={{ marginTop: 14 }}>{tr("Обкладинка")}</div>
         <div className="sw">{COVERS.map(c => <button key={c} className={'swatch' + (nb.cover === c ? ' on' : '')} style={{ background: c }} onClick={() => setNb({ ...nb, cover: c })} aria-label={c} />)}</div>
         <div className="sec" style={{ marginTop: 14 }}>{tr("Папір")}</div>
-        <div className="seg">{[['blank', tr("Чиста")], ['lined', tr("Лінійка")], ['grid', tr("Клітинка")], ['dots', tr("Крапки")]].map(([k, n]) => <button key={k} className={nb.tpl === k ? 'on' : ''} onClick={() => setNb({ ...nb, tpl: k })}>{n}</button>)}</div>
+        <div className="seg">{[['blank', tr("Чиста")], ['lined', tr("У лінійку")], ['grid', tr("Клітинка")], ['dots', tr("Крапки")]].map(([k, n]) => <button key={k} className={nb.tpl === k ? 'on' : ''} onClick={() => setNb({ ...nb, tpl: k })}>{n}</button>)}</div>
         <div className="row"><button className="btn" onClick={() => start(newDoc('notebook', nb.title.trim() || dflt('notebook'), fid, nb.tpl, nb.cover))}>{tr("Створити")}</button></div>
       </div></div>}
 

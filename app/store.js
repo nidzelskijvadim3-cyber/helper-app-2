@@ -1,13 +1,13 @@
 'use client';
 import { splitDoc, pageKey, newId } from './lib';
+import { nsKey } from './accounts';
 
 // IndexedDB v2: 'docs' = легкі метадані, 'pages' = сторінки (по одній на запис).
 // Міграція з v1 (де документ був одним великим записом) виконується автоматично.
-const DBN = 'helper-docs';
 let dbp = null;
 function open() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open(DBN, 2);
+    const r = indexedDB.open(nsKey('helper-docs'), 2);
     r.onupgradeneeded = e => {
       const db = r.result, tx = r.transaction;
       if (!db.objectStoreNames.contains('docs')) db.createObjectStore('docs', { keyPath: 'id' });
@@ -38,9 +38,9 @@ async function run(stores, mode, fn) {
 }
 const range = id => IDBKeyRange.bound(id + ':', id + ':\uffff');
 // Надгробки видалених документів (для синхронізації), зберігаються у localStorage.
-const TOMB = 'helper-doc-tombs';
-export const readTombs = () => { try { return JSON.parse(localStorage.getItem(TOMB) || '[]'); } catch (e) { return []; } };
-const writeTombs = a => { try { localStorage.setItem(TOMB, JSON.stringify(a)); } catch (e) {} };
+const tombKey = () => nsKey('helper-doc-tombs');
+export const readTombs = () => { try { return JSON.parse(localStorage.getItem(tombKey()) || '[]'); } catch (e) { return []; } };
+const writeTombs = a => { try { localStorage.setItem(tombKey(), JSON.stringify(a)); } catch (e) {} };
 export const clearTombs = ids => writeTombs(readTombs().filter(t => !ids.includes(t.id)));
 const notify = () => { try { window.dispatchEvent(new Event('docs-changed')); } catch (e) {} };
 

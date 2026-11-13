@@ -1,17 +1,17 @@
 'use client';
 import { collectRecords, diffLocal, mergeRemote, applyRecordsToState, hashStr, batchBySize } from './sync-core';
 import * as store from './store';
+import { nsKey, getActiveId } from './accounts';
 
-const KEY = 'helper-sync';
 const metaIO = {
-  get: () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; } },
-  set: o => { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} },
+  get: () => { try { return JSON.parse(localStorage.getItem(nsKey('helper-sync')) || '{}'); } catch (e) { return {}; } },
+  set: o => { try { localStorage.setItem(nsKey('helper-sync'), JSON.stringify(o)); } catch (e) {} },
 };
 export const getSyncMeta = () => metaIO.get();
 export const setSyncOn = on => metaIO.set({ ...metaIO.get(), on });
 
 async function httpApi(body, pass) {
-  const r = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-pass': pass || '' }, body: JSON.stringify(body) });
+  const r = await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-pass': pass || '' }, body: JSON.stringify({ ...body, acc: getActiveId() }) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(d.error || 'HTTP ' + r.status); e.code = r.status; throw e; }
   return d;

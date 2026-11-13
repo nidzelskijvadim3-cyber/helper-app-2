@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import Docs, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, moveDoc } from './docs';
 import { canMoveFolder, folderPath, shade } from './lib';
 import { syncNow, syncStatus, getSyncMeta, setSyncOn } from './sync';
+import { nsKey, listAccounts, getActiveId, setActiveId, addAccount, activeAccount, deriveAccountId, validateCredentials } from './accounts';
 import { t as tr, loc, setLang, getLang } from './i18n';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
@@ -24,6 +25,11 @@ const ICONS = {
   cards: <><rect x="3" y="7" width="14" height="12" rx="2" /><path d="M7 4h12a2 2 0 0 1 2 2v10" /></>,
   ai: <><path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" /><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 20l-.7-1.8-1.8-.7 1.8-.7z" /></>,
   folders: <><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>,
+  send: <path d="M12 19V5M5 12l7-7 7 7" />,
+  image: <><rect x="3" y="4" width="18" height="16" rx="3" /><circle cx="9" cy="10" r="1.6" /><path d="M21 16l-5-5-8 8" /></>,
+  eye: <><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>,
+  trash: <><path d="M5 7h14M10 7V4h4v3" /><path d="M7 7l1 13h8l1-13" /></>,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
   set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>
 };
 const Icon = ({ n, s = 24 }) => <svg viewBox="0 0 24 24" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[n]}</svg>;
@@ -188,6 +194,14 @@ async function callAI(body) {
   return d.text;
 }
 
+function Rich({ text }) {
+  const inline = (str, k) => String(str).split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((p, i) => (p.length > 4 && p.startsWith('**') && p.endsWith('**') ? <b key={k + '-' + i}>{p.slice(2, -2)}</b> : p.length > 2 && p.startsWith('`') && p.endsWith('`') ? <code key={k + '-' + i}>{p.slice(1, -1)}</code> : p));
+  return <>{String(text || '').split('\n').map((l, i) => {
+    const m = l.match(/^\s*([-•*]|\d+[.)])\s+(.*)$/);
+    if (m) return <div className="li" key={i}><span>{/\d/.test(m[1]) ? m[1] : '•'}</span><span>{inline(m[2], i)}</span></div>;
+    return l.trim() === '' ? <div className="gap" key={i} /> : <div key={i}>{inline(l, i)}</div>;
+  })}</>;
+}
 const FOLDER_ICONS = ['📁', '🦷', '📚', '✏️', '🧪', '🔬', '💉', '🩺', '🇩🇪', '🇬🇧', '🇺🇦', '💼', '🏠', '🛒', '✈️', '🎓', '📝', '💡', '⭐', '❤️', '🎨', '🎵', '📌', '🧠', '💻', '🍎', '🏃', '💰', '🌸', '🌿', '🐱', '☕'];
 function FolderArt({ fo, name, sub }) {
   const c = fo.color || '#0a84ff';
@@ -244,6 +258,7 @@ export default function Home() {
   const [fform, setFform] = useState(null);
   const [nfold, setNfold] = useState('');
   const [aiOpen, setAiOpen] = useState(false);
+  const [acf, setAcf] = useState({ name: '', pass: '', busy: false, err: '' });
   const [sy, setSy] = useState({ on: false, state: 'idle', last: 0, msg: '', configured: null });
   const [see, setSee] = useState(false);
   const [att, setAtt] = useState([]);
@@ -254,13 +269,13 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const s = JSON.parse(localStorage.getItem('helper-next') || '{}');
+      const s = JSON.parse(localStorage.getItem(nsKey('helper-next')) || '{}');
       if (s.items) setItems(s.items); if (s.cap) setCap(s.cap); if (s.msgs) setMsgs(s.msgs);
       if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes); if (s.tests) setTests(s.tests); { const sm = getSyncMeta(); setSy(x => ({ ...x, on: !!sm.on, last: sm.last || 0 })); } if (s.folders) setFolders(s.folders.map(f => ({ parent: '', ...f }))); if (s.ui) setUi({ ...UI0, ...s.ui });
     } catch (e) {}
     setReady(true);
   }, []);
-  useEffect(() => { if (ready) { try { localStorage.setItem('helper-next', JSON.stringify({ items, cap, msgs, start, cards, notes, tests, folders, ui })); } catch (e) {} } }, [items, cap, msgs, start, cards, notes, tests, folders, ui, ready]);
+  useEffect(() => { if (ready) { try { localStorage.setItem(nsKey('helper-next'), JSON.stringify({ items, cap, msgs, start, cards, notes, tests, folders, ui })); } catch (e) {} } }, [items, cap, msgs, start, cards, notes, tests, folders, ui, ready]);
   useEffect(() => {
     if (!ready) return;
     const r = document.documentElement;
@@ -270,6 +285,14 @@ export default function Home() {
   const plan = useMemo(() => makePlan(items, cap), [items, cap]);
   stRef.current = { items, cap, start, cards, notes, folders, tests, ui };
   const syncing = useRef(false);
+  const switchAcc = id => { setActiveId(id); window.location.reload(); };
+  const enterAcc = async () => {
+    const bad = validateCredentials(acf.name, acf.pass);
+    if (bad) { setAcf(a => ({ ...a, err: bad === 'name' ? tr("Введіть ім’я акаунта.") : tr("Пароль має бути не коротшим за 6 символів.") })); return; }
+    setAcf(a => ({ ...a, busy: true, err: '' }));
+    try { const id = await deriveAccountId(acf.name, acf.pass); addAccount(acf.name, id); setActiveId(id); window.location.reload(); }
+    catch (e) { setAcf(a => ({ ...a, busy: false, err: tr("Не вдалося створити акаунт у цьому браузері.") })); }
+  };
   const applySync = ns => {
     stRef.current = { ...stRef.current, ...ns };
     setItems(ns.items); setNotes(ns.notes); setFolders(ns.folders); setCards(ns.cards); setTests(ns.tests); setCap(ns.cap); setStart(ns.start); setUi(ns.ui);
@@ -437,28 +460,43 @@ export default function Home() {
     for (const f of Array.from(files || []).slice(0, 3 - att.length)) { try { out.push(await shrink(f, 1024, 0.72)); } catch (e) {} }
     if (out.length) setAtt(p => [...p, ...out].slice(0, 3));
   };
-  const aiPanel = sheetMode => (<>
-    {sheetMode ? <div className="aihead"><b>{tr("Помічник")}</b><button className="chip" onClick={() => setAiOpen(false)}>{tr("Закрити")}</button></div>
-      : <div className="top"><h1>{tr("Помічник")}</h1><div className="sub">{tr("Керує задачами, подіями, папками, документами й карточками. Розуміє фото.")}</div></div>}
-    <div>{[[tr("Склади план на тиждень з моїх задач"), 1], [tr("Що робити просто зараз?"), 1], [tr("Створи зошит для предмета: "), 0], [tr("Зроби картки за темою: "), 0], [tr("Поясни тему простими словами: "), 0]].map(([q, go]) =>
-      <button className="chip" key={q} onClick={() => go ? ask(q) : setInp(q)}>{q.replace(': ', '…')}</button>)}</div>
-    <div className={sheetMode ? 'aimsgs' : ''}>
-      {msgs.map((x, i) => <div key={i} className={'bubble' + (x.role === 'user' ? ' me' : '')}>{x.text}{x.pics > 0 && <div className="applied">{tr("Додано зображень: ")}{x.pics}</div>}{x.n > 0 && <div className="applied">{tr("Внесено змін: ")}{x.n}</div>}</div>)}
-      {busy && <div className="sub">{tr("Думаю…")}</div>}
-      {undo && <div className="card undo"><span className="sub">{tr("ШІ змінив застосунок")}</span><button className="chip" style={{ margin: 0 }} onClick={doUndo}>{tr("Скасувати зміни")}</button></div>}
-      <div ref={endRef} />
-    </div>
-    <div className={sheetMode ? 'aicomp' : 'card'} style={sheetMode ? {} : { marginTop: 12 }}>
-      {att.length > 0 && <div className="atts">{att.map((u, i) => <div className="att" key={i} style={{ backgroundImage: 'url(' + u + ')' }}><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label={tr("Прибрати")}>×</button></div>)}</div>}
-      <textarea rows={sheetMode ? 2 : 3} placeholder={tr("Напишіть, що зробити або що пояснити")} value={inp} onChange={e => setInp(e.target.value)} />
-      <div className="row" style={{ flexWrap: 'wrap' }}>
-        <label className="chip fileb">{tr("Фото")}<input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
-        <button className={'chip' + (see ? ' on' : '')} style={{ margin: 0 }} onClick={() => setSee(!see)}>{tr("Показати ШІ цей екран")}</button>
-        <button className="chip" style={{ margin: 0 }} onClick={() => setMsgs([])}>{tr("Очистити")}</button>
-      </div>
-      <button className="btn" onClick={() => ask(inp)} disabled={busy}>{busy ? tr("Думаю…") : tr("Надіслати")}</button>
-    </div>
-  </>);
+  const grow = el => { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 140) + 'px'; };
+  const aiPanel = sheetMode => {
+    const SUGG = [[tr("Склади план на тиждень з моїх задач"), tr("Автоматично розкласти задачі за днями"), true], [tr("Що робити просто зараз?"), tr("Підказка, з чого почати"), true], [tr("Створи зошит для предмета: "), tr("Новий зошит у потрібній папці"), false], [tr("Зроби картки за темою: "), tr("Питання й відповіді за темою"), false]];
+    return (
+      <div className={'aiw ' + (sheetMode ? 'sm' : 'tab')}>
+        <div className="aihd">
+          <span className="avatar"><Icon n="ai" s={18} /></span>
+          <div className="aht"><b>{tr("Помічник")}</b><small>{busy ? tr("Думаю…") : tr("Керує задачами, подіями, папками й документами")}</small></div>
+          {msgs.length > 0 && <button className="ib" onClick={() => setMsgs([])} aria-label={tr("Очистити")} title={tr("Очистити")}><Icon n="trash" s={20} /></button>}
+          {sheetMode && <button className="ib" onClick={() => setAiOpen(false)} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button>}
+        </div>
+        <div className="amsgs">
+          {!msgs.length && <div className="empty-ai"><div className="avatar big"><Icon n="ai" s={26} /></div><h2>{tr("Чим допомогти?")}</h2>
+            <div className="sugg">{SUGG.map(([q, d, go]) => <button className="sg" key={q} onClick={() => (go ? ask(q) : setInp(q))}>{q.replace(': ', '…')}<small>{d}</small></button>)}</div></div>}
+          {msgs.map((x, i) => x.role === 'user'
+            ? <div className="um" key={i}>{x.text}{x.pics > 0 && <div className="applied" style={{ color: 'inherit', opacity: 0.8 }}>{tr("Додано зображень:")} {x.pics}</div>}</div>
+            : <div className="am" key={i}><span className="avatar sm"><Icon n="ai" s={13} /></span><div className="at"><Rich text={x.text} />{x.n > 0 && <div className="chg">{tr("Внесено змін:")} {x.n}</div>}</div></div>)}
+          {busy && <div className="am"><span className="avatar sm"><Icon n="ai" s={13} /></span><div className="at"><span className="typing"><i /><i /><i /></span></div></div>}
+          {undo && <div className="undoc"><span>{tr("ШІ змінив застосунок")}</span><button className="chip" onClick={doUndo}>{tr("Скасувати зміни")}</button></div>}
+          <div ref={endRef} />
+        </div>
+        <div className="comp">
+          {att.length > 0 && <div className="atts">{att.map((u, i) => <div className="att" key={i} style={{ backgroundImage: 'url(' + u + ')' }}><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label={tr("Прибрати")}>×</button></div>)}</div>}
+          <div className="cbox">
+            <textarea className="cta" rows={1} placeholder={tr("Напишіть, що зробити або що пояснити")} value={inp}
+              onChange={e => { setInp(e.target.value); grow(e.target); }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && window.innerWidth >= 700) { e.preventDefault(); ask(inp); } }} />
+            <div className="crow">
+              <label className="cb" aria-label={tr("Фото")} title={tr("Фото")}><Icon n="image" s={21} /><input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
+              <button className={'cb' + (see ? ' on' : '')} onClick={() => setSee(!see)} aria-label={tr("Показати ШІ цей екран")} title={tr("Показати ШІ цей екран")}><Icon n="eye" s={21} />{see && <span className="cbl">{tr("Екран")}</span>}</button>
+              <span className="flex1" />
+              <button className="send" onClick={() => ask(inp)} disabled={busy || (!inp.trim() && !att.length)} aria-label={tr("Надіслати")} title={tr("Надіслати")}><Icon n="send" s={20} /></button>
+            </div>
+          </div>
+        </div>
+      </div>);
+  };
 
   async function quickAdd() {
     const text = qa.trim();
@@ -681,6 +719,15 @@ export default function Home() {
       {tab === 'set' && <>
         <div className="top"><h1>{tr("Налаштування")}</h1></div>
         <div className="card"><div className="sec">Мова / Sprache</div><div className="seg">{[['uk', 'Українська'], ['de', 'Deutsch']].map(([k, n]) => <button key={k} className={ui.lang === k ? 'on' : ''} onClick={() => setUi({ ...ui, lang: k })}>{n}</button>)}</div></div>
+        <div className="card"><div className="sec">{tr("Акаунт")}</div>
+          <div className="sub" style={{ marginBottom: 10 }}>{activeAccount() ? tr("Вхід виконано як") + ': ' + activeAccount().name : tr("Локальний профіль (без акаунта)")}</div>
+          {(listAccounts().length > 0) && <div className="prow">{listAccounts().map(a => <button key={a.id} className={'chip' + (a.id === getActiveId() ? ' on' : '')} style={{ margin: 0 }} onClick={() => switchAcc(a.id)}>{a.name}</button>)}{getActiveId() && <button className="chip" style={{ margin: 0 }} onClick={() => switchAcc('')}>{tr("Локальний профіль")}</button>}</div>}
+          <div className="sec" style={{ marginTop: 14 }}>{tr("Створити акаунт або увійти")}</div>
+          <input placeholder={tr("Ім’я акаунта")} value={acf.name} autoCapitalize="none" autoCorrect="off" onChange={e => setAcf({ ...acf, name: e.target.value })} />
+          <input type="password" style={{ marginTop: 8 }} placeholder={tr("Пароль акаунта (від 6 символів)")} value={acf.pass} onChange={e => setAcf({ ...acf, pass: e.target.value })} />
+          {acf.err && <div className="sub" style={{ color: 'var(--wn)', marginTop: 8 }}>{acf.err}</div>}
+          <button className="btn" style={{ marginTop: 12 }} onClick={enterAcc} disabled={acf.busy}>{acf.busy ? tr("Зачекайте…") : tr("Увійти або створити")}</button>
+          <div className="sub" style={{ marginTop: 10 }}>{tr("Той самий акаунт на іншому пристрої: введіть те саме ім’я та пароль.")}</div></div>
         <div className="card"><div className="sec">{tr("Синхронізація")}</div>
           <div className="sub" style={{ marginBottom: 10 }}>{sy.on ? tr("Увімкнено") : tr("Вимкнено")}{sy.last ? ', ' + tr("остання синхронізація") + ': ' + new Date(sy.last).toLocaleString(loc(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</div>
           {sy.msg && <div className="sub" style={{ color: 'var(--wn)', marginBottom: 10 }}>{sy.msg}</div>}
