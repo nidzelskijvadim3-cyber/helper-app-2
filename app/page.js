@@ -11,11 +11,9 @@ const DNF = ['неділя', 'понеділок', 'вівторок', 'сере
 const AREA = { study: 'Навчання', work: 'Робота', personal: 'Особисте', health: 'Здоров’я', home: 'Дім' };
 const REP = { none: 'Не повторювати', daily: 'Щодня', weekdays: 'У будні', weekly: 'Щотижня' };
 const REPS = { daily: 'щодня', weekdays: 'у будні', weekly: 'щотижня' };
-const FONTS = { sf: '-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif', serif: 'ui-serif,"New York",Georgia,"Times New Roman",serif', rounded: 'ui-rounded,"SF Pro Rounded",system-ui,sans-serif', mono: 'ui-monospace,"SF Mono",Menlo,monospace' };
-const FONTN = { sf: 'Класичний (SF)', serif: 'Строгий (із засічками)', rounded: 'Округлий', mono: 'Моноширинний' };
 const ACCENTS = ['#0a84ff', '#ff375f', '#ff9f0a', '#30d158', '#bf5af2', '#64d2ff', '#ffd60a', '#ff453a'];
+// accent і font зафіксовані (акцент і шрифт задаються в globals.css); поля лишаються в даних для сумісності із синхронізацією, але ігноруються.
 const UI0 = { theme: 'dark', accent: '#0a84ff', font: 'sf', lang: 'uk' };
-const onColor = h => { const n = parseInt(String(h).slice(1), 16) || 0; return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 150 ? '#000' : '#fff'; };
 const TABS = [['today', 'План'], ['cal', 'Календар'], ['tasks', 'Задачі'], ['folders', 'Папки'], ['cards', 'Навчання'], ['ai', 'ШІ']];
 const ICONS = {
   today: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
@@ -266,6 +264,7 @@ export default function Home() {
   const taRef = useRef(null);
   const endRef = useRef(null);
   const stRef = useRef(null);
+  const sheetPrev = useRef(null);
 
   useEffect(() => {
     try {
@@ -279,9 +278,19 @@ export default function Home() {
   useEffect(() => {
     if (!ready) return;
     const r = document.documentElement;
-    r.lang = ui.lang === 'de' ? 'de' : 'uk'; r.dataset.theme = ui.theme; r.style.setProperty('--ac', ui.accent); r.style.setProperty('--on', onColor(ui.accent)); r.style.setProperty('--font', FONTS[ui.font] || FONTS.sf);
+    r.lang = ui.lang === 'de' ? 'de' : 'uk'; r.dataset.theme = ui.theme;
   }, [ui, ready]);
-  useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [msgs, busy, tab]);
+  useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'end' }); }, [msgs, busy, tab]);
+  useEffect(() => {
+    if (!sheet) return;
+    const onKey = e => { if (e.key === 'Escape') setSheet(null); };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      const p = sheetPrev.current; sheetPrev.current = null;
+      if (p && typeof p.focus === 'function' && document.contains(p)) p.focus();
+    };
+  }, [sheet]);
   const plan = useMemo(() => makePlan(items, cap), [items, cap]);
   stRef.current = { items, cap, start, cards, notes, folders, tests, ui };
   const syncing = useRef(false);
@@ -343,8 +352,8 @@ export default function Home() {
   const closeNote = () => { setNotes(notes.filter(n => n.text.trim())); setNview(null); setNtext(''); setFlow(false); };
   const newNote = flowMode => { openNote('new'); setFlow(flowMode); };
   const delNote = () => { setNotes(notes.filter(n => n.id !== nview)); setNview(null); setNtext(''); setFlow(false); };
-  const openNew = () => { setF({ ...EMPTY, due: selDate !== today ? selDate : '', folder: tab === 'folders' && typeof fview === 'number' ? fview : '' }); setSheet('new'); };
-  const openEdit = i => { if (!i) return; setF({ kind: i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', folder: i.folder || '' }); setSheet(i.id); };
+  const openNew = () => { sheetPrev.current = document.activeElement; setF({ ...EMPTY, due: selDate !== today ? selDate : '', folder: tab === 'folders' && typeof fview === 'number' ? fview : '' }); setSheet('new'); };
+  const openEdit = i => { if (!i) return; sheetPrev.current = document.activeElement; setF({ kind: i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', folder: i.folder || '' }); setSheet(i.id); };
   const saveTask = () => {
     if (!f.t.trim()) return;
     const h = parseFloat(f.h);
@@ -600,7 +609,8 @@ export default function Home() {
   const cells = [...Array(offset).fill(null), ...Array.from({ length: new Date(cy, cmo + 1, 0).getDate() }, (_, k) => cy + '-' + pad(cmo + 1) + '-' + pad(k + 1))];
   const planDays = {}; plan.days.forEach(d => { if (d.blocks.length) planDays[d.date] = true; });
   const hasDot = d => planDays[d] || evOn(d).length > 0 || open.some(i => i.due === d);
-  const monthName = new Date(cy, cmo, 1).toLocaleDateString(loc(), { month: 'long', year: 'numeric' });
+  const monthRaw = new Date(cy, cmo, 1).toLocaleDateString(loc(), { month: 'long', year: 'numeric' });
+  const monthName = monthRaw.charAt(0).toUpperCase() + monthRaw.slice(1); // «Листопад 2026 р.»: велика лише перша літера
   const tt = tests.find(t => t.id === tview);
   const ev = f.kind === 'event';
 
@@ -734,22 +744,23 @@ export default function Home() {
           <button className="btn" onClick={() => { if (sy.on) runSync(); else toggleSync(); }} disabled={sy.state === 'syncing'}>{sy.state === 'syncing' ? tr("Синхронізую…") : tr("Синхронізувати зараз")}</button>
           <button className={'tg' + (sy.on ? ' on' : '')} onClick={toggleSync}><span>{tr("Автосинхронізація")}</span><b>{sy.on ? '✓' : ''}</b></button></div>
         <div className="card"><div className="sec">{tr("Тема")}</div><div className="seg">{[['dark', tr("Темна")], ['light', tr("Світла")], ['auto', tr("Авто")]].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>
-        <div className="card"><div className="sec">{tr("Колір акценту")}</div><div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (ui.accent === c ? ' on' : '')} style={{ background: c }} onClick={() => setUi({ ...ui, accent: c })} aria-label={c} />)}<input type="color" value={ui.accent} onChange={e => setUi({ ...ui, accent: e.target.value })} aria-label={tr("Свій колір")} /></div></div>
-        <div className="card"><div className="sec">{tr("Шрифт")}</div>{Object.entries(FONTN).map(([k, n]) => <button key={k} className={'fopt' + (ui.font === k ? ' on' : '')} style={{ fontFamily: FONTS[k] }} onClick={() => setUi({ ...ui, font: k })}>{tr(n)}</button>)}</div>
-        <div className="card"><div className="sec">{tr("Пароль застосунку для ШІ")}</div>
-          <input type="password" placeholder={tr("Пароль")} defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>
         <div className="card"><div className="sec">{tr("О котрій годині починаєте займатися")}</div>
           <input type="number" min="0" max="23" value={start} onChange={e => setStart(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))} /></div>
         <div className="card"><div className="sec">{tr("Годин на день для задач")}</div>
           {[1, 2, 3, 4, 5, 6, 0].map(i => <div className="row" style={{ alignItems: 'center' }} key={i}><span style={{ width: 36 }}>{tr(DN[i])}</span>
             <input type="number" min="0" max="16" step="0.5" value={cap[i]} onChange={e => setCap(cap.map((c, j) => j === i ? Math.max(0, parseFloat(e.target.value) || 0) : c))} /></div>)}</div>
+        <div className="card"><div className="sec" id="pass-title">{tr("Пароль доступу до ШІ та синхронізації")}</div>
+          <div className="sub" id="pass-hint" style={{ marginBottom: 10 }}>{tr("Потрібен, якщо власник застосунку встановив пароль. Без нього ШІ та синхронізація не працюватимуть.")}</div>
+          <input type="password" placeholder={tr("Пароль")} aria-labelledby="pass-title" aria-describedby="pass-hint" defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>
         <button className="btn alt" onClick={() => setTab('today')}>{tr("Назад")}</button>
       </>}
 
       {(tab === 'today' || tab === 'tasks' || tab === 'cal') && <button className="fab" onClick={openNew} aria-label={tr("Додати")}>+</button>}
       {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: '' })} aria-label={tr("Нова папка")}>+</button>}
 
-      {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" onClick={e => e.stopPropagation()}>
+      {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onClick={e => e.stopPropagation()}>
+        <div className="shd"><h2 id="sheet-title">{sheet === 'new' ? (ev ? tr("Нова подія") : tr("Нова задача")) : (ev ? tr("Змінити подію") : tr("Змінити задачу"))}</h2>
+          <button className="ib" onClick={closeSheet} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>
         <div className="seg"><button className={!ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'task' })}>{tr("Задача")}</button><button className={ev ? 'on' : ''} onClick={() => setF({ ...f, kind: 'event' })}>{tr("Подія")}</button></div>
         <input style={{ marginTop: 12 }} autoFocus placeholder={ev ? tr("Наприклад: стоматолог") : tr("Що потрібно зробити або вивчити")} value={f.t} onChange={e => setF({ ...f, t: e.target.value })} />
         <div className="row"><select value={f.area} onChange={e => setF({ ...f, area: e.target.value })}>{Object.entries(AREA).map(([k, v]) => <option key={k} value={k}>{tr(v)}</option>)}</select>
@@ -819,10 +830,9 @@ export default function Home() {
           </div>)}
       </div>}
 
-      {!aiOpen && tab !== 'ai' && !(nview != null && flow) && <button className="aifab" onClick={() => setAiOpen(true)} aria-label={tr("Помічник ШІ")}><Icon n="ai" s={26} /></button>}
       {aiOpen && <div className="ov ai" onClick={() => setAiOpen(false)}><div className="sheet aisheet" onClick={e => e.stopPropagation()}>{aiPanel(true)}</div></div>}
 
-      <nav className="tabbar">{TABS.map(([k, n]) => <button key={k} className={k === tab ? 'on' : ''} onClick={() => setTab(k)} aria-label={tr(n)}><Icon n={k} s={26} /><span className="lbl">{tr(n)}</span></button>)}</nav>
+      <nav className="tabbar">{TABS.map(([k, n]) => <button key={k} className={k === tab ? 'on' : ''} onClick={() => setTab(k)} aria-current={k === tab ? 'page' : undefined}><Icon n={k} s={26} /><span className="lbl">{tr(n)}</span></button>)}</nav>
     </div>
   );
 }

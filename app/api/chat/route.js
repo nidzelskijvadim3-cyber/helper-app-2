@@ -1,57 +1,135 @@
+import Anthropic from '@anthropic-ai/sdk';
+
 export const maxDuration = 60;
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function gemini(system, messages) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return { ok: false, status: 0, err: 'нет GEMINI_API_KEY' };
-  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: system }] },
-      contents: messages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }].concat((m.images || []).map(u => ({ inlineData: { mimeType: (String(u).match(/^data:([^;]+)/) || [])[1] || 'image/jpeg', data: String(u).split(',')[1] } }))) })),
-      generationConfig: { responseMimeType: 'application/json' }
-    })
-  });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) return { ok: false, status: r.status, err: (d.error && d.error.message) || 'ошибка Gemini' };
-  const parts = (d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts) || [];
-  return { ok: true, text: parts.map(p => p.text || '').join('') };
+// Модель задаётся змінною ANTHROPIC_MODEL; за замовчуванням Claude Haiku 5.5.
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5';
+
+// Глибина міркувань: швидкі режими (чат, швидке додавання) — low; тести й перевірка — medium.
+const EFFORT = { chat: 'low', parse: 'low', quiz: 'medium', grade: 'medium' };
+
+// data:image/png;base64,... → блок зображення Claude.
+function imageBlock(url) {
+  const s = String(url);
+  const mediaType = (s.match(/^data:([^;]+)/) || [])[1] || 'image/jpeg';
+  return { type: 'image', source: { type: 'base64', media_type: mediaType, data: s.split(',')[1] || '' } };
 }
 
-async function deepseek(system, messages) {
+// Повідомлення застосунку {role, text, images} → формат Messages API.
+function toClaudeMessages(messages) {
+  const out = messages
+    .map(m => {
+      const role = m.role === 'user' ? 'user' : 'assistant';
+      const text = String(m.text || '').trim();
+      const images = role === 'user' ? (m.images || []) : [];
+      if (!text && !images.length) return null;
+      if (!images.length) return { role, content: text };
+      return { role, content: [...images.map(imageBlock), { type: 'text', text: text || 'Опиши зображення.' }] };
+    })
+    .filter(Boolean);
+  // Розмова має починатися з повідомлення користувача.
+  while (out.length && out[0].role !== 'user') out.shift();
+  return out;
+}
+
+async function claude(system, messages, mode) {
+  // Читає ANTHROPIC_API_KEY із середовища. Одна повторна спроба й таймаут 25 с,
+  // щоб за потреби встигнути перейти до запасного ШІ в межах maxDuration.
+  const client = new Anthropic({ maxRetries: 1, timeout: 25000 });
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 16000,
+    system,
+    output_config: { effort: EFFORT[mode] || 'low' },
+    messages,
+  });
+  if (response.stop_reason === 'refusal') return { ok: false, err: 'запит відхилено політикою безпеки' };
+  const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('');
+  if (!text) return { ok: false, err: response.stop_reason === 'max_tokens' ? 'відповідь задовга' : 'порожня відповідь' };
+  return { ok: true, text };
+}
+
+// Запасні ШІ (працюють, поки немає ключа Claude або якщо Claude недоступний).
+function withTimeout(ms) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  return { signal: c.signal, done: () => clearTimeout(t) };
+}
+
+async function deepseek(system, appMessages) {
   const key = process.env.DEEPSEEK_API_KEY;
-  if (!key) return { ok: false, status: 0, err: 'нет DEEPSEEK_API_KEY' };
-  const r = await fetch('https://api.deepseek.com/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
-    body: JSON.stringify({
-      model: messages.some(m => m.images && m.images.length) ? (process.env.DEEPSEEK_VISION_MODEL || process.env.DEEPSEEK_MODEL || 'deepseek-flash') : (process.env.DEEPSEEK_MODEL || 'deepseek-flash'),
-      stream: false,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'system', content: system }].concat(messages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.images && m.images.length ? [{ type: 'text', text: m.text }].concat(m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))) : m.text })))
-    })
-  });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) return { ok: false, status: r.status, err: (d.error && d.error.message) || 'ошибка DeepSeek' };
-  const t = d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
-  return { ok: true, text: t || '' };
+  const hasImages = appMessages.some(m => m.images && m.images.length);
+  const model = hasImages ? (process.env.DEEPSEEK_VISION_MODEL || process.env.DEEPSEEK_MODEL || 'deepseek-flash') : (process.env.DEEPSEEK_MODEL || 'deepseek-flash');
+  const to = withTimeout(25000);
+  try {
+    const r = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      signal: to.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'system', content: system }].concat(appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.images && m.images.length ? [{ type: 'text', text: m.text }].concat(m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))) : m.text })))
+      })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, err: (d.error && d.error.message) || ('HTTP ' + r.status) };
+    const t = d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+    return t && t.trim() ? { ok: true, text: t } : { ok: false, err: 'порожня відповідь' };
+  } catch (e) {
+    return { ok: false, err: e.name === 'AbortError' ? 'немає відповіді за 25 с' : 'немає зв’язку' };
+  } finally { to.done(); }
 }
 
-const PROVIDERS = { gemini, deepseek };
+async function gemini(system, appMessages) {
+  const key = process.env.GEMINI_API_KEY;
+  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const to = withTimeout(25000);
+  try {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', {
+      method: 'POST',
+      signal: to.signal,
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }].concat((m.images || []).map(u => ({ inlineData: { mimeType: (String(u).match(/^data:([^;]+)/) || [])[1] || 'image/jpeg', data: String(u).split(',')[1] } }))) })),
+        generationConfig: { responseMimeType: 'application/json' }
+      })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, err: (d.error && d.error.message) || ('HTTP ' + r.status) };
+    const parts = (d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts) || [];
+    const t = parts.map(p => p.text || '').join('');
+    return t.trim() ? { ok: true, text: t } : { ok: false, err: 'порожня відповідь' };
+  } catch (e) {
+    return { ok: false, err: e.name === 'AbortError' ? 'немає відповіді за 25 с' : 'немає зв’язку' };
+  } finally { to.done(); }
+}
+
+// Провайдери: беруться лише ті, для яких задано ключ. Порядок — AI_ORDER (за замовчуванням Claude першим).
+const PROVIDERS = {
+  claude: { key: 'ANTHROPIC_API_KEY', run: async (system, appMessages, mode) => {
+    const msgs = toClaudeMessages(appMessages);
+    if (!msgs.length) return { ok: false, err: 'порожній запит' };
+    try { return await claude(system, msgs, mode); } catch (e) { console.error('Claude API error:', e); return { ok: false, err: errorText(e) }; }
+  } },
+  deepseek: { key: 'DEEPSEEK_API_KEY', run: (system, appMessages) => deepseek(system, appMessages) },
+  gemini: { key: 'GEMINI_API_KEY', run: (system, appMessages) => gemini(system, appMessages) },
+};
+
+function errorText(e) {
+  if (e instanceof Anthropic.AuthenticationError) return 'невірний ANTHROPIC_API_KEY';
+  if (e instanceof Anthropic.PermissionDeniedError) return 'ключ не має доступу до моделі ' + MODEL;
+  if (e instanceof Anthropic.NotFoundError) return 'модель ' + MODEL + ' не знайдена';
+  if (e instanceof Anthropic.RateLimitError) return 'забагато запитів, спробуйте за хвилину';
+  if (e instanceof Anthropic.BadRequestError) return 'некоректний запит: ' + e.message;
+  if (e instanceof Anthropic.APIConnectionError) return 'немає зв’язку з Anthropic';
+  if (e instanceof Anthropic.APIError) return 'помилка Anthropic ' + e.status;
+  return 'невідома помилка';
+}
+
 const ACTIONS2 = ' Також: {"type":"create_folder","name":"..","color":"#hex","parent":"id або назва папки або порожній рядок"}; {"type":"rename_folder","id":число,"name":".."}; {"type":"move_note","id":число,"folder":"id або назва папки або порожній рядок"}; {"type":"create_doc","kind":"notebook або board","title":"..","folder":"id або назва","template":"blank|lined|grid|dots"}; {"type":"rename_doc","id":число,"title":".."}; {"type":"move_doc","id":число,"folder":"id або назва або порожній рядок"}. У add_task, add_event, update_task і add_note можна вказати "folder" (id або назва папки). Папки, нотатки й документи беруться зі стану (ctx.folders, ctx.notes, ctx.docs). Якщо є ctx.screen, це опис екрана, який користувач бачить зараз (у ctx.screen.openNote текст відкритої нотатки). Якщо до повідомлення додано зображення, уважно розгляни його, опиши або використай за запитом (наприклад, розпізнай рукописний текст, склади питання, занеси події з розкладу). Видаляти документи й папки не можна.';
-
-async function withRetry(fn) {
-  let last = { ok: false, status: 0, err: 'нет ответа' };
-  for (let i = 0; i < 3; i++) {
-    last = await fn();
-    if (last.ok) return last;
-    if (![429, 500, 503, 504].includes(last.status)) return last;
-    if (i < 2) await sleep(1500 * (i + 1));
-  }
-  return last;
-}
 
 const ACTIONS = 'Доступні дії: {"type":"add_task","t":"назва","area":"study|work|personal|health|home","h":години числом,"due":"YYYY-MM-DD або порожній рядок","pri":1 або 2,"repeat":"none|daily|weekdays|weekly"}; {"type":"add_event","t":"назва","area":"..","date":"YYYY-MM-DD","time":"HH:MM","h":тривалість у годинах,"repeat":"none|daily|weekdays|weekly"}; {"type":"update_task","id":число,"t":"..","area":"..","h":число,"date":"YYYY-MM-DD","time":"HH:MM","pri":1 або 2,"repeat":".."} (лише поля, що змінюються); {"type":"complete_task","id":число}; {"type":"delete_task","id":число}; {"type":"set_capacity","day":від 0 до 6 (0 це неділя),"h":години}; {"type":"set_start","hour":від 0 до 23}; {"type":"add_note","text":"текст нотатки"}; {"type":"add_cards","deck":"назва колоди","cards":[{"q":"питання","a":"відповідь"}]}.';
 
@@ -84,15 +162,21 @@ export async function POST(req) {
   if (pass && req.headers.get('x-pass') !== pass) return Response.json({ error: 'Нужен пароль' }, { status: 401 });
   const { messages = [], ctx = {}, mode = 'chat', lang = 'uk' } = await req.json();
   const de = lang === 'de';
+  const unavailable = de ? 'Die KI ist gerade nicht erreichbar. ' : 'ШІ зараз недоступний. ';
+  const order = (process.env.AI_ORDER || 'claude,deepseek,gemini').split(',').map(s => s.trim())
+    .filter(n => PROVIDERS[n] && process.env[PROVIDERS[n].key]);
+  if (!order.length) return Response.json({ error: unavailable + 'не задано жодного ключа ШІ (ANTHROPIC_API_KEY, DEEPSEEK_API_KEY або GEMINI_API_KEY)' }, { status: 502 });
   const LANG_DE = '\n\nМОВА (найважливіше): усі тексти для користувача (поле reply, пояснення, назви задач і подій, питання та відповіді тестів, картки) пиши НІМЕЦЬКОЮ мовою (Deutsch), з правильною німецькою граматикою. Ключі JSON і службові значення (type, area, repeat, kind, template тощо) залишай точно за специфікацією. Питання тесту пиши мовою теми матеріалу (наприклад, англійською для англійської граматики), а пояснення до відповідей німецькою. Назви днів тижня й місяців німецькі.';
   const base = mode === 'quiz' ? quizPrompt(ctx) : mode === 'grade' ? gradePrompt : appPrompt(ctx, mode === 'parse');
   const system = de ? base + LANG_DE : base;
-  const order = (process.env.AI_ORDER || 'gemini,deepseek').split(',').map(s => s.trim()).filter(s => PROVIDERS[s]);
+  if (!messages.some(m => m && m.role === 'user' && (String(m.text || '').trim() || (m.images || []).length))) {
+    return Response.json({ error: (de ? 'Leere Anfrage.' : 'Порожній запит.') }, { status: 400 });
+  }
   const errs = [];
   for (const name of order) {
-    const res = await withRetry(() => PROVIDERS[name](system, messages));
-    if (res.ok && res.text) return Response.json({ text: res.text });
-    errs.push(name + ': ' + (res.err || 'пустой ответ'));
+    const res = await PROVIDERS[name].run(system, messages, mode);
+    if (res.ok) return Response.json({ text: res.text });
+    errs.push(name + ': ' + res.err);
   }
-  return Response.json({ error: (de ? 'Die KI ist gerade nicht erreichbar. ' : 'ШІ зараз недоступний. ') + errs.join(' | ') }, { status: 502 });
+  return Response.json({ error: unavailable + errs.join(' | ') }, { status: 502 });
 }
