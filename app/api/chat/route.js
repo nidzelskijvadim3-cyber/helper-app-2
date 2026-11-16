@@ -33,7 +33,9 @@ function toClaudeMessages(messages) {
 }
 
 async function claude(system, messages, mode) {
-  const client = new Anthropic(); // читає ANTHROPIC_API_KEY із середовища
+  // Читає ANTHROPIC_API_KEY із середовища. Одна повторна спроба й таймаут 25 с,
+  // щоб за потреби встигнути перейти до запасного ШІ в межах maxDuration.
+  const client = new Anthropic({ maxRetries: 1, timeout: 25000 });
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 16000,
@@ -46,6 +48,75 @@ async function claude(system, messages, mode) {
   if (!text) return { ok: false, err: response.stop_reason === 'max_tokens' ? 'відповідь задовга' : 'порожня відповідь' };
   return { ok: true, text };
 }
+
+// Запасні ШІ (працюють, поки немає ключа Claude або якщо Claude недоступний).
+function withTimeout(ms) {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  return { signal: c.signal, done: () => clearTimeout(t) };
+}
+
+async function deepseek(system, appMessages) {
+  const key = process.env.DEEPSEEK_API_KEY;
+  const hasImages = appMessages.some(m => m.images && m.images.length);
+  const model = hasImages ? (process.env.DEEPSEEK_VISION_MODEL || process.env.DEEPSEEK_MODEL || 'deepseek-flash') : (process.env.DEEPSEEK_MODEL || 'deepseek-flash');
+  const to = withTimeout(25000);
+  try {
+    const r = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      signal: to.signal,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'system', content: system }].concat(appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.images && m.images.length ? [{ type: 'text', text: m.text }].concat(m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))) : m.text })))
+      })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, err: (d.error && d.error.message) || ('HTTP ' + r.status) };
+    const t = d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content;
+    return t && t.trim() ? { ok: true, text: t } : { ok: false, err: 'порожня відповідь' };
+  } catch (e) {
+    return { ok: false, err: e.name === 'AbortError' ? 'немає відповіді за 25 с' : 'немає зв’язку' };
+  } finally { to.done(); }
+}
+
+async function gemini(system, appMessages) {
+  const key = process.env.GEMINI_API_KEY;
+  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const to = withTimeout(25000);
+  try {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', {
+      method: 'POST',
+      signal: to.signal,
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }].concat((m.images || []).map(u => ({ inlineData: { mimeType: (String(u).match(/^data:([^;]+)/) || [])[1] || 'image/jpeg', data: String(u).split(',')[1] } }))) })),
+        generationConfig: { responseMimeType: 'application/json' }
+      })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, err: (d.error && d.error.message) || ('HTTP ' + r.status) };
+    const parts = (d.candidates && d.candidates[0] && d.candidates[0].content && d.candidates[0].content.parts) || [];
+    const t = parts.map(p => p.text || '').join('');
+    return t.trim() ? { ok: true, text: t } : { ok: false, err: 'порожня відповідь' };
+  } catch (e) {
+    return { ok: false, err: e.name === 'AbortError' ? 'немає відповіді за 25 с' : 'немає зв’язку' };
+  } finally { to.done(); }
+}
+
+// Провайдери: беруться лише ті, для яких задано ключ. Порядок — AI_ORDER (за замовчуванням Claude першим).
+const PROVIDERS = {
+  claude: { key: 'ANTHROPIC_API_KEY', run: async (system, appMessages, mode) => {
+    const msgs = toClaudeMessages(appMessages);
+    if (!msgs.length) return { ok: false, err: 'порожній запит' };
+    try { return await claude(system, msgs, mode); } catch (e) { console.error('Claude API error:', e); return { ok: false, err: errorText(e) }; }
+  } },
+  deepseek: { key: 'DEEPSEEK_API_KEY', run: (system, appMessages) => deepseek(system, appMessages) },
+  gemini: { key: 'GEMINI_API_KEY', run: (system, appMessages) => gemini(system, appMessages) },
+};
 
 function errorText(e) {
   if (e instanceof Anthropic.AuthenticationError) return 'невірний ANTHROPIC_API_KEY';
@@ -92,18 +163,20 @@ export async function POST(req) {
   const { messages = [], ctx = {}, mode = 'chat', lang = 'uk' } = await req.json();
   const de = lang === 'de';
   const unavailable = de ? 'Die KI ist gerade nicht erreichbar. ' : 'ШІ зараз недоступний. ';
-  if (!process.env.ANTHROPIC_API_KEY) return Response.json({ error: unavailable + 'не задано ANTHROPIC_API_KEY' }, { status: 502 });
+  const order = (process.env.AI_ORDER || 'claude,deepseek,gemini').split(',').map(s => s.trim())
+    .filter(n => PROVIDERS[n] && process.env[PROVIDERS[n].key]);
+  if (!order.length) return Response.json({ error: unavailable + 'не задано жодного ключа ШІ (ANTHROPIC_API_KEY, DEEPSEEK_API_KEY або GEMINI_API_KEY)' }, { status: 502 });
   const LANG_DE = '\n\nМОВА (найважливіше): усі тексти для користувача (поле reply, пояснення, назви задач і подій, питання та відповіді тестів, картки) пиши НІМЕЦЬКОЮ мовою (Deutsch), з правильною німецькою граматикою. Ключі JSON і службові значення (type, area, repeat, kind, template тощо) залишай точно за специфікацією. Питання тесту пиши мовою теми матеріалу (наприклад, англійською для англійської граматики), а пояснення до відповідей німецькою. Назви днів тижня й місяців німецькі.';
   const base = mode === 'quiz' ? quizPrompt(ctx) : mode === 'grade' ? gradePrompt : appPrompt(ctx, mode === 'parse');
   const system = de ? base + LANG_DE : base;
-  const msgs = toClaudeMessages(messages);
-  if (!msgs.length) return Response.json({ error: (de ? 'Leere Anfrage.' : 'Порожній запит.') }, { status: 400 });
-  try {
-    const res = await claude(system, msgs, mode);
-    if (res.ok) return Response.json({ text: res.text });
-    return Response.json({ error: unavailable + res.err }, { status: 502 });
-  } catch (e) {
-    console.error('Claude API error:', e);
-    return Response.json({ error: unavailable + errorText(e) }, { status: 502 });
+  if (!messages.some(m => m && m.role === 'user' && (String(m.text || '').trim() || (m.images || []).length))) {
+    return Response.json({ error: (de ? 'Leere Anfrage.' : 'Порожній запит.') }, { status: 400 });
   }
+  const errs = [];
+  for (const name of order) {
+    const res = await PROVIDERS[name].run(system, messages, mode);
+    if (res.ok) return Response.json({ text: res.text });
+    errs.push(name + ': ' + res.err);
+  }
+  return Response.json({ error: unavailable + errs.join(' | ') }, { status: 502 });
 }

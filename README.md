@@ -1,8 +1,11 @@
 # Мой помощник, версия 2
 
 Переменные окружения (на Vercel или в файле .env.local):
-- ANTHROPIC_API_KEY: ключ Claude API (создаётся на console.anthropic.com), обязательно
-- ANTHROPIC_MODEL: модель Claude, по умолчанию claude-haiku-5-5 (по желанию)
+- ANTHROPIC_API_KEY: ключ Claude API (console.anthropic.com). Если задан — Claude основной ИИ
+- ANTHROPIC_MODEL: модель Claude, по умолчанию claude-haiku-5-5
+- DEEPSEEK_API_KEY, DEEPSEEK_MODEL: DeepSeek (по умолчанию deepseek-flash)
+- GEMINI_API_KEY, GEMINI_MODEL: Gemini
+- AI_ORDER: порядок ИИ, по умолчанию claude,deepseek,gemini. Используются только ИИ с заданным ключом
 - APP_PASSWORD: пароль приложения (защищает ИИ и синхронизацию)
 
 
