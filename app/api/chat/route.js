@@ -69,6 +69,7 @@ async function deepseek(system, appMessages) {
       body: JSON.stringify({
         model,
         stream: false,
+        max_tokens: 8192, // тест на 30 питань із поясненнями не вміщується в ліміт за замовчуванням
         response_format: { type: 'json_object' },
         messages: [{ role: 'system', content: system }].concat(appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.images && m.images.length ? [{ type: 'text', text: m.text }].concat(m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))) : m.text })))
       })
@@ -94,7 +95,7 @@ async function gemini(system, appMessages) {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }].concat((m.images || []).map(u => ({ inlineData: { mimeType: (String(u).match(/^data:([^;]+)/) || [])[1] || 'image/jpeg', data: String(u).split(',')[1] } }))) })),
-        generationConfig: { responseMimeType: 'application/json' }
+        generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 }
       })
     });
     const d = await r.json().catch(() => ({}));

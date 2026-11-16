@@ -713,7 +713,7 @@ export default function Home() {
         {stab === 'tests' && <>
           <div className="card"><div className="sec">{tr("Новий тест")}</div>
             <textarea rows={4} placeholder={tr("Тема або матеріал. Наприклад: Present Perfect, німецькі артиклі, анатомія зуба, або вставте свій конспект")} value={tcfg.topic} onChange={e => setTcfg({ ...tcfg, topic: e.target.value })} />
-            <div className="row"><select value={tcfg.n} onChange={e => setTcfg({ ...tcfg, n: e.target.value })}><option value={5}>{tr("5 питань")}</option><option value={10}>{tr("10 питань")}</option><option value={15}>{tr("15 питань")}</option></select>
+            <div className="row"><select value={tcfg.n} onChange={e => setTcfg({ ...tcfg, n: e.target.value })}><option value={5}>{tr("5 питань")}</option><option value={10}>{tr("10 питань")}</option><option value={15}>{tr("15 питань")}</option><option value={20}>{tr("20 питань")}</option><option value={25}>{tr("25 питань")}</option><option value={30}>{tr("30 питань")}</option></select>
               <select value={tcfg.kind} onChange={e => setTcfg({ ...tcfg, kind: e.target.value })}><option value="mix">{tr("Змішаний")}</option><option value="choice">{tr("Тільки з варіантами")}</option><option value="open">{tr("Відкриті питання")}</option></select></div>
             <button className="btn" onClick={createTest} disabled={tbusy}>{tbusy ? tr("Складаю тест…") : tr("Створити тест")}</button>
             {tmsg && <div className="sub" style={{ marginTop: 10 }}>{tmsg}</div>}</div>
