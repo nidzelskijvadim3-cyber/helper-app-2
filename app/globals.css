@@ -649,3 +649,66 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .fld2{flex-direction:row;gap:24px}.fld2>.fld{flex:1}
 }
 .menu .shd .ib{display:flex;width:44px;height:44px;margin:0;padding:0;background:var(--fill);color:var(--tx2)}
+
+/* ===== Папки: компактні плитки, редактор вигляду (folders-and-pens) =====
+   Колір папки — дані (hex), не токен. Іконка на папці — білий або #16181C, що контрастніше (≥ 4.3:1). */
+.fkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:12px 6px}
+.fk{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0;padding:8px 2px 6px;border:0;border-radius:var(--r-14);background:none;color:var(--tx);font:inherit;text-align:center;cursor:pointer}
+.fk:hover{background:var(--fill)}
+.fk .fg{display:block;width:100%;max-width:72px;height:auto;margin-bottom:3px}
+.fk-n{max-width:100%;font-size:13px;font-weight:600;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.fk-c{font-size:12px;line-height:1.2;color:var(--tx2)}
+.fk-new{color:var(--tx-pill)}.fk-new .fk-n{font-weight:500}
+.fk.drop{outline:2px dashed var(--accent-tx);outline-offset:-2px}
+.sb .fg{flex:none;width:24px;height:auto}
+.ffe-prev{display:flex;flex-direction:column;align-items:center;gap:6px;margin:0 0 14px}
+.ffe-prev span{max-width:220px;font-size:14px;font-weight:600;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fcols{display:flex;flex-wrap:wrap;gap:2px;margin-top:6px}
+.fcol{position:relative;flex:none;width:44px;height:44px;border:0;border-radius:50%;background:none;padding:0;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.fcol i{display:block;width:30px;height:30px;border-radius:50%;box-shadow:inset 0 0 0 1px rgba(0,0,0,.2)}
+.fcol[aria-pressed="true"] i,.fcol.on i{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--tx)}
+.fcustom i{background:conic-gradient(#e5484d,#f5d547,#9bd46a,#5fd0c0,#7aa2ff,#c3a0ff,#e5484d)}
+.fcustom input,.icustom input{position:absolute;inset:0;width:100%;height:100%;opacity:0;padding:0;border:0;cursor:pointer}
+.fcustom:focus-within,.icustom:focus-within{outline:2px solid var(--accent-tx);outline-offset:2px}
+.ficos{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:4px;margin-top:6px}
+.fico{height:44px;border:0;border-radius:var(--r-12);background:var(--fill);color:var(--tx);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
+.fico:hover{color:var(--accent-tx)}
+.fico[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-tx);box-shadow:inset 0 0 0 2px var(--accent-tx)}
+.ffe-ph{align-items:center;flex-wrap:wrap}
+/* iPad: 820 → 6 у ряд, 1194 → 8 у ряд */
+@media (min-width:768px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(68px,1fr));gap:14px 4px}}
+@media (min-width:1024px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}}
+
+/* ===== Редактор: інструменти + контекстний ряд (улюблені кольори, 3 товщини, лінійка, налаштування) ===== */
+.edrow3{display:flex;flex-wrap:wrap;align-items:center;column-gap:8px}
+.edtools,.edctx{display:flex;align-items:center;gap:2px;min-height:44px}
+.edctx{flex-basis:100%;overflow-x:auto;scrollbar-width:none}.edctx::-webkit-scrollbar{display:none}
+.edtools .ib[aria-pressed="true"]{background:var(--accent);color:var(--on-accent)}
+.fav,.wbtn,.ipc{position:relative;flex:none;width:44px;height:44px;border:0;border-radius:var(--r-12);background:none;padding:0;display:flex;align-items:center;justify-content:center;color:var(--tx2);cursor:pointer}
+.fav i,.ipc i{display:block;width:26px;height:26px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--tx3)}
+.fav[aria-pressed="true"] i,.ipc[aria-pressed="true"] i{box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--tx)}
+.wbtn i{display:block;border-radius:50%}
+.wbtn i.ring{background:none!important;border:2px solid currentColor}
+.wbtn:hover,.fav:hover{background:var(--fill)}
+.wbtn[aria-pressed="true"]{background:var(--fill);color:var(--tx);box-shadow:inset 0 0 0 1.5px var(--tx3)}
+.edsep{flex:none;width:1px;height:24px;background:var(--bd);margin:0 4px}
+.edhint{padding:0 8px}
+.edseg{flex:none;margin-right:6px}.edseg button{padding:8px 14px;min-height:40px;font-size:14px}
+.pop{overflow-y:auto;max-width:400px}
+.pop-t{font-size:15px;font-weight:700;margin:2px 0 8px}
+.pop-l{font-size:13px;font-weight:600;color:var(--tx2);margin:10px 0 0}
+.pop .prow{gap:4px}
+.fav-row{margin:2px 0 4px}
+.ipal{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:2px;margin:4px 0 8px}
+.ipc{width:100%}
+.icustom i{background:conic-gradient(red,yellow,lime,aqua,blue,magenta,red)}
+.tg>span{text-align:left}
+.tgsub{display:block;font-size:13px;color:var(--tx2);margin-top:2px}
+.edtoast{position:absolute;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));max-width:440px;margin:0 auto;padding:12px 16px;border-radius:var(--r-14);background:var(--surface);color:var(--tx);border:1px solid var(--bd);box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:14px;z-index:5}
+@media (min-width:768px){
+  .edrow3{flex-wrap:nowrap}
+  .edctx{flex-basis:auto;flex:1;padding-left:8px;border-left:1px solid var(--bd)}
+}
+@media (max-width:420px){.edtools,.edctx{gap:0}.edsep{margin:0 2px}}
+/* 320–360 px: 8 кнопок по 38 px завширшки (висота 44; мінімум WCAG 2.2 — 24) */
+@media (max-width:360px){.edrow3 .ib,.edctx .fav,.edctx .wbtn{width:38px}.edsep{display:none}}

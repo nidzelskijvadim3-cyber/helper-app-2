@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import Materials, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, PALETTE_C, SOLID, colorKey } from './docs';
+import { FolderGlyph, FOLDER_COLORS, FICONS, LineIcon, isHex } from './folder-icons';
 import { canMoveFolder, folderPath } from './lib';
 import { syncNow, syncStatus, getSyncMeta, setSyncOn } from './sync';
 import { nsKey, listAccounts, getActiveId, setActiveId, addAccount, activeAccount, deriveAccountId, validateCredentials } from './accounts';
@@ -393,7 +394,9 @@ export default function Home() {
   const del = id => { setItems(items.filter(i => i.id !== id)); closeSheet(); };
   const saveFolder = () => {
     if (!fform || !fform.name.trim()) return;
+    // ico — нова лінійна іконка (ключ), icon — емодзі зі старих версій (зберігається), cover — фото-тло (dataURL ≤ 256 px)
     const fo = { id: fform.id || Date.now(), name: fform.name.trim(), color: fform.color, cover: fform.cover || '', icon: fform.icon || '', parent: fform.parent == null ? '' : fform.parent };
+    if (fform.ico) fo.ico = fform.ico;
     setFolders(fform.id ? folders.map(x => x.id === fo.id ? fo : x) : [...folders, fo]); setFform(null);
   };
   const delFolder = () => {
@@ -1003,16 +1006,42 @@ export default function Home() {
 
       {/* папка: створення та дії з меню «⋯» (перейменувати / колір / перемістити / видалити). Обкладинка й іконка зі старих версій зберігаються в даних. */}
       {fform && (() => {
-        const mode = fform.mode || (fform.id ? 'name' : 'new');
+        const mode0 = fform.mode || (fform.id ? 'name' : 'new'), mode = mode0 === 'color' ? 'look' : mode0, full = mode === 'new' || mode === 'look';
         const up = fform.parent == null || fform.parent === '' ? null : folders.find(x => x.id === fform.parent);
-        const ttl = { new: fform.parent !== '' && fform.parent != null ? tr("Нова підпапка") : tr("Нова папка"), name: tr("Перейменувати папку"), color: tr("Колір папки"), move: tr("Перемістити папку"), delete: tr("Видалити папку?") }[mode];
-        const ck = colorKey(fform.color);
-        return <div className="ov" onClick={() => setFform(null)} onKeyDown={e => { if (e.key === 'Escape') setFform(null); }}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="ff-title" onClick={e => e.stopPropagation()}>
+        const ttl = { new: fform.parent !== '' && fform.parent != null ? tr("Нова підпапка") : tr("Нова папка"), look: tr("Папка"), name: tr("Перейменувати папку"), move: tr("Перемістити папку"), delete: tr("Видалити папку?") }[mode];
+        const hex = isHex(fform.color) ? fform.color.toLowerCase() : '';
+        const inPal = FOLDER_COLORS.some(([c]) => c.toLowerCase() === hex);
+        // старі папки без нової іконки: показуємо емодзі як раніше, у виборі «Без іконки» не позначено
+        const curIco = fform.ico || (fform.icon ? '' : 'none');
+        const pickCover = async file => {
+          if (!file) return;
+          setFform(p => ({ ...p, busy: true, err: '' }));
+          try { const c = await shrink(file, 256, 0.75); setFform(p => (p ? { ...p, cover: c, busy: false } : p)); }
+          catch (e) { setFform(p => (p ? { ...p, busy: false, err: tr("Не вдалося обробити зображення.") } : p)); }
+        };
+        return <div className="ov" onClick={() => setFform(null)} onKeyDown={e => { if (e.key === 'Escape') setFform(null); }}><div className={'sheet' + (full ? ' ffe' : '')} role="dialog" aria-modal="true" aria-labelledby="ff-title" onClick={e => e.stopPropagation()}>
           <div className="shd"><h2 id="ff-title">{ttl}</h2><button className="ib" onClick={() => setFform(null)} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>
-          {(mode === 'new' || mode === 'name') && <><label className="flab" htmlFor="ff-name">{tr("Назва папки")}</label>
-            <input id="ff-name" style={{ marginTop: 6 }} autoFocus value={fform.name} maxLength={40} onChange={e => setFform({ ...fform, name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') saveFolder(); }} /></>}
-          {(mode === 'new' || mode === 'color') && <><div className="flab" id="ff-col" style={{ marginTop: mode === 'new' ? 14 : 0 }}>{tr("Колір")}</div>
-            <div className="sw" role="group" aria-labelledby="ff-col" style={{ marginTop: 8 }}>{PALETTE_C.map(([c, k, nm], i) => <button key={c} autoFocus={mode === 'color' && (ck ? ck === k : i === 0)} className={'swatch' + (ck === k ? ' on' : '')} style={{ background: SOLID[k] }} aria-pressed={ck === k} aria-label={tr(nm)} onClick={() => setFform({ ...fform, color: c })} />)}</div></>}
+          {full && <div className="ffe-prev" aria-hidden="true"><FolderGlyph color={fform.color} ico={fform.ico} emoji={fform.icon} cover={fform.cover} size={96} /><span>{fform.name.trim() || tr("Нова папка")}</span></div>}
+          {(full || mode === 'name') && <><label className="flab" htmlFor="ff-name">{tr("Назва папки")}</label>
+            <input id="ff-name" style={{ marginTop: 6 }} autoFocus={mode !== 'look'} value={fform.name} maxLength={40} onChange={e => setFform({ ...fform, name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') saveFolder(); }} /></>}
+          {full && <>
+            <div className="flab" id="ff-col" style={{ marginTop: 16 }}>{tr("Колір")}</div>
+            <div className="fcols" role="group" aria-labelledby="ff-col">
+              {FOLDER_COLORS.map(([c, nm], i) => { const on = c.toLowerCase() === hex; return <button key={c} autoFocus={mode === 'look' && (inPal ? on : i === 0)} className="fcol" aria-pressed={on} aria-label={tr(nm)} title={tr(nm)} onClick={() => setFform({ ...fform, color: c })}><i style={{ background: c }} /></button>; })}
+              <label className={'fcol fcustom' + (hex && !inPal ? ' on' : '')} title={tr("Свій колір")}><i style={hex && !inPal ? { background: hex } : undefined} /><input type="color" value={hex || '#7aa2ff'} onChange={e => setFform({ ...fform, color: e.target.value })} aria-label={tr("Свій колір")} /></label>
+            </div>
+            <div className="flab" id="ff-ico" style={{ marginTop: 16 }}>{tr("Іконка")}</div>
+            <div className="ficos" role="group" aria-labelledby="ff-ico">
+              {FICONS.map(([k, nm]) => <button key={k} className="fico" aria-pressed={curIco === k} aria-label={tr(nm)} title={tr(nm)} onClick={() => setFform({ ...fform, ico: k })}><LineIcon k={k} size={22} /></button>)}
+            </div>
+            <div className="flab" style={{ marginTop: 16 }}>{tr("Фото на фон")}</div>
+            <div className="row ffe-ph">
+              <button className="chip sm" disabled={fform.busy} onClick={() => { const el = document.getElementById('ff-file'); if (el) el.click(); }}>{fform.busy ? tr("Обробка…") : fform.cover ? tr("Замінити фото") : tr("Завантажити")}</button>
+              <input id="ff-file" type="file" accept="image/*" className="hidefile" tabIndex={-1} aria-hidden="true" onChange={e => { pickCover(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+              {fform.cover && <button className="chip sm" onClick={() => setFform({ ...fform, cover: '' })}>{tr("Прибрати")}</button>}
+            </div>
+            {fform.err && <p className="sub" role="alert" style={{ color: 'var(--wn)', margin: '4px 0 0' }}>{fform.err}</p>}
+          </>}
           {mode === 'move' && <><label className="flab" htmlFor="ff-par">{tr("Розташування")}</label>
             <select id="ff-par" style={{ marginTop: 6 }} autoFocus value={fform.parent == null ? '' : fform.parent} onChange={e => setFform({ ...fform, parent: e.target.value === '' ? '' : Number(e.target.value) })}>
               <option value="">{tr("Головний рівень")}</option>{folders.filter(x => x.id !== fform.id && (!fform.id || canMoveFolder(folders, fform.id, x.id))).map(x => <option key={x.id} value={x.id}>{folderPath(folders, x.id)}</option>)}</select></>}
