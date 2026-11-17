@@ -4,7 +4,8 @@ import { listMeta, getDoc, saveDoc, putMeta, putDoc, delDoc, duplicateDoc, repar
 import { Fragment } from 'react';
 import { newDoc, newId, folderPath, fitPage, descendants, breadcrumb } from './lib';
 import { t as tr, loc, plural } from './i18n';
-import { drawStroke, ptsOf, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, PENS, SHAPES } from './draw';
+import { drawStroke, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, hitStroke, splitStroke, nearlyStraight, isHl, PENS, PRESSURE_NIBS, SHAPES } from './draw';
+import { FolderGlyph, FOLDER_COLORS } from './folder-icons';
 
 export { putDoc, delDoc, newDoc, reparentDocs, moveDoc };
 export const listDocs = listMeta;
@@ -27,7 +28,6 @@ export async function shrink(file, max = 1024, q = 0.72) {
   c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
   return c.toDataURL('image/jpeg', q);
 }
-const COLORS = ['#1c1c1e', '#0a84ff', '#ff375f', '#30d158', '#ff9f0a', '#bf5af2'];
 
 const readFile = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
 const loadImg = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
@@ -81,12 +81,55 @@ const EI = {
   list: <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
 };
-const TOOLN = { pen: 'Ручка', hl: 'Маркер', eraser: 'Гумка', shape: 'Фігури', text: 'Текст', ruler: 'Лінійка', hand: 'Рука' };
-const NIBN = { ball: 'Кулькова', fountain: 'Перова', pencil: 'Олівець', brush: 'Пензель', calli: 'Каліграфія' };
+Object.assign(EI, {
+  pencil: <><path d="M16.5 3.5l4 4L9 19l-5 1 1-5z" /><path d="M14 6l4 4" /><path d="M5.6 16.6l1.8 1.8" /></>,
+  marker: <><path d="M14 3.5l6.5 6.5-7.5 7.5L6.5 11z" /><path d="M6.5 11L4 17.5 6.5 20l6.5-2.5" /><path d="M3.5 21h4" /></>,
+  tune: <><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>,
+});
+// Інструменти тулбара (лінійка — у контекстному ряду, поруч із кольорами й товщиною)
+const TOOLS = ['pen', 'pencil', 'marker', 'hl', 'eraser', 'shape', 'text', 'hand'];
+const DRAW = ['pen', 'pencil', 'marker', 'hl'];
+const TOOLN = { pen: 'Ручка', pencil: 'Олівець', marker: 'Маркер', hl: 'Виділювач', eraser: 'Гумка', shape: 'Фігури', text: 'Текст', ruler: 'Лінійка', hand: 'Рука' };
+const NIBN = { ball: 'Кулькова', fountain: 'Перова', fineliner: 'Лайнер', brush: 'Пензель', calli: 'Каліграфія', pencil: 'Олівець', felt: 'Фломастер', chisel: 'Маркер' };
 const SHAPEN = { line: 'Лінія', arrow: 'Стрілка', rect: 'Рамка', oval: 'Овал', triangle: 'Трикутник' };
-const PALETTE = ['#000000', '#3a3a3c', '#8e8e93', '#d1d1d6', '#ffffff', '#5d4037', '#a1887f', '#f5deb3', '#ff3b30', '#ff9500', '#ffcc00', '#34c759', '#00c7be', '#32ade6', '#007aff', '#5856d6', '#af52de', '#ff2d55', '#ff6b6b', '#ffa94d', '#ffe066', '#69db7c', '#4dabf7', '#b197fc'];
+// Кольори чорнила — дані документа, не токени інтерфейсу
+const INK = [['#1c1c1e', 'Чорний'], ['#5b5f66', 'Графітовий'], ['#8e8e93', 'Сірий'], ['#ffffff', 'Білий'], ['#7a4a2a', 'Коричневий'], ['#8b1e3f', 'Бордовий'], ['#e5322d', 'Червоний'], ['#f28c28', 'Помаранчевий'],
+  ['#f5c400', 'Жовтий'], ['#2f9e44', 'Зелений'], ['#0ca5a0', 'Бірюзовий'], ['#2b9be0', 'Блакитний'], ['#1f5fd6', 'Синій'], ['#1e2a78', 'Темно-синій'], ['#7b3fc4', 'Фіолетовий'], ['#e0408a', 'Рожевий']];
+const HL_INK = [['#ffe066', 'Жовтий'], ['#ffc58a', 'Персиковий'], ['#ffb3c7', 'Рожевий'], ['#d0b8ff', 'Бузковий'], ['#9fd8ff', 'Блакитний'], ['#a5f3b5', 'Зелений'], ['#b0f0e8', 'М’ятний'], ['#d9d9d9', 'Сірий']];
+const colorName = c => { const x = INK.concat(HL_INK).find(y => y[0] === String(c).toLowerCase()); return x ? tr(x[1]) : String(c); };
+// Три швидкі товщини для кожного типу пера (середня — за замовчуванням)
+const WSETS = { ball: [2.5, 4, 6], fountain: [4, 6, 9], fineliner: [1.5, 2.5, 4], brush: [8, 12, 18], calli: [6, 9, 13], pencil: [3, 5, 8], felt: [5, 7, 10], chisel: [10, 14, 20], hl: [14, 22, 32], shape: [2, 4, 7] };
+const WN = ['Тонка', 'Середня', 'Товста'];
+const TOOLCFG = {
+  pen: { nibs: ['ball', 'fountain', 'fineliner', 'brush', 'calli'], nib: 'ball', favs: ['#1c1c1e', '#1f5fd6', '#e5322d'], op: 1 },
+  pencil: { nibs: ['pencil'], nib: 'pencil', favs: ['#3a3a3c', '#1f5fd6', '#e5322d'], op: PENS.pencil.op },
+  marker: { nibs: ['felt', 'chisel'], nib: 'felt', favs: ['#1f5fd6', '#e5322d', '#2f9e44'], op: 1 },
+  hl: { nibs: ['hl'], nib: 'hl', favs: ['#ffe066', '#a5f3b5', '#ffb3c7'], op: 0.4, straight: false },
+  shape: { nibs: ['shape'], nib: 'shape', favs: ['#1c1c1e', '#1f5fd6', '#e5322d'], op: 1 },
+  text: { nibs: ['text'], nib: 'text', favs: ['#1c1c1e', '#1f5fd6', '#e5322d'], op: 1 },
+};
+const ER_SIZES = [12, 28, 56];
+// Останній вибір кожного інструмента — у localStorage['helper-pens'] (тип пера, 3 улюблені кольори, слот, товщини, прозорість)
+function loadPens() {
+  const d = {};
+  for (const k in TOOLCFG) d[k] = { nib: TOOLCFG[k].nib, favs: [...TOOLCFG[k].favs], slot: 0, op: TOOLCFG[k].op, straight: !!TOOLCFG[k].straight, w: {}, wi: {} };
+  d.eraser = { mode: 'stroke', sizes: [...ER_SIZES], wi: 1, hlOnly: false };
+  try {
+    const s = JSON.parse(localStorage.getItem('helper-pens') || 'null');
+    if (s && typeof s === 'object') for (const k in d) if (s[k] && typeof s[k] === 'object') {
+      const m = { ...d[k], ...s[k] };
+      if (TOOLCFG[k] && !TOOLCFG[k].nibs.includes(m.nib)) m.nib = TOOLCFG[k].nib;
+      if (m.favs && (!Array.isArray(m.favs) || m.favs.length !== 3)) m.favs = d[k].favs;
+      d[k] = m;
+    }
+  } catch (e) {}
+  return d;
+}
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+
 function EIcon({ n, size = 22 }) { return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{EI[n]}</svg>; }
-function IB({ n, label, on, onClick, disabled }) { return <button className={'ib' + (on ? ' on' : '')} onClick={onClick} aria-label={label} title={label} disabled={disabled}><EIcon n={n} /></button>; }
+function IB({ n, label, on, onClick, disabled, pressed }) { return <button className={'ib' + (on ? ' on' : '')} onClick={onClick} aria-label={label} title={label} disabled={disabled} aria-pressed={pressed}><EIcon n={n} /></button>; }
 async function makeThumb(d) {
   const p = d.pages[0]; if (!p) return '';
   const im = p.img ? await loadImg(p.img).catch(() => null) : null;
@@ -98,18 +141,15 @@ async function makeThumb(d) {
 function Editor({ doc, onSave, onClose }) {
   const [d, setD] = useState(doc);
   const [pi, setPi] = useState(0);
-  const [tool, setTool] = useState('pen');
-  const [color, setColor] = useState(COLORS[0]);
-  const [wd, setWd] = useState(PENS.ball.w);
-  const [nib, setNib] = useState('ball');
-  const [op, setOp] = useState(1);
-  const [ew, setEw] = useState(28);
+  const [tool, setTool] = useState(() => { const t = lsGet('helper-tool'); return TOOLS.includes(t) && t !== 'hand' ? t : 'pen'; });
+  const [pens, setPens] = useState(loadPens);
   const [shape, setShape] = useState('line');
   const [ruler, setRuler] = useState({ on: false, x: 200, y: 400, a: 0, len: 700 });
-  const [recent, setRecent] = useState(() => { try { return JSON.parse(localStorage.getItem('helper-colors') || '[]'); } catch (e) { return []; } });
   const rdrag = useRef(null);
-  const [penOnly, setPenOnly] = useState(false);
+  // «Малювати лише стилусом»: null — ще не вирішено (вмикається само, щойно з'явиться стилус)
+  const [penOnly, setPenOnly] = useState(() => lsGet('helper-penonly') === '1');
   const [pressure, setPressure] = useState(true);
+  const [toast, setToast] = useState('');
   const [zoom, setZoom] = useState(1);
   const [fit, setFit] = useState({ w: 300, h: 400 });
   const [tick, setTick] = useState(0);
@@ -117,12 +157,29 @@ function Editor({ doc, onSave, onClose }) {
   const [strip, setStrip] = useState(false);
   const [pop, setPop] = useState(null);
   const [popTop, setPopTop] = useState(96);
-  const barRef = useRef(null);
+  const barRef = useRef(null), holdT = useRef(null);
   const [thumbs, setThumbs] = useState([]);
   const cvRef = useRef(null), boxRef = useRef(null), imgRef = useRef(null), cur = useRef(null), hist = useRef([]), redo = useRef([]), dRef = useRef(d), piRef = useRef(0), saved = useRef(doc.pages), touches = useRef(new Map()), gest = useRef(null);
   dRef.current = d; piRef.current = pi;
   const page = d.pages[pi];
   const setPage = np => setD(o => ({ ...o, pages: o.pages.map((q, i) => i === pi ? np : q) }));
+
+  // поточні налаштування інструмента
+  // для гумки й руки кольори/товщина беруться з останнього інструмента, що малює
+  const [lastT, setLastT] = useState('pen');
+  useEffect(() => { if (TOOLCFG[tool]) setLastT(tool); }, [tool]);
+  const ctool = TOOLCFG[tool] ? tool : lastT, tc = pens[ctool], nib = tc.nib;
+  const wset = (tc.w && tc.w[nib]) || WSETS[nib] || WSETS.ball, wi = tc.wi && tc.wi[nib] != null ? tc.wi[nib] : 1, wd = wset[wi];
+  const color = tc.favs[tc.slot] || tc.favs[0], op = tc.op;
+  const er = pens.eraser;
+  const upd = (t, patch) => setPens(p => ({ ...p, [t]: { ...p[t], ...patch } }));
+  useEffect(() => { lsSet('helper-pens', JSON.stringify(pens)); }, [pens]);
+  useEffect(() => { if (tool !== 'hand') lsSet('helper-tool', tool); }, [tool]);
+  const setColor = c => { const f = [...tc.favs]; f[tc.slot] = c; upd(ctool, { favs: f }); };
+  const setWi = i => upd(ctool, { wi: { ...tc.wi, [nib]: i } });
+  const setWv = v => { const s = [...wset]; s[wi] = v; upd(ctool, { w: { ...tc.w, [nib]: s } }); };
+  const togglePenOnly = () => { const v = !penOnly; setPenOnly(v); lsSet('helper-penonly', v ? '1' : '0'); };
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 4500); return () => clearTimeout(t); }, [toast]);
 
   useEffect(() => {
     bridge.info = () => ({ title: dRef.current.title, type: dRef.current.type, page: piRef.current + 1, pages: dRef.current.pages.length });
@@ -173,18 +230,30 @@ function Editor({ doc, onSave, onClose }) {
 
   const pos = e => { const cv = cvRef.current, r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
   const commit = s => { hist.current.push({ pi, strokes: page.strokes }); if (hist.current.length > 40) hist.current.shift(); redo.current = []; setPage({ ...page, strokes: [...page.strokes, s] }); };
+  // Гумка: «Штрих повністю» прибирає штрих, «Точковий» вирізає шматок; «Лише виділювач» не чіпає чорнило.
+  // Поточний стан штрихів тримаємо в cur.current.strokes, щоб швидкі рухи між рендерами не губили стирання.
   const eraseAt = (x, y) => {
-    const ws = page.w / 1200, r = ew * ws;
-    const keep = page.strokes.filter(s => { const q = ptsOf(s, ws); for (let i = 0; i < q.length; i += 2) if (Math.hypot(q[i] - x, q[i + 1] - y) < r + (s.w || 3) * ws / 2) return false; return true; });
-    if (keep.length !== page.strokes.length) { if (cur.current && !cur.current.snap) cur.current.snap = page.strokes; setPage({ ...page, strokes: keep }); }
+    const ws = page.w / 1200, r = er.sizes[er.wi] * ws, c = cur.current, src = (c && c.strokes) || page.strokes;
+    let changed = false; const out = [];
+    for (const s of src) {
+      if ((er.hlOnly && !isHl(s)) || !hitStroke(s, ws, x, y, r)) { out.push(s); continue; }
+      changed = true;
+      if (er.mode === 'point') out.push(...splitStroke(s, ws, x, y, r));
+    }
+    if (changed) { if (c && !c.snap) c.snap = page.strokes; if (c) c.strokes = out; setPage({ ...page, strokes: out }); }
   };
+  const straighten = s => { const q = s.p; s.p = [q[0], q[1], q[q.length - 2], q[q.length - 1]]; if (s.pr) s.pr = [s.pr[0], s.pr[s.pr.length - 1]]; s.straight = true; };
   const down = e => {
     if (tool === 'hand') return;
+    if (e.pointerType === 'pen' && lsGet('helper-penonly') == null) {
+      // перший дотик стилусом: вмикаємо «лише стилус», палець далі гортає сторінку
+      setPenOnly(true); lsSet('helper-penonly', '1'); setToast(tr("Стилус виявлено: пальцем тепер можна гортати й масштабувати. Змінити — у налаштуваннях інструмента."));
+    }
     if (e.pointerType === 'touch') {
       touches.current.set(e.pointerId, [e.clientX, e.clientY]);
       const el = boxRef.current;
       if (touches.current.size >= 2) {
-        cur.current = null; renderPage(cvRef.current.getContext('2d'), page, imgRef.current);
+        cur.current = null; clearTimeout(holdT.current); renderPage(cvRef.current.getContext('2d'), page, imgRef.current);
         const [a, b] = [...touches.current.values()];
         gest.current = { d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: zoom, m0: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], sl: el.scrollLeft, st: el.scrollTop };
         return;
@@ -197,11 +266,18 @@ function Editor({ doc, onSave, onClose }) {
     if (tool === 'eraser') { cur.current = { erase: true }; eraseAt(x, y); return; }
     const ws = page.w / 1200, snap = ruler.on ? rulerSnap(ruler, x, y, 40 * ws) : null;
     if (snap) { x = snap.x; y = snap.y; }
-    if (tool === 'shape') { cur.current = { k: shape, c: color, w: wd, p: [x, y, x, y], lock: !!snap && (shape === 'line' || shape === 'arrow') }; if (op < 1) cur.current.a = op; return; }
-    const isPen = e.pointerType === 'pen', usesPr = tool === 'pen' && (nib === 'fountain' || nib === 'brush');
-    const st = tool === 'hl' ? { n: 'marker', c: color, w: wd * 4, a: op < 1 ? op : 0.35, p: [x, y] } : { n: nib, c: color, w: wd, p: [x, y], seed: Math.floor(Math.random() * 1e6) };
-    if (tool === 'pen' && op < 1) st.a = op;
-    if (tool === 'pen') { const p0 = isPen && pressure ? pressureOf(e) : (usesPr ? 0.6 : null); if (p0 != null) st.pr = [p0]; }
+    if (tool === 'shape') { cur.current = { k: shape, c: color, w: wd, p: [x, y, x, y], lock: !!snap && (shape === 'line' || shape === 'arrow') }; return; }
+    let st;
+    if (tool === 'hl') {
+      // новий виділювач: n 'marker' (старі версії малюють його як раніше) + u: шар під чорнилом
+      st = { n: 'marker', u: 1, c: color, w: wd, a: op < 1 ? op : 0.4, p: [x, y] };
+      if (tc.straight) st.straight = true;
+    } else {
+      st = { n: nib, c: color, w: wd, p: [x, y], seed: Math.floor(Math.random() * 1e6) };
+      if (tool === 'pencil') { st.v = 2; if (op < 1) st.a = op; }
+      const pm = PRESSURE_NIBS[nib], isPen = e.pointerType === 'pen';
+      if (pm) { const p0 = isPen && pressure ? pressureOf(e) : (pm === 'strong' ? 0.6 : null); if (p0 != null) st.pr = [p0]; }
+    }
     if (snap) st.lock = true;
     cur.current = st;
   };
@@ -223,19 +299,26 @@ function Editor({ doc, onSave, onClose }) {
     const s = cur.current; if (!s) return;
     const [x, y] = pos(e);
     if (s.erase) { eraseAt(x, y); return; }
-    const g = cvRef.current.getContext('2d'), ws = page.w / 1200;
-    if (s.k) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p[2] = ex; s.p[3] = ey; renderPage(g, page, imgRef.current); drawStroke(g, s, ws); return; }
+    const g = cvRef.current.getContext('2d'), ws = page.w / 1200, img = imgRef.current;
+    if (s.k) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p[2] = ex; s.p[3] = ey; renderPage(g, page, img, s); return; }
+    if (s.straight) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p = [s.p[0], s.p[1], ex, ey]; renderPage(g, page, img, s); return; }
     const evs = e.pointerType === 'pen' && e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    let added = false;
     for (const ev of evs) {
       let [px, py] = pos(ev);
       if (s.lock) { const q = rulerProject(ruler, px, py); px = q.x; py = q.y; }
       const qq = s.p, lx = qq[qq.length - 2], ly = qq[qq.length - 1], dist = Math.hypot(px - lx, py - ly);
       if (dist < 2) continue;
-      qq.push(px, py);
+      qq.push(px, py); added = true;
       if (s.pr) s.pr.push(ev.pointerType === 'pen' && pressure ? pressureOf(ev) : synthPressure(s.pr[s.pr.length - 1], dist, s.lt != null ? ev.timeStamp - s.lt : 8));
       s.lt = ev.timeStamp;
-      if (s.a < 1 || s.n === 'marker') { renderPage(g, page, imgRef.current); drawStroke(g, s, ws); }
+      if (s.a < 1 || isHl(s)) renderPage(g, page, img, s);
       else { g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; drawSeg(g, s, ws, qq.length / 2 - 1, true); g.restore(); }
+    }
+    // виділювач: затримали перо в кінці лінії на 0,5 с — лінія вирівнюється
+    if (added && s.u) {
+      clearTimeout(holdT.current);
+      holdT.current = setTimeout(() => { if (cur.current !== s || s.straight || s.p.length < 6) return; straighten(s); renderPage(g, page, img, s); }, 500);
     }
   };
   const up = e => {
@@ -243,29 +326,26 @@ function Editor({ doc, onSave, onClose }) {
       touches.current.delete(e.pointerId);
       if (touches.current.size === 0 || (gest.current && !gest.current.pan && touches.current.size < 2)) gest.current = null;
     }
+    clearTimeout(holdT.current);
     const s = cur.current; cur.current = null; if (!s) return;
     if (s.erase) { if (s.snap) { hist.current.push({ pi, strokes: s.snap }); redo.current = []; } return; }
     if (s.k && Math.hypot(s.p[2] - s.p[0], s.p[3] - s.p[1]) < 4) { renderPage(cvRef.current.getContext('2d'), page, imgRef.current); return; }
-    const { lock, lt, ...clean } = s;
+    // виділювач: майже пряму лінію вирівнюємо автоматично
+    if (s.u && !s.straight && nearlyStraight(s.p, page.w / 1200)) straighten(s);
+    const { lock, lt, straight, ...clean } = s;
     commit(clean);
   };
   const swap = (from, to) => { const h = from.current.pop(); if (!h) return; to.current.push({ pi: h.pi, strokes: d.pages[h.pi].strokes }); setD(o => ({ ...o, pages: o.pages.map((q, i) => i === h.pi ? { ...q, strokes: h.strokes } : q) })); };
   const addText = () => { if (tin && tin.v.trim()) commit({ k: 'text', c: color, x: tin.x, y: tin.y, t: tin.v.trim(), s: 44 }); setTin(null); };
   const goPage = n => { setPi(Math.max(0, Math.min(d.pages.length - 1, n))); hist.current = []; redo.current = []; if (boxRef.current) boxRef.current.scrollTop = 0; };
-  const pickColor = c => {
-    setColor(c);
-    const r = [c, ...recent.filter(x => x !== c)].slice(0, 6); setRecent(r);
-    try { localStorage.setItem('helper-colors', JSON.stringify(r)); } catch (e) {}
-    if (tool === 'eraser' || tool === 'hand') setTool('pen');
-  };
-  const placeRuler = r => {
+  const placeRuler = () => {
     const el = boxRef.current, sc = (fit.w * zoom) / page.w;
     return { on: true, x: (el.scrollLeft + el.clientWidth * 0.12) / sc, y: (el.scrollTop + el.clientHeight * 0.4) / sc, a: 0, len: Math.min(page.w * 0.85, (el.clientWidth * 0.76) / sc) };
   };
+  const toggleRuler = () => setRuler(r => (r.on ? { ...r, on: false } : placeRuler()));
+  // повторний дотик до активного інструмента — його налаштування
   const pickTool = k => {
-    if (k === 'ruler') { setRuler(r => (r.on ? { ...r, on: false } : placeRuler(r))); setPop(null); return; }
-    if (k === 'shape') { if (tool === 'shape') openPop('shape'); else { setTool('shape'); setPop(null); } return; }
-    if (k === 'pen' && tool === 'pen') { openPop('style'); return; }
+    if (k === tool && k !== 'hand') { openPop('style'); return; }
     setTool(k); setPop(null);
   };
   const rulerDown = (e, mode) => { e.stopPropagation(); e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); const [x, y] = pos(e); rdrag.current = { mode, x0: x, y0: y, r0: { ...ruler } }; };
@@ -275,11 +355,12 @@ function Editor({ doc, onSave, onClose }) {
     if (d0.mode === 'move') setRuler({ ...d0.r0, x: d0.r0.x + (x - d0.x0), y: d0.r0.y + (y - d0.y0) });
     else setRuler({ ...d0.r0, a: Math.atan2(y - d0.r0.y, x - d0.r0.x), len: Math.max(160, Math.hypot(x - d0.r0.x, y - d0.r0.y)) });
   };
-  const openPop = k => { if (pop === k) { setPop(null); return; } if (barRef.current) setPopTop(Math.round(barRef.current.getBoundingClientRect().bottom + 8)); setPop(k); };
+  function openPop(k) { if (pop === k) { setPop(null); return; } if (barRef.current) setPopTop(Math.round(barRef.current.getBoundingClientRect().bottom + 8)); setPop(k); }
   const addPage = () => { setD(o => ({ ...o, pages: [...o.pages, { w: page.w, h: page.h, tpl: page.img ? 'blank' : page.tpl, strokes: [] }] })); setPi(d.pages.length); hist.current = []; redo.current = []; };
   const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; redo.current = []; };
   useEffect(() => {
     const h = e => {
+      if (e.key === 'Escape' && pop) { setPop(null); return; }
       if (tin || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
       e.preventDefault(); if (e.shiftKey) swap(redo, hist); else swap(hist, redo);
     };
@@ -296,7 +377,25 @@ function Editor({ doc, onSave, onClose }) {
     }, 'image/png');
   };
   const close = async () => { try { const t = await makeThumb(d); await flush({ thumb: t }); } catch (e) {} onClose(); };
-  const TOOLS = ['pen', 'hl', 'eraser', 'shape', 'text', 'ruler', 'hand'];
+
+  const toolLabel = k => tr(k === 'marker' ? NIBN[pens.marker.nib] : TOOLN[k]);
+  const toolIcon = k => (k === 'shape' ? shape : k);
+  const isHlTool = ctool === 'hl';
+  const pal = isHlTool ? HL_INK : INK;
+  const dotOf = w => Math.max(3, Math.min(22, Math.round(w * (isHlTool ? 0.55 : ctool === 'shape' ? 1.6 : 1.2))));
+  // ряд «улюблені кольори + 3 товщини + лінійка + налаштування» для поточного інструмента
+  const favRow = <>{tc.favs.map((c, i) => <button key={i} className="fav" aria-pressed={tc.slot === i} aria-label={tr("Колір") + ' ' + (i + 1) + ': ' + colorName(c)} title={colorName(c)}
+    onClick={() => { if (tool === 'hand' || tool === 'eraser') setTool(ctool); if (tc.slot === i) openPop('style'); else upd(ctool, { slot: i }); }}><i style={{ background: c }} /></button>)}</>;
+  const widthRow = <>{wset.map((w, i) => <button key={i} className="wbtn" aria-pressed={wi === i} aria-label={tr("Товщина") + ': ' + tr(WN[i])} title={tr(WN[i])}
+    onClick={() => { if (wi === i) openPop('style'); else setWi(i); }}><i style={{ width: dotOf(w), height: dotOf(w), background: 'currentColor' }} /></button>)}</>;
+  const tuneBtn = <IB n="tune" label={tr("Налаштування інструмента")} on={pop === 'style'} onClick={() => openPop('style')} />;
+  const ctxRow = tool === 'hand' ? <span className="sub edhint">{tr("Гортайте й масштабуйте сторінку")}</span>
+    : tool === 'eraser' ? <>
+      <div className="seg edseg" role="group" aria-label={tr("Режим гумки")}>{[['stroke', 'Штрих'], ['point', 'Точково']].map(([k, n]) => <button key={k} className={er.mode === k ? 'on' : ''} aria-pressed={er.mode === k} onClick={() => upd('eraser', { mode: k })}>{tr(n)}</button>)}</div>
+      {er.sizes.map((w, i) => <button key={i} className="wbtn" aria-pressed={er.wi === i} aria-label={tr("Розмір гумки") + ': ' + tr(['Малий', 'Середній', 'Великий'][i])} onClick={() => upd('eraser', { wi: i })}><i className="ring" style={{ width: 6 + i * 6, height: 6 + i * 6 }} /></button>)}
+      {tuneBtn}</>
+    : <>{favRow}{tool !== 'text' && <><span className="edsep" aria-hidden="true" />{widthRow}<IB n="ruler" label={tr("Лінійка")} on={ruler.on} pressed={ruler.on} onClick={toggleRuler} /></>}{tuneBtn}</>;
+  const stylusTg = <button className={'tg' + (penOnly ? ' on' : '')} aria-pressed={penOnly} onClick={togglePenOnly}><span>{tr("Малювати лише стилусом")}<small className="tgsub">{tr("Палець гортає й масштабує сторінку")}</small></span><b>{penOnly ? '✓' : ''}</b></button>;
 
   return (
     <div className="nv ed">
@@ -310,9 +409,11 @@ function Editor({ doc, onSave, onClose }) {
           <IB n="share" label={tr("Поділитися")} onClick={share} />
           <IB n="more" label={tr("Ще")} on={pop === 'more'} onClick={() => openPop('more')} />
         </div>
-        <div className="edrow2">
-          {TOOLS.map(k => <IB key={k} n={k === 'shape' ? shape : k} label={tr(TOOLN[k])} on={k === 'ruler' ? ruler.on : tool === k} onClick={() => pickTool(k)} />)}
-          <button className={'ib' + (pop === 'style' ? ' on' : '')} onClick={() => openPop('style')} aria-label={tr("Колір і товщина")} title={tr("Колір і товщина")}><span className="cdotbig" style={{ background: color }} /></button>
+        <div className="edrow3">
+          <div className="edtools" role="group" aria-label={tr("Інструменти")}>
+            {TOOLS.map(k => <IB key={k} n={toolIcon(k)} label={toolLabel(k)} on={tool === k} pressed={tool === k} onClick={() => pickTool(k)} />)}
+          </div>
+          <div className="edctx" role="group" aria-label={tr("Колір і товщина")}>{ctxRow}</div>
         </div>
       </div>
       <div className="edbox" ref={boxRef} style={page.img ? { background: 'var(--fill)' } : undefined}>
@@ -333,24 +434,38 @@ function Editor({ doc, onSave, onClose }) {
         <IB n="right" label={tr("Наступна сторінка")} onClick={() => goPage(pi + 1)} disabled={pi >= d.pages.length - 1} />
         <IB n="plus" label={tr("Додати сторінку")} onClick={addPage} />
       </div>
-      {pop && <div className="popback" onClick={() => setPop(null)}><div className="pop" style={{ top: popTop }} onClick={e => e.stopPropagation()}>
-        {pop === 'style' && <>
-          {tool === 'pen' && <div className="prow">{Object.keys(PENS).map(k => <button key={k} className={'chip' + (nib === k ? ' on' : '')} style={{ margin: 0 }} onClick={() => { setNib(k); setWd(PENS[k].w); setOp(PENS[k].op); }}>{tr(NIBN[k])}</button>)}</div>}
-          {tool === 'eraser' ? <label className="srow"><span>{tr("Розмір гумки")}</span><input type="range" min="8" max="90" value={ew} onChange={e => setEw(+e.target.value)} /><b>{ew}</b></label> : <>
-            <div className="palette">{PALETTE.map(c => <button key={c} className={'pc' + (color === c ? ' on' : '')} style={{ background: c }} onClick={() => pickColor(c)} aria-label={c} />)}
-              <input type="color" className="pc cpick" value={color} onChange={e => pickColor(e.target.value)} aria-label={tr("Свій колір")} /></div>
-            {recent.length > 0 && <div className="prow"><span className="sub">{tr("Останні")}</span>{recent.map(c => <button key={c} className={'pc sm' + (color === c ? ' on' : '')} style={{ background: c }} onClick={() => pickColor(c)} aria-label={c} />)}</div>}
-            <label className="srow"><span>{tr("Товщина")}</span><input type="range" min="1" max="40" step="0.5" value={wd} onChange={e => setWd(+e.target.value)} /><b>{wd}</b></label>
-            <label className="srow"><span>{tr("Прозорість")}</span><input type="range" min="10" max="100" value={Math.round(op * 100)} onChange={e => setOp(+e.target.value / 100)} /><b>{Math.round(op * 100)}%</b></label>
-            <div className="wprev"><i style={{ height: Math.max(1, Math.min(wd * (tool === 'hl' ? 4 : 1), 40)), background: color, opacity: tool === 'hl' && op >= 1 ? 0.35 : op }} /></div>
+      {toast && <div className="edtoast" role="status">{toast}</div>}
+      {pop && <div className="popback" onClick={() => setPop(null)}><div className="pop" role="dialog" aria-label={pop === 'more' ? tr("Ще") : tr("Налаштування інструмента")} style={{ top: popTop, maxHeight: 'calc(100% - ' + (popTop + 12) + 'px)' }} onClick={e => e.stopPropagation()}>
+        {pop === 'style' && (tool === 'eraser' ? <>
+          <div className="pop-t">{tr("Гумка")}</div>
+          <div className="seg" role="group" aria-label={tr("Режим гумки")}>{[['stroke', 'Штрих повністю'], ['point', 'Точковий']].map(([k, n]) => <button key={k} className={er.mode === k ? 'on' : ''} aria-pressed={er.mode === k} onClick={() => upd('eraser', { mode: k })}>{tr(n)}</button>)}</div>
+          <label className="srow"><span>{tr("Розмір гумки")}</span><input type="range" min="6" max="90" value={er.sizes[er.wi]} onChange={e => { const s = [...er.sizes]; s[er.wi] = +e.target.value; upd('eraser', { sizes: s }); }} /><b>{er.sizes[er.wi]}</b></label>
+          <button className={'tg' + (er.hlOnly ? ' on' : '')} aria-pressed={er.hlOnly} onClick={() => upd('eraser', { hlOnly: !er.hlOnly })}><span>{tr("Лише виділювач")}<small className="tgsub">{tr("Чорнило й фігури не стираються")}</small></span><b>{er.hlOnly ? '✓' : ''}</b></button>
+          {stylusTg}
+        </> : <>
+          <div className="pop-t">{toolLabel(ctool)}</div>
+          {ctool === 'shape' && <div className="prow" role="group" aria-label={tr("Фігура")}>{SHAPES.map(k => <IB key={k} n={k} label={tr(SHAPEN[k])} on={shape === k} pressed={shape === k} onClick={() => { setShape(k); setTool('shape'); }} />)}</div>}
+          {TOOLCFG[ctool].nibs.length > 1 && <div className="prow" role="group" aria-label={tr("Тип")}>{TOOLCFG[ctool].nibs.map(k => <button key={k} className={'chip sm' + (nib === k ? ' on' : '')} aria-pressed={nib === k} onClick={() => upd(ctool, { nib: k })}>{tr(NIBN[k])}</button>)}</div>}
+          <div className="pop-l" id="pl-fav">{tr("Улюблені кольори")}</div>
+          <div className="prow fav-row" role="group" aria-labelledby="pl-fav">{favRow}</div>
+          <div className="ipal" role="group" aria-label={tr("Палітра")}>
+            {pal.map(([c, nm]) => <button key={c} className="ipc" aria-pressed={color === c} aria-label={tr(nm)} title={tr(nm)} onClick={() => setColor(c)}><i style={{ background: c }} /></button>)}
+            <label className="ipc icustom" title={tr("Свій колір")}><i style={pal.some(x => x[0] === color) ? undefined : { background: color }} /><input type="color" value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#000000'} onChange={e => setColor(e.target.value)} aria-label={tr("Свій колір")} /></label>
+          </div>
+          {ctool !== 'text' && <>
+            <div className="prow" role="group" aria-label={tr("Товщина")}>{widthRow}</div>
+            <label className="srow"><span>{tr("Товщина")}</span><input type="range" min="1" max={isHlTool ? 60 : 40} step="0.5" value={wd} onChange={e => setWv(+e.target.value)} /><b>{wd}</b></label>
           </>}
-        </>}
-        {pop === 'shape' && <div className="prow">{SHAPES.map(k => <IB key={k} n={k} label={tr(SHAPEN[k])} on={shape === k} onClick={() => { setShape(k); setTool('shape'); setPop(null); }} />)}</div>}
+          {(ctool === 'pencil' || isHlTool) && <label className="srow"><span>{tr("Прозорість")}</span><input type="range" min="10" max="100" value={Math.round(op * 100)} onChange={e => upd(ctool, { op: +e.target.value / 100 })} /><b>{Math.round(op * 100)}%</b></label>}
+          {ctool !== 'text' && <div className="wprev" aria-hidden="true"><i style={{ height: Math.max(1, Math.min(wd * (ctool === 'shape' ? 1 : 1), 40)), background: color, opacity: isHlTool || ctool === 'pencil' ? op : 1 }} /></div>}
+          {isHlTool && <><button className={'tg' + (tc.straight ? ' on' : '')} aria-pressed={!!tc.straight} onClick={() => upd('hl', { straight: !tc.straight })}><span>{tr("Рівна лінія")}<small className="tgsub">{tr("Без цього: затримайте перо в кінці лінії, і вона вирівняється")}</small></span><b>{tc.straight ? '✓' : ''}</b></button></>}
+          {DRAW.includes(ctool) && stylusTg}
+        </>)}
         {pop === 'more' && <>
           <div className="prow"><IB n="zout" label={tr("Масштаб")} onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))} /><span className="sub">{Math.round(zoom * 100)}%</span><IB n="zin" label={tr("Масштаб")} onClick={() => setZoom(Math.min(5, +(zoom + 0.5).toFixed(1)))} /></div>
           {d.type === 'notebook' && !page.img && <div className="prow">{[['blank', 'Чиста'], ['lined', 'У лінійку'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} style={{ margin: 0 }} onClick={() => setPage({ ...page, tpl: k })}>{tr(n)}</button>)}</div>}
-          <button className={'tg' + (penOnly ? ' on' : '')} onClick={() => setPenOnly(!penOnly)}><span>{tr("Лише Apple Pencil")}</span><b>{penOnly ? '✓' : ''}</b></button>
-          <button className={'tg' + (pressure ? ' on' : '')} onClick={() => setPressure(!pressure)}><span>{tr("Чутливість до нажиму")}</span><b>{pressure ? '✓' : ''}</b></button>
+          {stylusTg}
+          <button className={'tg' + (pressure ? ' on' : '')} aria-pressed={pressure} onClick={() => setPressure(!pressure)}><span>{tr("Чутливість до нажиму")}</span><b>{pressure ? '✓' : ''}</b></button>
           {d.pages.length > 1 && <button className="tg" onClick={() => { delPage(); setPop(null); }}><span>{tr("Видалити сторінку")}</span><EIcon n="trash" size={20} /></button>}
         </>}
       </div></div>}
@@ -376,7 +491,6 @@ function when(ts) {
   if (diff > 1 && diff < 7) return d.toLocaleDateString(loc(), { weekday: 'short' });
   return d.toLocaleDateString(loc(), { day: 'numeric', month: 'short' });
 }
-const FIcon = ({ c }) => <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 5a3 3 0 0 1 3-3h5l2.5 3H21a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z" style={{ fill: c }} /></svg>;
 // Обкладинка: зошит — колір обкладинки; фото/скан/дошка — мініатюра; інакше нейтральний «папір»; нотатка — папір із початком тексту
 function Cover({ m }) {
   const fav = m.fav && <span className="cv-fav" aria-hidden="true">★</span>;
@@ -497,18 +611,21 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
       <button className="mc-x" onClick={() => openAct(m)} aria-label={tr("Дії") + ': ' + m.title} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>
     </div>);
   const listing = (l, v = 'grid') => (v === 'grid' ? <div className="mgrid">{l.map(card)}</div> : <div className="mlst">{l.map(row)}</div>);
+  // компактна плитка папки: значок (колір, іконка, фото), назва до 2 рядків, число матеріалів
   const tile = f => { const n = countIn(f.id); return (
-    <button key={f.id} className="ft" onClick={() => setFview(f.id)} aria-label={f.name + ', ' + nMat(n)} {...drop(f.id)}>
-      <FIcon c={solidOf(f.color)} /><span className="ft-b"><span className="ft-n">{f.name}</span><span className="ft-c">{n}</span></span>
+    <button key={f.id} className="fk" onClick={() => setFview(f.id)} aria-label={f.name + ', ' + nMat(n)} title={f.name} {...drop(f.id)}>
+      <FolderGlyph color={f.color} ico={f.ico} emoji={f.icon} cover={f.cover} size={72} />
+      <span className="fk-n">{f.name}</span><span className="fk-c">{n}</span>
     </button>); };
+  const newTile = () => <button className="fk fk-new" onClick={newFolder}><FolderGlyph dashed size={72} /><span className="fk-n">{fo ? tr("Підпапка") : tr("Нова папка")}</span></button>;
   const tree = (list0, depth) => list0.map(f => (
     <Fragment key={f.id}>
-      <button className={'sb' + (depth ? ' sub' : '')} style={depth ? { paddingLeft: 10 + depth * 20 } : undefined} aria-current={fview === f.id ? 'true' : undefined} onClick={() => setFview(f.id)} {...drop(f.id)}>
-        {!depth && <span className="sq" style={{ background: solidOf(f.color) }} aria-hidden="true" />}<span className="sb-n">{f.name}</span><span className="sb-c" aria-label={nMat(countIn(f.id))}>{countIn(f.id)}</span>
+      <button className={'sb' + (depth ? ' sub' : '')} style={depth ? { paddingLeft: 10 + depth * 16 } : undefined} aria-current={fview === f.id ? 'true' : undefined} onClick={() => setFview(f.id)} {...drop(f.id)}>
+        <FolderGlyph color={f.color} ico={f.ico} emoji={f.icon} cover={f.cover} size={24} /><span className="sb-n">{f.name}</span><span className="sb-c" aria-label={nMat(countIn(f.id))}>{countIn(f.id)}</span>
       </button>
       {pathIds.has(f.id) && tree(folders.filter(x => x.parent === f.id), depth + 1)}
     </Fragment>));
-  const newFolder = () => onFolderForm({ name: '', color: PALETTE_C[0][0], cover: '', icon: '', parent: fid, mode: 'new' });
+  function newFolder() { onFolderForm({ name: '', color: FOLDER_COLORS[0][0], cover: '', icon: '', ico: '', parent: fid, mode: 'new' }); }
   const crumbs = fo ? breadcrumb(folders, fo.id).slice(0, -1) : [];
   const title = fo ? fo.name : fview === 'all' ? tr("Усі матеріали") : fview === 'fav' ? tr("Обране") : null;
 
@@ -550,12 +667,11 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
             <div className="mrow phone-only">{recents.map(card)}</div>
             <div className="wide-only"><div className="msh"><span className="flex1" /><button className="lnk" onClick={() => setFview('all')}>{tr("Усі матеріали")}</button></div>{listing(recents)}</div>
           </section>}
-          {folders.length > 0 && <section className="msec phone-only" aria-labelledby="m-fold">
+          {folders.length > 0 && <section className="msec" aria-labelledby="m-fold">
             <div className="msh"><h2 className="msh-t" id="m-fold">{tr("Папки")}</h2></div>
-            <div className="fgrid2">{top.map(tile)}</div>
-            <button className="fnew" onClick={newFolder}><EIcon n="plus" size={16} />{tr("Нова папка")}</button>
+            <div className="fkgrid">{top.map(tile)}{newTile()}</div>
           </section>}
-          {!folders.length && mats.length > 0 && <button className="fnew phone-only" onClick={newFolder}><EIcon n="plus" size={16} />{tr("Нова папка")}</button>}
+          {!folders.length && mats.length > 0 && <button className="fnew" onClick={newFolder}><EIcon n="plus" size={16} />{tr("Нова папка")}</button>}
           {loose.length > 0 && folders.length > 0 && <section className="msec" aria-labelledby="m-loose">
             <div className="msh"><h2 className="msh-t" id="m-loose">{tr("Без папки")}</h2></div>
             {listing(loose)}
@@ -563,7 +679,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
         </>)}
 
         {title != null && <>
-          {subs.length > 0 && <div className="fgrid2 phone-only msub">{subs.map(tile)}</div>}
+          {subs.length > 0 && <div className="fkgrid msub" role="group" aria-label={tr("Підпапки")}>{subs.map(tile)}</div>}
           {showTools && <div className="mtools">
             <div className="mt-types" role="group" aria-label={tr("Тип матеріалу")}>
               {TFILT.filter(([k]) => k === 'all' || cnt[k] > 0).map(([k, n]) => <button key={k} className="pill" aria-pressed={eFlt === k} onClick={() => setFlt(k)}>{tr(n)} · {cnt[k]}</button>)}
@@ -607,7 +723,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
 
       {fmenu && fo && <div className="ov" onClick={() => setFmenu(false)}><div className="sheet menu" role="dialog" aria-modal="true" aria-labelledby="fm-title" onClick={e => e.stopPropagation()}>
         <div className="shd"><h2 id="fm-title">{fo.name}</h2><IB n="close" label={tr("Закрити")} onClick={() => setFmenu(false)} /></div>
-        {[['name', "Перейменувати"], ['color', "Колір"], ['move', "Перемістити"], ['delete', "Видалити"]].map(([mode, n], i) => <button key={mode} autoFocus={i === 0} className={mode === 'delete' ? 'danger-t' : ''} onClick={() => { setFmenu(false); onFolderForm({ ...fo, mode }); }}>{tr(n)}</button>)}
+        {[['look', "Змінити вигляд"], ['name', "Перейменувати"], ['move', "Перемістити"], ['delete', "Видалити"]].map(([mode, n], i) => <button key={mode} autoFocus={i === 0} className={mode === 'delete' ? 'danger-t' : ''} onClick={() => { setFmenu(false); onFolderForm({ ...fo, mode }); }}>{tr(n)}</button>)}
       </div></div>}
 
       {nb && <div className="ov" onClick={() => setNb(null)}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="nb-title" onClick={e => e.stopPropagation()}>
