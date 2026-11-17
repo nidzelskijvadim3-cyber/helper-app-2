@@ -1,17 +1,18 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import Docs, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, moveDoc } from './docs';
-import { canMoveFolder, folderPath, shade } from './lib';
+import Materials, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, PALETTE_C, SOLID, colorKey } from './docs';
+import { canMoveFolder, folderPath } from './lib';
 import { syncNow, syncStatus, getSyncMeta, setSyncOn } from './sync';
 import { nsKey, listAccounts, getActiveId, setActiveId, addAccount, activeAccount, deriveAccountId, validateCredentials } from './accounts';
-import { t as tr, loc, setLang, getLang } from './i18n';
+import { t as tr, loc, setLang, getLang, plural } from './i18n';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const DNF = ['неділя', 'понеділок', 'вівторок', 'середа', 'четвер', 'п’ятниця', 'субота'];
 const AREA = { study: 'Навчання', work: 'Робота', personal: 'Особисте', health: 'Здоров’я', home: 'Дім' };
 const REP = { none: 'Не повторювати', daily: 'Щодня', weekdays: 'У будні', weekly: 'Щотижня' };
 const REPS = { daily: 'щодня', weekdays: 'у будні', weekly: 'щотижня' };
-const ACCENTS = ['#0a84ff', '#ff375f', '#ff9f0a', '#30d158', '#bf5af2', '#64d2ff', '#ffd60a', '#ff453a'];
+// кольори папок = токени стилю C (у даних hex, малюються CSS-змінні, див. docs.js PALETTE_C)
+const ACCENTS = PALETTE_C.map(x => x[0]);
 // accent і font зафіксовані (акцент і шрифт задаються в globals.css); поля лишаються в даних для сумісності із синхронізацією, але ігноруються.
 const UI0 = { theme: 'dark', accent: '#0a84ff', font: 'sf', lang: 'uk' };
 // 4 розділи (стиль C): [ключ вкладки, підпис, іконка]. Колишні «Календар» і «Задачі» — види «Місяць» і «Усі» всередині Плану.
@@ -210,20 +211,15 @@ function Rich({ text }) {
     return l.trim() === '' ? <div className="gap" key={i} /> : <div key={i}>{inline(l, i)}</div>;
   })}</>;
 }
-const FOLDER_ICONS = ['📁', '🦷', '📚', '✏️', '🧪', '🔬', '💉', '🩺', '🇩🇪', '🇬🇧', '🇺🇦', '💼', '🏠', '🛒', '✈️', '🎓', '📝', '💡', '⭐', '❤️', '🎨', '🎵', '📌', '🧠', '💻', '🍎', '🏃', '💰', '🌸', '🌿', '🐱', '☕'];
-function FolderArt({ fo, name, sub }) {
-  const c = fo.color || '#0a84ff';
-  return (
-    <div className="fold" style={{ '--fb': shade(c, -0.28), '--ff': shade(c, 0.14), '--fc': c }}>
-      <div className="fback"><i className="ftab" /></div>
-      <div className="fsheet" />
-      <div className="ffront" style={fo.cover ? { backgroundImage: 'url(' + fo.cover + ')' } : undefined}>
-        {fo.cover && <div className="fshade" />}
-        {fo.icon ? <span className={'fglyph' + (fo.cover ? ' sm' : '')}>{fo.icon}</span> : null}
-        <div className="fname">{name}</div>{sub != null && <div className="fsub">{sub}</div>}
-      </div>
-    </div>);
-}
+// Навчання: колір смуги набору (стабільний за назвою) — з токенів категорій
+const DECKC = ['var(--c-study)', 'var(--accent-tx)', 'var(--c-home)', 'var(--c-personal)', 'var(--c-health)', 'var(--c-work)'];
+const deckCol = name => { let h = 0; for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) | 0; return DECKC[Math.abs(h) % DECKC.length]; };
+const QN = [5, 10, 15, 20, 25, 30];
+const relDate = ts => {
+  const d = new Date(ts), t0 = new Date(); t0.setHours(0, 0, 0, 0); const d0 = new Date(d); d0.setHours(0, 0, 0, 0);
+  const diff = Math.round((t0 - d0) / 864e5);
+  return diff === 0 ? tr("сьогодні") : diff === 1 ? tr("вчора") : d.toLocaleDateString(loc(), { day: 'numeric', month: 'short' });
+};
 
 export default function Home() {
   const [tab, setTab] = useState('today');
@@ -253,8 +249,11 @@ export default function Home() {
   const [qaBusy, setQaBusy] = useState(false);
   const [qaMsg, setQaMsg] = useState('');
   const [preview, setPreview] = useState(null);
-  const [stab, setStab] = useState('cards');
-  const [tcfg, setTcfg] = useState({ topic: '', n: 5, kind: 'mix' });
+  const [tcfg, setTcfg] = useState({ topic: '', n: 10, kind: 'mix', src: 'topic', mat: '', deck: null, level: 'mixed' });
+  const [deckV, setDeckV] = useState(null);
+  const [rev, setRev] = useState(null);
+  const [ced, setCed] = useState(null);
+  const [dkDel, setDkDel] = useState(false);
   const [tbusy, setTbusy] = useState(false);
   const [tmsg, setTmsg] = useState('');
   const [tview, setTview] = useState(null);
@@ -372,7 +371,7 @@ export default function Home() {
   const openNew = (expanded = true) => { sheetPrev.current = document.activeElement; setF({ ...EMPTY, due: selDate !== today ? selDate : '', folder: tab === 'folders' && typeof fview === 'number' ? fview : '' }); setMore(expanded !== false); setSheet('new'); };
   const setPlanView = v => { setPv(v); try { localStorage.setItem(PV_KEY, v); } catch (e) {} };
   const goTab = k => {
-    if (k === tab) { if (k === 'today') setSel(''); if (k === 'folders') setFview(null); return; }
+    if (k === tab) { if (k === 'today') setSel(''); if (k === 'folders') setFview(null); if (k === 'cards') setDeckV(null); return; }
     setTab(k);
   };
   const openEdit = i => { if (!i) return; sheetPrev.current = document.activeElement; setF({ kind: i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', folder: i.folder || '' }); setSheet(i.id); };
@@ -404,26 +403,16 @@ export default function Home() {
     reparentDocs(id, up).catch(() => {});
     setFform(null); setFview(up === '' ? null : up);
   };
-  const dropDoc = async (e, fid) => {
-    e.preventDefault(); e.currentTarget.classList.remove('drop');
-    const id = Number(e.dataTransfer.getData('text/doc'));
-    if (id) { try { await moveDoc(id, fid); } catch (er) {} }
+  // Матеріали → Навчання: «Зробити картки» відкриває Помічника з підставленою темою (наявний сценарій ШІ-карток),
+  // «Скласти тест» — форму тесту: джерело = текстова нотатка з папки, якщо є, інакше тема = назва папки
+  const goNewTest = () => { setTimeout(() => { const el = document.getElementById('new-test'); if (el) { el.scrollIntoView({ block: 'start' }); el.focus({ preventScroll: true }); } }, 60); };
+  const onStudy = (kind, fo) => {
+    if (kind === 'cards') { setTab('ai'); setInp(tr("Зроби картки за темою: ") + fo.name); return; }
+    const nt = notes.filter(n => n.folder === fo.id && n.text && n.text.trim()).sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
+    setTcfg(c => (nt ? { ...c, src: 'mat', mat: String(nt.id) } : { ...c, src: 'topic', topic: fo.name }));
+    setDeckV(null); setTab('cards'); goNewTest();
   };
-  const folderTile = fo => (
-    <div className="foldw" key={fo.id} data-fid={fo.id} onClick={() => setFview(fo.id)}
-      onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('drop'); }} onDragLeave={e => e.currentTarget.classList.remove('drop')} onDrop={e => dropDoc(e, fo.id)}>
-      <FolderArt fo={fo} name={fo.name} sub={notes.filter(n => n.folder === fo.id).length + items.filter(i => i.folder === fo.id).length + folders.filter(x => x.parent === fo.id).length} />
-    </div>);
-  const pickCover = file => {
-    if (!file) return;
-    const rd = new FileReader();
-    rd.onload = () => { const img = new Image(); img.onload = () => {
-      const sc = Math.min(1, 700 / Math.max(img.width, img.height)); const c = document.createElement('canvas');
-      c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-      setFform(p => ({ ...p, cover: c.toDataURL('image/jpeg', 0.72) }));
-    }; img.src = rd.result; };
-    rd.readAsDataURL(file);
-  };
+  const folderTasks = fid => { const il = items.filter(i => i.folder === fid); return il.length > 0 && <div className="card mtasks"><div className="sec">{tr("Задачі й події")}</div>{il.map(row)}</div>; };
 
   const makeCtx = () => {
     const s0 = stRef.current;
@@ -437,7 +426,7 @@ export default function Home() {
   const screenInfo = () => {
     const o = { tab };
     if (tab === 'today') { o.date = selDate; o.view = pv; }
-    if (tab === 'folders' && fview != null) { const fo = folders.find(x => x.id === fview); o.folder = fo ? fo.name : tr("Усі нотатки"); }
+    if (tab === 'folders' && fview != null) { const fo = folders.find(x => x.id === fview); o.folder = fo ? fo.name : fview === 'fav' ? tr("Обране") : tr("Усі матеріали"); }
     if (nview != null) o.openNote = ntext.slice(0, 3000);
     if (bridge.info) o.openDocument = bridge.info();
     return o;
@@ -558,14 +547,20 @@ export default function Home() {
     return tr("Зміна налаштувань");
   };
 
+  // джерело тесту: тема (як раніше) / текстова нотатка / набір карток (ctx.cards); складність — ctx.level
   async function createTest() {
-    if (!tcfg.topic.trim() || tbusy) return;
+    if (tbusy) return;
+    const n = Number(tcfg.n) || 10, ctx = { n, kind: tcfg.kind, level: tcfg.level };
+    let text = '', title = '';
+    if (tcfg.src === 'mat') { const nt = notes.find(x => String(x.id) === String(tcfg.mat)); if (!nt || !nt.text.trim()) return; text = nt.text.slice(0, 15000); title = nt.text.trim().split('\n')[0].slice(0, 40); }
+    else if (tcfg.src === 'deck') { if (tcfg.deck == null) return; const dc = cards.filter(c => (c.deck || '') === tcfg.deck); if (!dc.length) return; ctx.cards = dc.slice(0, 200).map(({ q, a }) => ({ q, a })); title = tcfg.deck || tr("Без набору"); text = tr("Тест за набором карток: ") + title; }
+    else { if (!tcfg.topic.trim()) return; text = tcfg.topic; title = tcfg.topic.trim().slice(0, 40); }
     setTbusy(true); setTmsg('');
     try {
-      const raw = await callAI({ mode: 'quiz', messages: [{ role: 'user', text: tcfg.topic }], ctx: { n: Number(tcfg.n), kind: tcfg.kind } });
+      const raw = await callAI({ mode: 'quiz', messages: [{ role: 'user', text }], ctx });
       const q = parseQuiz(raw);
       if (!q) throw new Error(tr("ШІ повернув тест у неправильному форматі. Спробуйте ще раз."));
-      const t = { id: Date.now(), title: q.title || tcfg.topic.slice(0, 40), qs: q.questions, ans: {}, grades: {}, done: false, created: Date.now() };
+      const t = { id: Date.now(), title: q.title || title, qs: q.questions, ans: {}, grades: {}, done: false, created: Date.now() };
       setTests([t, ...tests]); setTview(t.id); setQi(0);
     } catch (e) { setTmsg(e.message); }
     setTbusy(false);
@@ -621,8 +616,23 @@ export default function Home() {
   const dateStr = now.toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' });
   const selLabel = new Date(selDate + 'T00:00:00').toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' });
   const left = cards.filter(c => !c.known).sort((a, b) => a.seq - b.seq);
-  const cur = left[0];
-  const addCard = () => { if (!cq.trim() || !ca.trim()) return; setCards([...cards, { id: Date.now(), deck: '', q: cq.trim(), a: ca.trim(), known: false, seq: Date.now() }]); setCq(''); setCa(''); };
+  const addCard = deck => { if (!cq.trim() || !ca.trim()) return false; setCards([...cards, { id: Date.now(), deck, q: cq.trim(), a: ca.trim(), known: false, seq: Date.now() }]); setCq(''); setCa(''); return true; };
+  // Навчання: «до повторення» = невивчені картки (known=false). Інтервального повторення в застосунку немає, тож це вся черга.
+  const deckName = d => d || tr("Без набору");
+  const decks = (() => {
+    const m = new Map();
+    for (const c of cards) { const k = c.deck || ''; if (!m.has(k)) m.set(k, { name: k, all: 0, left: 0 }); const o = m.get(k); o.all++; if (!c.known) o.left++; }
+    return [...m.values()].sort((a, b) => b.left - a.left || deckName(a.name).localeCompare(deckName(b.name), loc()));
+  })();
+  const nCards = n => n + ' ' + plural(n, "картка", "картки", "карток");
+  const nQs = n => n + ' ' + plural(n, "питання", "питання", "питань");
+  const textNotes = notes.filter(n => n.text && n.text.trim()).sort((a, b) => (b.upd || 0) - (a.upd || 0));
+  const noteTitle = n => n.text.trim().split('\n')[0].slice(0, 50);
+  const selNote = textNotes.find(n => String(n.id) === String(tcfg.mat));
+  const srcReady = tcfg.src === 'mat' ? !!selNote : tcfg.src === 'deck' ? tcfg.deck != null && decks.some(d => d.name === tcfg.deck) : !!tcfg.topic.trim();
+  const startRev = deck => { setRev({ deck }); setShow(false); };
+  const newDeck = () => { setDeckV({ name: '', isNew: true, draft: '' }); setCq(''); setCa(''); setCed(null); setDkDel(false); };
+  const openDeck = name => { setDeckV({ name }); setCq(''); setCa(''); setCed(null); setDkDel(false); };
 
   const cm = calM == null ? now.getFullYear() * 12 + now.getMonth() : calM;
   const cy = Math.floor(cm / 12), cmo = cm % 12;
@@ -801,68 +811,135 @@ export default function Home() {
         </div>}
       </>}
 
-      {tab === 'folders' && fview == null && <>
-        <div className="top"><h1>{tr("Матеріали")}</h1><div className="sub">{tr("Групуйте нотатки й задачі. Торкніться плитки, щоб відкрити, або «+», щоб створити папку.")}</div></div>
-        <div className="fgrid">
-          <div className="foldw" onClick={() => setFview('all')}><FolderArt fo={{ color: '#8e8e93', icon: '🗂️' }} name={tr("Усі нотатки")} sub={notes.length} /></div>
-          {folders.filter(fo => fo.parent === '').map(folderTile)}
-        </div>
-        <Docs folderId={null} folders={folders} onNewNote={newNote} />
-      </>}
+      {tab === 'folders' && <Materials folders={folders} notes={notes} fview={fview} setFview={setFview}
+        onOpenNote={openNote} onNewNote={newNote} onFolderForm={x => setFform(x)} onStudy={onStudy} folderExtra={folderTasks}
+        onNoteFav={id => setNotes(notes.map(n => n.id === id ? { ...n, fav: !n.fav } : n))}
+        onNoteMove={(id, folder) => setNotes(notes.map(n => n.id === id ? { ...n, folder } : n))}
+        onNoteDel={id => setNotes(notes.filter(n => n.id !== id))} />}
 
-      {tab === 'folders' && fview != null && (() => {
-        const fo = folders.find(x => x.id === fview);
-        const nl = notes.filter(n => fview === 'all' || n.folder === fview).filter(n => n.text.toLowerCase().includes(nq.toLowerCase()));
-        const il = fo ? items.filter(i => i.folder === fo.id) : [];
-        return <>
-          <div className="top"><button className="chip" data-fid={fo && fo.parent !== '' && fo.parent != null ? fo.parent : ''} onClick={() => { setFview(fo && fo.parent !== '' && fo.parent != null ? fo.parent : null); setNq(''); }} onDragOver={e => e.preventDefault()} onDrop={e => dropDoc(e, fo && fo.parent !== '' && fo.parent != null ? fo.parent : '')}>‹ {fo && fo.parent !== '' && fo.parent != null ? ((folders.find(x => x.id === fo.parent) || {}).name || tr("Назад")) : tr("Матеріали")}</button><h1>{fo ? fo.name : tr("Усі нотатки")}</h1>{fo && <div className="sub">{folderPath(folders, fo.id)}</div>}
-            <div className="daynav"><button className="chip" onClick={() => openNote('new')}>{tr("Нова нотатка")}</button>{fo && <button className="chip" onClick={() => openNew(true)}>{tr("Нова задача")}</button>}{fo && <button className="chip" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: fo.id })}>{tr("Нова підпапка")}</button>}{fo && <button className="chip" onClick={() => setFform({ ...fo })}>{tr("Змінити")}</button>}</div></div>
-          {fo && folders.some(x => x.parent === fo.id) && <div className="fgrid" style={{ marginBottom: 16 }}>{folders.filter(x => x.parent === fo.id).map(folderTile)}</div>}
-          <input placeholder={tr("Пошук нотаток")} value={nq} onChange={e => setNq(e.target.value)} style={{ marginBottom: 14 }} />
-          {il.length > 0 && <div className="card"><div className="sec">{tr("Задачі й події")}</div>{il.map(row)}</div>}
-          {nl.map(n => (
-            <div className="card" key={n.id} onClick={() => openNote(n.id)}>
-              <div className="t" style={{ fontWeight: 600 }}>{n.text.split('\n')[0].slice(0, 60)}</div>
-              <div className="note">{n.text.slice(0, 120)}</div>
-              <div className="meta"><span>{new Date(n.upd).toLocaleDateString(loc())}</span><span>{n.text.split(/\s+/).filter(Boolean).length} {tr(" слів")}</span></div>
-            </div>))}
-          {!nl.length && !il.length && <div className="card"><div className="empty">{tr("Тут поки порожньо.")}</div></div>}
-          <Docs folderId={fview} folders={folders} onNewNote={newNote} />
-        </>;
+      {tab === 'cards' && !deckV && (() => {
+        const testsList = idp => tests.length > 0 && <section className="lsec" aria-labelledby={idp + '-h'}>
+          <h2 className="lsh-t" id={idp + '-h'}>{tr("Останні тести")}</h2>
+          {tests.map(t => { const pct = t.done && t.qs.length ? Math.round(tScore(t) / t.qs.length * 100) : null; return (
+            <div className="tsr" key={t.id}>
+              <button className="tsr-o" onClick={() => { setTview(t.id); setQi(0); setTmsg(''); }}>
+                <span className="tsr-b"><span className="tsr-t">{t.title}</span><span className="tsr-m">{nQs(t.qs.length)} · {relDate(t.created)}</span></span>
+                <span className={'tsr-p' + (pct == null ? '' : pct >= 80 ? ' hi' : pct >= 50 ? ' mid' : ' lo')}>{pct != null ? pct + '%' : tr("не завершено")}</span>
+              </button>
+              <button className="x" onClick={() => setTests(tests.filter(x => x.id !== t.id))} aria-label={tr("Видалити тест") + ': ' + t.title} title={tr("Видалити")}>×</button>
+            </div>); })}
+        </section>;
+        const srcs = [
+          ['topic', tr("За темою"), tcfg.topic.trim() ? tcfg.topic.trim().slice(0, 40) : tr("Напишіть тему"), true],
+          ['mat', tr("З матеріалу"), !textNotes.length ? tr("Немає текстових матеріалів") : selNote ? noteTitle(selNote) : tr("Оберіть нотатку"), textNotes.length > 0],
+          ['deck', tr("З набору карток"), !decks.length ? tr("Карток ще немає") : tcfg.deck != null && decks.some(d => d.name === tcfg.deck) ? deckName(tcfg.deck) : tr("Оберіть набір"), decks.length > 0]
+        ];
+        const n = Number(tcfg.n) || 10;
+        return <div className="lrn">
+          <div className="lrn-l">
+            <header className="lh"><h1>{tr("Навчання")}</h1></header>
+            <section className="rv" aria-labelledby="rv-h">
+              {left.length ? <>
+                <h2 className="rv-l" id="rv-h">{tr("Сьогодні повторити")}</h2>
+                <div className="rv-n">{nCards(left.length)}</div>
+                <button className="btn-a rv-go" onClick={() => startRev(null)}>{tr("Почати повторення")}</button>
+              </> : <>
+                <h2 className="rv-l" id="rv-h">{cards.length ? tr("На сьогодні все повторено") : tr("Карток ще немає")}</h2>
+                <p className="rv-p">{cards.length ? tr("Додайте нові картки в набір або зробіть їх із помилок у тесті.") : tr("Створіть набір вручну або попросіть Помічника зробити картки за темою.")}</p>
+                <button className="btn2 rv-go" onClick={newDeck}>{tr("Новий набір")}</button>
+              </>}
+            </section>
+            <section className="lsec" aria-labelledby="dk-h">
+              <div className="lsh"><h2 className="lsh-t" id="dk-h">{tr("Набори карток")}</h2>{decks.length > 0 && <button className="lnk" onClick={newDeck}>{tr("Новий набір")}</button>}</div>
+              {decks.map(d => (
+                <button className="dkr" key={'d:' + d.name} onClick={() => openDeck(d.name)}>
+                  <span className="dkr-bar" style={{ background: deckCol(d.name) }} aria-hidden="true" />
+                  <span className="dkr-b"><span className="dkr-n">{deckName(d.name)}</span><span className="dkr-m">{nCards(d.all)} · {tr("вивчено")} {d.all - d.left}</span></span>
+                  {d.left > 0 && <span className="dkr-c">{d.left}<span className="vh"> {tr("до повторення")}</span></span>}
+                </button>))}
+              {!decks.length && <p className="sub">{tr("Наборів ще немає.")}</p>}
+            </section>
+            <div className="wide-only">{testsList('tl-w')}</div>
+          </div>
+
+          <div className="lrn-r">
+            <section className="tf" id="new-test" tabIndex={-1} aria-labelledby="tf-h">
+              <h2 className="lsh-t phone-only" aria-hidden="true">{tr("Тести")}</h2>
+              <div className="tf-card">
+                <div className="tf-hd"><h2 className="tf-t" id="tf-h">{tr("Новий тест")}</h2><p className="hint wide-only">{tr("Помічник складе питання з вашої нотатки, набору карток або теми")}</p></div>
+                <div className="fld">
+                  <span className="flab" id="tf-src">{tr("Звідки питання")}</span>
+                  <div className="srcs" role="group" aria-labelledby="tf-src">
+                    {srcs.map(([k, nm, s, en]) => <button key={k} className="src" aria-pressed={tcfg.src === k} disabled={!en} onClick={() => setTcfg(c => ({ ...c, src: k }))}><span className="src-n">{nm}</span><span className="src-s">{s}</span></button>)}
+                  </div>
+                  {tcfg.src === 'topic' && <><label className="vh" htmlFor="tf-topic">{tr("Тема")}</label><textarea id="tf-topic" rows={3} placeholder={tr("Наприклад: Present Perfect, німецькі артиклі, анатомія зуба")} value={tcfg.topic} onChange={e => setTcfg(c => ({ ...c, topic: e.target.value }))} /></>}
+                  {tcfg.src === 'mat' && <><label className="vh" htmlFor="tf-mat">{tr("Нотатка")}</label>
+                    <select id="tf-mat" value={selNote ? String(selNote.id) : ''} onChange={e => setTcfg(c => ({ ...c, mat: e.target.value }))} aria-describedby="tf-mat-h"><option value="">{tr("Оберіть нотатку")}</option>{textNotes.map(x => <option key={x.id} value={String(x.id)}>{noteTitle(x)}</option>)}</select>
+                    <p className="hint" id="tf-mat-h">{tr("Підходять текстові нотатки. Зошити, дошки й фото поки не можна використати: у них немає тексту, який прочитає ШІ.")}</p></>}
+                  {tcfg.src === 'deck' && <><label className="vh" htmlFor="tf-deck">{tr("Набір карток")}</label>
+                    <select id="tf-deck" value={tcfg.deck == null ? '' : 'd:' + tcfg.deck} onChange={e => setTcfg(c => ({ ...c, deck: e.target.value === '' ? null : e.target.value.slice(2) }))}><option value="">{tr("Оберіть набір")}</option>{decks.map(d => <option key={d.name} value={'d:' + d.name}>{deckName(d.name)} · {nCards(d.all)}</option>)}</select></>}
+                </div>
+                <div className="fld">
+                  <span className="flab" id="tf-n">{tr("Кількість питань")}</span>
+                  <div className="qns" role="group" aria-labelledby="tf-n">{QN.map(k => <button key={k} className="qn" aria-pressed={n === k} onClick={() => setTcfg(c => ({ ...c, n: k }))}>{k}</button>)}</div>
+                  <span className="hint">{tr("≈")} {Math.max(1, Math.round(n * 0.8))} {tr("хв")}</span>
+                </div>
+                <div className="fld2">
+                  <div className="fld"><span className="flab" id="tf-k">{tr("Тип питань")}</span>
+                    <div className="sg3" role="group" aria-labelledby="tf-k">{[['mix', "Змішані"], ['choice', "З варіантами"], ['open', "Відкриті"]].map(([k, nm]) => <button key={k} aria-pressed={tcfg.kind === k} onClick={() => setTcfg(c => ({ ...c, kind: k }))}>{tr(nm)}</button>)}</div></div>
+                  <div className="fld"><span className="flab" id="tf-l">{tr("Складність")}</span>
+                    <div className="sg3" role="group" aria-labelledby="tf-l">{[['easy', "Легко"], ['mixed', "Наростає"], ['hard', "Складно"]].map(([k, nm]) => <button key={k} aria-pressed={tcfg.level === k} onClick={() => setTcfg(c => ({ ...c, level: k }))}>{tr(nm)}</button>)}</div></div>
+                </div>
+                <div className="tf-go">
+                  <button className="btn-a big" onClick={createTest} disabled={tbusy || !srcReady}>{tbusy ? tr("Складаю тест…") : tr("Скласти тест") + ' · ' + nQs(n)}</button>
+                  <span className="hint">{tr("Помилки з тесту можна одним дотиком перетворити на картки")}</span>
+                </div>
+                {tmsg && <p className="sub" role="status" style={{ margin: 0 }}>{tmsg}</p>}
+              </div>
+            </section>
+            <div className="phone-only">{testsList('tl-p')}</div>
+          </div>
+        </div>;
       })()}
 
-      {tab === 'cards' && <>
-        <div className="top"><h1>{tr("Навчання")}</h1>
-          <div className="seg" style={{ marginTop: 14 }}><button className={stab === 'cards' ? 'on' : ''} onClick={() => setStab('cards')}>{tr("Картки")}</button><button className={stab === 'tests' ? 'on' : ''} onClick={() => setStab('tests')}>{tr("Тести")}</button></div></div>
-
-        {stab === 'cards' && <>
-          <div className="sub" style={{ marginBottom: 12 }}>{tr("Залишилось ")}{left.length} {tr(" з ")}{cards.length}</div>
-          {cur ? <div className="flip" onClick={() => setShow(!show)}><div className="sub">{cur.deck || tr("Без колоди")}</div><div className="fq">{show ? cur.a : cur.q}</div><div className="sub">{show ? tr("Відповідь") : tr("Торкніться, щоб побачити відповідь")}</div></div>
-            : <div className="card"><div className="empty">{cards.length ? tr("Усі картки вивчено!") : tr("Карток ще немає. Попросіть ШІ створити їх за темою, додайте вручну або створіть із помилок у тесті.")}</div></div>}
-          {cur && show && <div className="row">
-            <button className="btn" onClick={() => { setCards(cards.map(c => c.id === cur.id ? { ...c, known: true } : c)); setShow(false); }}>{tr("Знаю")}</button>
-            <button className="btn alt" onClick={() => { setCards(cards.map(c => c.id === cur.id ? { ...c, seq: Date.now() } : c)); setShow(false); }}>{tr("Ще раз")}</button></div>}
-          <div className="card"><div className="sec">{tr("Нова картка")}</div>
-            <input placeholder={tr("Питання")} value={cq} onChange={e => setCq(e.target.value)} />
-            <div className="row"><input placeholder={tr("Відповідь")} value={ca} onChange={e => setCa(e.target.value)} /></div>
-            <button className="btn" onClick={addCard}>{tr("Додати картку")}</button>
-            {cards.length > 0 && <div style={{ marginTop: 10 }}><button className="chip" onClick={() => setCards(cards.map(c => ({ ...c, known: false })))}>{tr("Почати спочатку")}</button>{cur && <button className="chip" onClick={() => { setCards(cards.filter(c => c.id !== cur.id)); setShow(false); }}>{tr("Видалити цю картку")}</button>}</div>}
+      {tab === 'cards' && deckV && (() => {
+        const dn = deckV.isNew ? deckV.draft.trim() : deckV.name;
+        const dc = deckV.isNew ? [] : cards.filter(c => (c.deck || '') === dn);
+        const dl = dc.filter(c => !c.known).length;
+        const add = () => { if (deckV.isNew && !dn) return; if (addCard(dn) && deckV.isNew) setDeckV({ name: dn }); };
+        return <div className="dkv">
+          <header className="lh">
+            <nav className="crumbs" aria-label={tr("Шлях")}><button onClick={() => setDeckV(null)}>{tr("Навчання")}</button><span aria-hidden="true">›</span></nav>
+            {deckV.isNew ? <><h1 className="vh">{tr("Новий набір")}</h1><label className="vh" htmlFor="dk-name">{tr("Назва набору")}</label><input id="dk-name" className="dk-name" autoFocus placeholder={tr("Назва набору")} value={deckV.draft} onChange={e => setDeckV({ ...deckV, draft: e.target.value })} /></>
+              : <h1>{deckName(dn)}</h1>}
+          </header>
+          {!deckV.isNew && <p className="sub dk-sum">{nCards(dc.length)} · {tr("вивчено")} {dc.length - dl}{dl ? ' · ' + tr("до повторення") + ' ' + dl : ''}</p>}
+          {!deckV.isNew && <div className="dk-act">
+            <button className="btn-a" disabled={!dl} onClick={() => startRev(dn)}>{tr("Повторити")}{dl ? ' · ' + dl : ''}</button>
+            <button className="btn2" disabled={!dc.length} onClick={() => { setTcfg(c => ({ ...c, src: 'deck', deck: dn })); setDeckV(null); goNewTest(); }}>{tr("Скласти тест")}</button>
+            {dc.some(c => c.known) && <button className="btn2" onClick={() => setCards(cards.map(c => (c.deck || '') === dn ? { ...c, known: false } : c))}>{tr("Почати спочатку")}</button>}
+          </div>}
+          <div className="card dk-new"><h2 className="sec" id="dk-add">{tr("Нова картка")}</h2>
+            <label className="vh" htmlFor="dk-q">{tr("Питання")}</label><input id="dk-q" placeholder={tr("Питання")} value={cq} onChange={e => setCq(e.target.value)} />
+            <label className="vh" htmlFor="dk-a">{tr("Відповідь")}</label><textarea id="dk-a" rows={2} style={{ marginTop: 8 }} placeholder={tr("Відповідь")} value={ca} onChange={e => setCa(e.target.value)} />
+            <div className="row" style={{ marginTop: 10 }}><button className="btn" onClick={add} disabled={!cq.trim() || !ca.trim() || (deckV.isNew && !dn)}>{tr("Додати картку")}</button></div>
+            {deckV.isNew && !dn && <p className="hint">{tr("Спершу напишіть назву набору.")}</p>}
           </div>
-        </>}
-
-        {stab === 'tests' && <>
-          <div className="card"><div className="sec">{tr("Новий тест")}</div>
-            <textarea rows={4} placeholder={tr("Тема або матеріал. Наприклад: Present Perfect, німецькі артиклі, анатомія зуба, або вставте свій конспект")} value={tcfg.topic} onChange={e => setTcfg({ ...tcfg, topic: e.target.value })} />
-            <div className="row"><select value={tcfg.n} onChange={e => setTcfg({ ...tcfg, n: e.target.value })}><option value={5}>{tr("5 питань")}</option><option value={10}>{tr("10 питань")}</option><option value={15}>{tr("15 питань")}</option><option value={20}>{tr("20 питань")}</option><option value={25}>{tr("25 питань")}</option><option value={30}>{tr("30 питань")}</option></select>
-              <select value={tcfg.kind} onChange={e => setTcfg({ ...tcfg, kind: e.target.value })}><option value="mix">{tr("Змішаний")}</option><option value="choice">{tr("Тільки з варіантами")}</option><option value="open">{tr("Відкриті питання")}</option></select></div>
-            <button className="btn" onClick={createTest} disabled={tbusy}>{tbusy ? tr("Складаю тест…") : tr("Створити тест")}</button>
-            {tmsg && <div className="sub" style={{ marginTop: 10 }}>{tmsg}</div>}</div>
-          {tests.length > 0 && <div className="card"><div className="sec">{tr("Мої тести")}</div>{tests.map(t => (
-            <div className="it" key={t.id}><div className="b" onClick={() => { setTview(t.id); setQi(0); setTmsg(''); }}><div className="t">{t.title}</div>
-              <div className="meta"><span>{new Date(t.created).toLocaleDateString(loc())}</span><span>{t.done ? r1(tScore(t)) + tr(" з ") + t.qs.length : tr("не завершено")}</span></div></div>
-              <button className="x" onClick={() => setTests(tests.filter(x => x.id !== t.id))} aria-label={tr("Видалити")}>×</button></div>))}</div>}
-        </>}
-      </>}
+          {dc.length > 0 && <ul className="dk-list" aria-label={tr("Картки")}>{dc.map(c => <li key={c.id} className="dk-i">
+            {ced && ced.id === c.id ? <>
+              <label className="vh" htmlFor={'eq' + c.id}>{tr("Питання")}</label><input id={'eq' + c.id} autoFocus value={ced.q} onChange={e => setCed({ ...ced, q: e.target.value })} />
+              <label className="vh" htmlFor={'ea' + c.id}>{tr("Відповідь")}</label><textarea id={'ea' + c.id} rows={2} style={{ marginTop: 8 }} value={ced.a} onChange={e => setCed({ ...ced, a: e.target.value })} />
+              <div className="dk-row"><span className="flex1" /><button className="chip sm" onClick={() => setCed(null)}>{tr("Скасувати")}</button><button className="chip sm on" disabled={!ced.q.trim() || !ced.a.trim()} onClick={() => { setCards(cards.map(x => x.id === c.id ? { ...x, q: ced.q.trim(), a: ced.a.trim() } : x)); setCed(null); }}>{tr("Зберегти")}</button></div>
+            </> : <>
+              <div className="dk-q">{c.q}</div><div className="dk-ans">{c.a}</div>
+              <div className="dk-row"><span className={'dk-st' + (c.known ? '' : ' due')}>{c.known ? tr("Вивчено") : tr("До повторення")}</span>
+                <button className="chip sm" onClick={() => setCed({ id: c.id, q: c.q, a: c.a })} aria-label={tr("Змінити картку") + ': ' + c.q}>{tr("Змінити")}</button>
+                <button className="chip sm" onClick={() => setCards(cards.filter(x => x.id !== c.id))} aria-label={tr("Видалити картку") + ': ' + c.q}>{tr("Видалити")}</button></div>
+            </>}
+          </li>)}</ul>}
+          {!deckV.isNew && dc.length > 0 && <button className={'btn2 ' + (dkDel ? 'danger' : 'danger-t')} onClick={() => { if (!dkDel) { setDkDel(true); return; } setCards(cards.filter(c => (c.deck || '') !== dn)); setDeckV(null); setDkDel(false); }}>{dkDel ? tr("Підтвердити: видалити набір і всі картки") : tr("Видалити набір")}</button>}
+        </div>;
+      })()}
 
       {tab === 'ai' && aiPanel(false)}
 
@@ -896,8 +973,8 @@ export default function Home() {
       </>}
 
       {/* один «+» на екран: План — FAB лише на телефоні (на iPad — рядок швидкого вводу); Матеріали — нова папка */}
+      {/* один «+» на екран: План — FAB лише на телефоні (на iPad — рядок швидкого вводу); Матеріали — FAB/«Створити» всередині Materials */}
       {tab === 'today' && <button className="fab phone-only" onClick={() => openNew(false)} aria-label={tr("Додати задачу або подію")} title={tr("Додати задачу або подію")}><Icon n="plus" s={26} /></button>}
-      {tab === 'folders' && fview == null && <button className="fab" onClick={() => setFform({ name: '', color: ACCENTS[0], cover: '', parent: '' })} aria-label={tr("Нова папка")} title={tr("Нова папка")}><Icon n="plus" s={26} /></button>}
 
       {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onClick={e => e.stopPropagation()}>
         <div className="shd"><h2 id="sheet-title">{sheet === 'new' ? (!more ? tr("Новий запис") : ev ? tr("Нова подія") : tr("Нова задача")) : (ev ? tr("Змінити подію") : tr("Змінити задачу"))}</h2>
@@ -924,24 +1001,47 @@ export default function Home() {
         </div>}
       </div></div>}
 
-      {fform && <div className="ov" onClick={() => setFform(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
-        <b>{fform.id ? tr("Папка") : tr("Нова папка")}</b>
-        <div className="foldprev"><FolderArt fo={fform} name={fform.name || tr("Назва папки")} /></div>
-        <input style={{ marginTop: 12 }} autoFocus placeholder={tr("Назва папки")} value={fform.name} onChange={e => setFform({ ...fform, name: e.target.value })} />
-        <div className="sec" style={{ marginTop: 14 }}>{tr("Розташування")}</div>
-        <select value={fform.parent == null ? '' : fform.parent} onChange={e => setFform({ ...fform, parent: e.target.value === '' ? '' : Number(e.target.value) })}>
-          <option value="">{tr("Головний рівень")}</option>{folders.filter(x => x.id !== fform.id && (!fform.id || canMoveFolder(folders, fform.id, x.id))).map(x => <option key={x.id} value={x.id}>{folderPath(folders, x.id)}</option>)}</select>
-        <div className="sec" style={{ marginTop: 14 }}>{tr("Колір")}</div>
-        <div className="sw">{ACCENTS.map(c => <button key={c} className={'swatch' + (fform.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setFform({ ...fform, color: c })} aria-label={c} />)}
-          <input type="color" className="cpick" value={fform.color} onChange={e => setFform({ ...fform, color: e.target.value })} aria-label={tr("Свій колір")} /></div>
-        <div className="sec" style={{ marginTop: 14 }}>{tr("Іконка")}</div>
-        <div className="icogrid"><button className={'ico' + (!fform.icon ? ' on' : '')} onClick={() => setFform({ ...fform, icon: '' })} aria-label={tr("Без іконки")}>∅</button>{FOLDER_ICONS.map(ic => <button key={ic} className={'ico' + (fform.icon === ic ? ' on' : '')} onClick={() => setFform({ ...fform, icon: ic })}>{ic}</button>)}</div>
-        <div className="sec" style={{ marginTop: 14 }}>{tr("Обкладинка")}</div>
-        <div className="row"><label className="chip fileb">{tr("Обрати фото")}<input type="file" accept="image/*" className="hidefile" onChange={e => { pickCover(e.target.files && e.target.files[0]); e.target.value = ''; }} /></label>
-          {fform.cover && <button className="chip" onClick={() => setFform({ ...fform, cover: '' })}>{tr("Прибрати фото")}</button>}</div>
-        <div className="row"><button className="btn" onClick={saveFolder}>{tr("Зберегти")}</button>{fform.id && <button className="btn alt" onClick={delFolder}>{tr("Видалити")}</button>}</div>
-      </div></div>}
+      {/* папка: створення та дії з меню «⋯» (перейменувати / колір / перемістити / видалити). Обкладинка й іконка зі старих версій зберігаються в даних. */}
+      {fform && (() => {
+        const mode = fform.mode || (fform.id ? 'name' : 'new');
+        const up = fform.parent == null || fform.parent === '' ? null : folders.find(x => x.id === fform.parent);
+        const ttl = { new: fform.parent !== '' && fform.parent != null ? tr("Нова підпапка") : tr("Нова папка"), name: tr("Перейменувати папку"), color: tr("Колір папки"), move: tr("Перемістити папку"), delete: tr("Видалити папку?") }[mode];
+        const ck = colorKey(fform.color);
+        return <div className="ov" onClick={() => setFform(null)} onKeyDown={e => { if (e.key === 'Escape') setFform(null); }}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="ff-title" onClick={e => e.stopPropagation()}>
+          <div className="shd"><h2 id="ff-title">{ttl}</h2><button className="ib" onClick={() => setFform(null)} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>
+          {(mode === 'new' || mode === 'name') && <><label className="flab" htmlFor="ff-name">{tr("Назва папки")}</label>
+            <input id="ff-name" style={{ marginTop: 6 }} autoFocus value={fform.name} maxLength={40} onChange={e => setFform({ ...fform, name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') saveFolder(); }} /></>}
+          {(mode === 'new' || mode === 'color') && <><div className="flab" id="ff-col" style={{ marginTop: mode === 'new' ? 14 : 0 }}>{tr("Колір")}</div>
+            <div className="sw" role="group" aria-labelledby="ff-col" style={{ marginTop: 8 }}>{PALETTE_C.map(([c, k, nm], i) => <button key={c} autoFocus={mode === 'color' && (ck ? ck === k : i === 0)} className={'swatch' + (ck === k ? ' on' : '')} style={{ background: SOLID[k] }} aria-pressed={ck === k} aria-label={tr(nm)} onClick={() => setFform({ ...fform, color: c })} />)}</div></>}
+          {mode === 'move' && <><label className="flab" htmlFor="ff-par">{tr("Розташування")}</label>
+            <select id="ff-par" style={{ marginTop: 6 }} autoFocus value={fform.parent == null ? '' : fform.parent} onChange={e => setFform({ ...fform, parent: e.target.value === '' ? '' : Number(e.target.value) })}>
+              <option value="">{tr("Головний рівень")}</option>{folders.filter(x => x.id !== fform.id && (!fform.id || canMoveFolder(folders, fform.id, x.id))).map(x => <option key={x.id} value={x.id}>{folderPath(folders, x.id)}</option>)}</select></>}
+          {mode === 'delete' && <p className="ff-p">{tr("Папку «")}{fform.name}{tr("» буде видалено. Її матеріали, задачі й підпапки не зникнуть: вони перейдуть у ")}{up ? '«' + up.name + '»' : tr("«Матеріали» (без папки)")}.</p>}
+          <div className="row" style={{ marginTop: 16 }}>{mode === 'delete'
+            ? <><button className="btn danger" autoFocus onClick={delFolder}>{tr("Видалити папку")}</button><button className="btn alt" onClick={() => setFform(null)}>{tr("Скасувати")}</button></>
+            : <button className="btn" onClick={saveFolder} disabled={!fform.name.trim()}>{mode === 'new' ? tr("Створити") : tr("Зберегти")}</button>}</div>
+        </div></div>;
+      })()}
 
+      {/* сесія повторення: фокус-режим без навігації */}
+      {rev && (() => {
+        const qd = left.filter(c => rev.deck == null || (c.deck || '') === rev.deck);
+        const c = qd[0];
+        const end = () => { setRev(null); setShow(false); };
+        return <div className="nv rvs" role="dialog" aria-modal="true" aria-labelledby="rvs-t">
+          <div className="nvbar"><button className="chip" onClick={end}>{tr("Завершити")}</button><span className="sub" id="rvs-t">{rev.deck == null ? tr("Повторення") : deckName(rev.deck)}{c ? ' · ' + tr("залишилось") + ' ' + qd.length : ''}</span><span style={{ width: 44 }} /></div>
+          {c ? <>
+            <button className="flip" autoFocus onClick={() => setShow(!show)} aria-describedby="rvs-hint">
+              <span className="sub">{show ? tr("Відповідь") : (c.deck ? c.deck : tr("Питання"))}</span>
+              <span className="fq" aria-live="polite">{show ? c.a : c.q}</span>
+              <span className="sub" id="rvs-hint">{show ? tr("Торкніться, щоб знову побачити питання") : tr("Торкніться, щоб побачити відповідь")}</span>
+            </button>
+            {show && <div className="row rvs-a">
+              <button className="btn" onClick={() => { setCards(cards.map(x => x.id === c.id ? { ...x, known: true } : x)); setShow(false); }}>{tr("Знаю")}</button>
+              <button className="btn alt" onClick={() => { setCards(cards.map(x => x.id === c.id ? { ...x, seq: Date.now() } : x)); setShow(false); }}>{tr("Ще раз")}</button></div>}
+          </> : <div className="rv-done"><h2>{tr("На сьогодні все повторено")}</h2><button className="btn" autoFocus onClick={end}>{tr("Готово")}</button></div>}
+        </div>;
+      })()}
       {nview != null && <div className="nv">
         <div className="nvbar"><button className="chip" onClick={closeNote}>{tr("Закрити")}</button><span className="sub">{ntext.split(/\s+/).filter(Boolean).length} {tr(" слів")}</span>
           {flow ? <button className="chip" onClick={() => setFlow(false)}>{tr("Готово")}</button> : <button className="chip" onClick={() => setFlow(true)}>{tr("Писати в потоці")}</button>}</div>

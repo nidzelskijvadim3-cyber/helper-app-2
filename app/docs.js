@@ -1,15 +1,25 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { listMeta, getDoc, saveDoc, putMeta, putDoc, delDoc, duplicateDoc, reparentDocs, moveDoc } from './store';
-import { newDoc, newId, filterDocs, sortDocs, recentDocs, folderPath, fitPage } from './lib';
-import { t as tr, loc } from './i18n';
+import { Fragment } from 'react';
+import { newDoc, newId, folderPath, fitPage, descendants, breadcrumb } from './lib';
+import { t as tr, loc, plural } from './i18n';
 import { drawStroke, ptsOf, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, PENS, SHAPES } from './draw';
 
 export { putDoc, delDoc, newDoc, reparentDocs, moveDoc };
 export const listDocs = listMeta;
-const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан' };
-const FILTERS = [['all', 'Усі'], ['fav', 'Обране'], ['notebook', 'Зошити'], ['board', 'Дошки'], ['img', 'Фото й скани']];
-const COVERS = ['#0a84ff', '#ff375f', '#ff9f0a', '#30d158', '#bf5af2', '#64d2ff', '#8e8e93', '#1c1c1e'];
+const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан', note: 'Нотатка' };
+// фільтр типу в папці (етап 2): «Обране» — окремий перемикач, не тип
+const TFILT = [['all', 'Усі'], ['notebook', 'Зошити'], ['board', 'Дошки'], ['img', 'Фото й скани'], ['note', 'Нотатки']];
+// Палітра папок і обкладинок = токени стилю C. У даних лишається hex (сумісність зі старими версіями й синхронізацією),
+// а малюється CSS-змінна, тож у світлій темі колір автоматично темніший.
+export const PALETTE_C = [['#7AA2FF', 'study', 'Синій'], ['#F2A93B', 'accent', 'Бурштиновий'], ['#9BD46A', 'home', 'Зелений'], ['#C3A0FF', 'personal', 'Фіолетовий'], ['#FF9B6A', 'health', 'Помаранчевий'], ['#5FD0C0', 'work', 'Бірюзовий'], ['#8B9098', 'neutral', 'Сірий']];
+const LEGACY_C = { '#0a84ff': 'study', '#ff375f': 'health', '#ff453a': 'health', '#ff9f0a': 'accent', '#ffd60a': 'accent', '#30d158': 'home', '#4cc38a': 'home', '#bf5af2': 'personal', '#c79bff': 'personal', '#64d2ff': 'work', '#8e8e93': 'neutral', '#1c1c1e': 'neutral' };
+export const SOLID = { study: 'var(--c-study)', accent: 'var(--accent-tx)', home: 'var(--c-home)', personal: 'var(--c-personal)', health: 'var(--c-health)', work: 'var(--c-work)', neutral: 'var(--tx3)' };
+const SOFT = { study: 'var(--c-study-bg)', accent: 'var(--accent-soft)', home: 'var(--c-home-bg)', personal: 'var(--c-personal-bg)', health: 'var(--c-health-bg)', work: 'var(--c-work-bg)', neutral: 'var(--fill)' };
+export const colorKey = hex => { const h = String(hex || '').toLowerCase(); const p = PALETTE_C.find(x => x[0].toLowerCase() === h); return p ? p[1] : (LEGACY_C[h] || null); };
+export const solidOf = hex => { const k = colorKey(hex); return k ? SOLID[k] : (/^#[0-9a-f]{6}$/i.test(hex || '') ? hex : SOLID.neutral); };
+const COVERS = PALETTE_C.map(x => x[0]);
 export const bridge = { info: null, getImage: null };
 export async function shrink(file, max = 1024, q = 0.72) {
   const img = await loadImg(typeof file === 'string' ? file : await readFile(file));
@@ -64,6 +74,12 @@ const EI = {
   triangle: <path d="M12 5l8 14H4z" />,
   zin: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4-4M8.5 11h5M11 8.5v5" /></>,
   zout: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4-4M8.5 11h5" /></>,
+  clock: <><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></>,
+  star: <path d="M12 4l2.5 5 5.5.8-4 3.9.9 5.5L12 16.6 7.1 19.2l.9-5.5-4-3.9 5.5-.8z" />,
+  search: <><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></>,
+  grid: <><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></>,
+  list: <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
 };
 const TOOLN = { pen: 'Ручка', hl: 'Маркер', eraser: 'Гумка', shape: 'Фігури', text: 'Текст', ruler: 'Лінійка', hand: 'Рука' };
 const NIBN = { ball: 'Кулькова', fountain: 'Перова', pencil: 'Олівець', brush: 'Пензель', calli: 'Каліграфія' };
@@ -347,19 +363,49 @@ function Editor({ doc, onSave, onClose }) {
   );
 }
 
-export default function Docs({ folderId, folders, onNewNote }) {
+
+// ===== Матеріали (етап 2): одна модель — папки, усередині матеріали будь-якого типу (зошит, дошка, фото, скан, текстова нотатка) =====
+const DAY = 864e5;
+function when(ts) {
+  if (!ts) return '';
+  const d = new Date(ts), t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  const d0 = new Date(d); d0.setHours(0, 0, 0, 0);
+  const diff = Math.round((t0 - d0) / DAY);
+  if (diff === 0) return tr("сьогодні");
+  if (diff === 1) return tr("вчора");
+  if (diff > 1 && diff < 7) return d.toLocaleDateString(loc(), { weekday: 'short' });
+  return d.toLocaleDateString(loc(), { day: 'numeric', month: 'short' });
+}
+const FIcon = ({ c }) => <svg width="26" height="22" viewBox="0 0 26 22" aria-hidden="true"><path d="M2 5a3 3 0 0 1 3-3h5l2.5 3H21a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z" style={{ fill: c }} /></svg>;
+// Обкладинка: зошит — колір обкладинки; фото/скан/дошка — мініатюра; інакше нейтральний «папір»; нотатка — папір із початком тексту
+function Cover({ m }) {
+  const fav = m.fav && <span className="cv-fav" aria-hidden="true">★</span>;
+  if (m.k === 'note') return <span className="cv paper" aria-hidden="true"><span className="cv-tx">{m.text.slice(0, 180)}</span>{fav}</span>;
+  if (m.type === 'notebook' && m.cover) {
+    const k = colorKey(m.cover);
+    const st = k ? { '--cv': SOFT[k], '--sp': SOLID[k] } : { '--cv': m.cover, '--sp': m.cover };
+    return <span className="cv nbk" style={st} aria-hidden="true">{fav}</span>;
+  }
+  if (m.thumb) return <span className="cv img" style={{ backgroundImage: 'url(' + m.thumb + ')' }} aria-hidden="true">{fav}</span>;
+  return <span className={'cv paper' + (m.type === 'board' ? '' : ' lined')} aria-hidden="true">{fav}</span>;
+}
+
+export default function Materials({ folders, notes, fview, setFview, onOpenNote, onNewNote, onFolderForm, onNoteFav, onNoteMove, onNoteDel, onStudy, folderExtra }) {
   const [docs, setDocs] = useState([]);
   const [flt, setFlt] = useState('all');
+  const [favOnly, setFavOnly] = useState(false);
   const [sort, setSort] = useState('new');
-  const [q, setQ] = useState('');
   const [view, setView] = useState('grid');
+  const [q, setQ] = useState('');
+  const [search, setSearch] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [fmenu, setFmenu] = useState(false);
   const [nb, setNb] = useState(null);
   const [ed, setEd] = useState(null);
   const [act, setAct] = useState(null);
   const [confirm, setConfirm] = useState(false);
   const [msg, setMsg] = useState('');
-  const phRef = useRef(null), scRef = useRef(null), imRef = useRef(null), lp = useRef(null), fired = useRef(false);
+  const scRef = useRef(null), imRef = useRef(null), lp = useRef(null), fired = useRef(false), retFocus = useRef(null);
 
   useEffect(() => { try { const v = localStorage.getItem('helper-docview'); if (v === 'list' || v === 'grid') setView(v); } catch (e) {} }, []);
   const pickView = v => { setView(v); try { localStorage.setItem('helper-docview', v); } catch (e) {} };
@@ -368,8 +414,42 @@ export default function Docs({ folderId, folders, onNewNote }) {
     reload(); window.addEventListener('docs-changed', reload);
     return () => window.removeEventListener('docs-changed', reload);
   }, []);
+  useEffect(() => { setFlt('all'); setFavOnly(false); }, [fview]);
+  const anyOv = menu || fmenu || nb || act;
+  const closeAll = () => { setMenu(false); setFmenu(false); setNb(null); if (act) closeAct(); };
+  useEffect(() => {
+    if (!anyOv) return;
+    const onKey = e => { if (e.key === 'Escape') closeAll(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [anyOv, act]);
+  useEffect(() => { if (!anyOv && retFocus.current) { const p = retFocus.current; retFocus.current = null; if (p && document.contains(p) && p.focus) p.focus(); } }, [anyOv]);
 
-  const fid = typeof folderId === 'number' ? folderId : '';
+  const fids = new Set(folders.map(f => f.id));
+  const fo = typeof fview === 'number' ? folders.find(f => f.id === fview) : null;
+  const fid = fo ? fo.id : '';
+  const mats = [
+    ...docs.map(d => ({ k: 'doc', key: 'd' + d.id, id: d.id, type: d.type, title: d.title || tr(TYPES[d.type] || 'Зошит'), folder: fids.has(d.folder) ? d.folder : '', upd: d.upd || 0, created: d.created || 0, fav: !!d.fav, thumb: d.thumb, cover: d.cover, raw: d })),
+    ...notes.filter(n => n.text && n.text.trim()).map(n => ({ k: 'note', key: 'n' + n.id, id: n.id, type: 'note', title: n.text.trim().split('\n')[0].slice(0, 60), folder: fids.has(n.folder) ? n.folder : '', upd: n.upd || n.id, created: n.id, fav: !!n.fav, text: n.text, raw: n }))
+  ];
+  const sorted = (l, by = sort) => { const c = [...l]; if (by === 'name') c.sort((a, b) => a.title.localeCompare(b.title, loc())); else if (by === 'created') c.sort((a, b) => b.created - a.created); else c.sort((a, b) => b.upd - a.upd); return c; };
+  const countIn = id => { const s = descendants(folders, id); s.add(id); return mats.filter(m => s.has(m.folder)).length; };
+  const tOk = (m, f) => f === 'all' || (f === 'img' ? (m.type === 'photo' || m.type === 'scan') : m.type === f);
+  const nMat = n => n + ' ' + plural(n, "матеріал", "матеріали", "матеріалів");
+
+  const base = fo ? mats.filter(m => m.folder === fo.id) : fview === 'all' ? mats : fview === 'fav' ? mats.filter(m => m.fav) : [];
+  const showTools = base.length >= 6; // фільтри, сортування й вигляд — лише коли є що фільтрувати
+  const eFlt = showTools ? flt : 'all', eFav = showTools && favOnly, eView = showTools ? view : 'grid';
+  const cnt = {}; TFILT.forEach(([k]) => { cnt[k] = base.filter(m => tOk(m, k)).length; });
+  const list = sorted(base.filter(m => tOk(m, eFlt) && (!eFav || m.fav)), showTools ? sort : 'new');
+  const recents = sorted(mats, 'new').slice(0, 6);
+  const loose = sorted(mats.filter(m => m.folder === ''), 'new');
+  const top = folders.filter(f => !fids.has(f.parent));
+  const subs = fo ? folders.filter(f => f.parent === fo.id) : [];
+  const needle = q.trim().toLowerCase();
+  const found = needle ? sorted(mats.filter(m => m.title.toLowerCase().includes(needle) || (m.text || '').toLowerCase().includes(needle)), 'new') : [];
+  const pathIds = new Set(fo ? breadcrumb(folders, fo.id).map(f => f.id) : []);
+
   const dflt = type => tr(TYPES[type]) + ' ' + new Date().toLocaleDateString(loc());
   const openDoc = async x => { try { const d = await getDoc(x.id); if (d) setEd(d); else setMsg(tr("Не вдалося відкрити документ.")); } catch (e) { setMsg(tr("Не вдалося відкрити документ.")); } };
   const start = async dd => {
@@ -379,95 +459,191 @@ export default function Docs({ folderId, folders, onNewNote }) {
   };
   const fromFile = async (file, type) => {
     if (!file) return;
-    setMsg(tr("Обробка зображення…"));
+    setMenu(false); setMsg(tr("Обробка зображення…"));
     try {
       const im = await prepImage(file, type === 'scan');
       await start({ id: newId(), type, title: tr(TYPES[type]) + ' ' + new Date().toLocaleDateString(loc()), folder: fid, cover: '', created: Date.now(), upd: Date.now(), thumb: '', fav: false, pages: [{ w: im.w, h: im.h, tpl: 'blank', img: im.src, strokes: [] }] });
       setMsg('');
-    } catch (e) { setMsg(tr("Не вдалося обробити зображення.")); setMenu(false); }
+    } catch (e) { setMsg(tr("Не вдалося обробити зображення.")); }
   };
-  const closeAct = async () => {
-    if (act) { const m = docs.find(x => x.id === act.id); const t = act.title.trim(); if (m && t && m.title !== t) { try { await putMeta({ ...m, title: t, upd: Date.now() }); } catch (e) {} } }
+  async function closeAct() {
+    if (act && act.k === 'doc') { const m = docs.find(x => x.id === act.id); const t = (act.title || '').trim(); if (m && t && m.title !== t) { try { await putMeta({ ...m, title: t, upd: Date.now() }); } catch (e) {} } }
     setAct(null); setConfirm(false);
-  };
-
-  const list = sortDocs(filterDocs(docs, { flt, q, folderId }), sort);
-  const recents = folderId == null && !q.trim() && flt === 'all' ? recentDocs(docs, 6) : [];
-  const thumbEl = x => (
-    <div className="dthumb" onClick={() => { if (fired.current) { fired.current = false; return; } openDoc(x); }}
-      style={x.thumb && !(x.type === 'notebook' && x.cover) ? { backgroundImage: 'url(' + x.thumb + ')' } : {}}>
-      {x.type === 'notebook' && x.cover ? <div className="dcover" style={{ background: x.cover }}><div className="spine" /><span>{x.title}</span></div> : (!x.thumb && <span>{tr(TYPES[x.type])}</span>)}
-      {x.fav && <span className="star">★</span>}
-    </div>);
-  const drag = x => ({
-    draggable: true,
-    onDragStart: e => { e.dataTransfer.setData('text/doc', String(x.id)); e.dataTransfer.effectAllowed = 'move'; },
-    onContextMenu: e => { e.preventDefault(); setAct(x); },
-    onPointerDown: e => { if (e.pointerType === 'touch') { fired.current = false; lp.current = setTimeout(() => { fired.current = true; setAct(x); }, 550); } },
-    onPointerUp: () => clearTimeout(lp.current), onPointerCancel: () => clearTimeout(lp.current), onPointerMove: () => {},
+  }
+  const openM = m => { if (m.k === 'note') onOpenNote(m.id); else openDoc(m.raw); };
+  const metaOf = m => tr(TYPES[m.type] || 'Зошит') + ' · ' + when(m.upd);
+  const labelOf = m => m.title + ', ' + metaOf(m) + (m.fav ? ', ' + tr("в обраному") : '');
+  const openAct = m => { retFocus.current = document.activeElement; setConfirm(false); setAct({ ...m }); };
+  const press = m => ({
+    onContextMenu: e => { e.preventDefault(); openAct(m); },
+    onPointerDown: e => { if (e.pointerType === 'touch') { fired.current = false; lp.current = setTimeout(() => { fired.current = true; openAct(m); }, 550); } },
+    onPointerUp: () => clearTimeout(lp.current), onPointerCancel: () => clearTimeout(lp.current),
+    ...(m.k === 'doc' ? { draggable: true, onDragStart: e => { e.dataTransfer.setData('text/doc', String(m.id)); e.dataTransfer.effectAllowed = 'move'; } } : {}),
   });
-  const card = (x, small) => (
-    <div key={x.id} className={'dc' + (small ? ' sm' : '')} {...drag(x)}>
-      {thumbEl(x)}
-      <div className="dmeta"><div className="dt">{x.title}</div><button className="x" onClick={() => setAct(x)} aria-label={tr("Дії")}>⋯</button></div>
-      {!small && <div className="sub">{new Date(x.upd).toLocaleDateString(loc())}{tr(", стор.: ")}{x.pageCount || 1}</div>}
+  const tap = m => () => { if (fired.current) { fired.current = false; return; } openM(m); };
+  const drop = target => ({
+    onDragOver: e => { e.preventDefault(); e.currentTarget.classList.add('drop'); },
+    onDragLeave: e => e.currentTarget.classList.remove('drop'),
+    onDrop: async e => { e.preventDefault(); e.currentTarget.classList.remove('drop'); const id = Number(e.dataTransfer.getData('text/doc')); if (id) { try { await moveDoc(id, target); } catch (er) {} } },
+  });
+  const card = m => (
+    <div key={m.key} className="mc" {...press(m)}>
+      <button className="mc-o" onClick={tap(m)} aria-label={labelOf(m)}><Cover m={m} /><span className="mc-t">{m.title}</span><span className="mc-m">{metaOf(m)}</span></button>
+      <button className="mc-x" onClick={() => openAct(m)} aria-label={tr("Дії") + ': ' + m.title} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>
     </div>);
-  const row = x => (
-    <div key={x.id} className="dl" {...drag(x)}>
-      {thumbEl(x)}
-      <div className="info" onClick={() => openDoc(x)}><div className="dt">{x.title}</div><div className="sub">{tr(TYPES[x.type])}, {new Date(x.upd).toLocaleDateString(loc())}{tr(", стор.: ")}{x.pageCount || 1}</div></div>
-      <button className="x" onClick={() => setAct(x)} aria-label={tr("Дії")}>⋯</button>
+  const row = m => (
+    <div key={m.key} className="ml" {...press(m)}>
+      <button className="ml-o" onClick={tap(m)} aria-label={labelOf(m)}><Cover m={m} /><span className="ml-b"><span className="mc-t">{m.title}</span><span className="mc-m">{metaOf(m)}</span></span></button>
+      <button className="mc-x" onClick={() => openAct(m)} aria-label={tr("Дії") + ': ' + m.title} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>
     </div>);
+  const listing = (l, v = 'grid') => (v === 'grid' ? <div className="mgrid">{l.map(card)}</div> : <div className="mlst">{l.map(row)}</div>);
+  const tile = f => { const n = countIn(f.id); return (
+    <button key={f.id} className="ft" onClick={() => setFview(f.id)} aria-label={f.name + ', ' + nMat(n)} {...drop(f.id)}>
+      <FIcon c={solidOf(f.color)} /><span className="ft-b"><span className="ft-n">{f.name}</span><span className="ft-c">{n}</span></span>
+    </button>); };
+  const tree = (list0, depth) => list0.map(f => (
+    <Fragment key={f.id}>
+      <button className={'sb' + (depth ? ' sub' : '')} style={depth ? { paddingLeft: 10 + depth * 20 } : undefined} aria-current={fview === f.id ? 'true' : undefined} onClick={() => setFview(f.id)} {...drop(f.id)}>
+        {!depth && <span className="sq" style={{ background: solidOf(f.color) }} aria-hidden="true" />}<span className="sb-n">{f.name}</span><span className="sb-c" aria-label={nMat(countIn(f.id))}>{countIn(f.id)}</span>
+      </button>
+      {pathIds.has(f.id) && tree(folders.filter(x => x.parent === f.id), depth + 1)}
+    </Fragment>));
+  const newFolder = () => onFolderForm({ name: '', color: PALETTE_C[0][0], cover: '', icon: '', parent: fid, mode: 'new' });
+  const crumbs = fo ? breadcrumb(folders, fo.id).slice(0, -1) : [];
+  const title = fo ? fo.name : fview === 'all' ? tr("Усі матеріали") : fview === 'fav' ? tr("Обране") : null;
 
   return (
-    <div style={{ marginTop: 26 }}>
-      <div className="sec">{tr("Документи")}</div>
-      <button className="btn" onClick={() => setMenu(true)}>{tr("Створити або імпортувати")}</button>
-      {msg && <div className="sub" style={{ margin: '10px 0' }}>{msg}</div>}
-      {recents.length > 0 && <><div className="sec" style={{ marginTop: 18 }}>{tr("Нещодавні")}</div><div className="rrow">{recents.map(x => card(x, true))}</div></>}
-      <div className="dtools" style={{ marginTop: 14 }}>
-        <div className="seg">{FILTERS.map(([k, n]) => <button key={k} className={flt === k ? 'on' : ''} onClick={() => setFlt(k)}>{tr(n)}</button>)}</div>
-        <div className="row" style={{ margin: 0 }}><input placeholder={tr("Пошук документів")} value={q} onChange={e => setQ(e.target.value)} />
-          <select value={sort} onChange={e => setSort(e.target.value)} style={{ width: 'auto' }}><option value="new">{tr("Нові")}</option><option value="created">{tr("Створені")}</option><option value="name">{tr("За назвою")}</option></select></div>
-        <div className="seg" style={{ maxWidth: 180 }}>{[['grid', tr("Сітка")], ['list', tr("Список")]].map(([k, n]) => <button key={k} className={view === k ? 'on' : ''} onClick={() => pickView(k)}>{n}</button>)}</div>
-      </div>
-      {list.length ? (view === 'grid' ? <div className="dgrid">{list.map(x => card(x, false))}</div> : <div className="card dlist">{list.map(row)}</div>)
-        : <div className="card"><div className="empty">{q.trim() || flt !== 'all' ? tr("Нічого не знайдено.") : tr("Документів поки немає. Створіть зошит, дошку або додайте скан.")}</div></div>}
+    <div className="mat">
+      <aside className="m-side" aria-label={tr("Папки")}>
+        <div className="m-side-t">{tr("Матеріали")}</div>
+        <button className="sb" aria-current={fview == null ? 'true' : undefined} onClick={() => setFview(null)}><EIcon n="clock" size={18} />{tr("Нещодавні")}</button>
+        <button className="sb" aria-current={fview === 'fav' ? 'true' : undefined} onClick={() => setFview('fav')}><EIcon n="star" size={18} />{tr("Обране")}</button>
+        <div className="sb-h" aria-hidden="true">{tr("Папки")}</div>
+        {tree(top, 0)}
+        <button className="sb add" onClick={newFolder}><EIcon n="plus" size={18} />{tr("Нова папка")}</button>
+      </aside>
 
-      <input ref={phRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
+      <div className="m-main">
+        <header className="mhd">
+          <div className="mhd-t">
+            {title != null && <nav className="crumbs" aria-label={tr("Шлях")}><button onClick={() => setFview(null)} {...drop('')}>{tr("Матеріали")}</button>{crumbs.map(c => <Fragment key={c.id}><span aria-hidden="true">›</span><button onClick={() => setFview(c.id)} {...drop(c.id)}>{c.name}</button></Fragment>)}<span aria-hidden="true">›</span></nav>}
+            <h1>{title != null ? title : <><span className="phone-only">{tr("Матеріали")}</span><span className="wide-only">{tr("Нещодавні")}</span></>}</h1>
+          </div>
+          <div className="mhd-a">
+            {fview == null && <button className="ibtn" onClick={() => setSearch(!search)} aria-pressed={search} aria-label={tr("Пошук")} title={tr("Пошук")}><EIcon n="search" size={20} /></button>}
+            <button className="btn-a mcreate" onClick={() => { retFocus.current = document.activeElement; setMenu(true); }} aria-haspopup="dialog"><EIcon n="plus" size={18} />{tr("Створити")}</button>
+            {fo && <button className="ibtn" onClick={() => { retFocus.current = document.activeElement; setFmenu(true); }} aria-label={tr("Дії з папкою")} title={tr("Дії з папкою")} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>}
+          </div>
+        </header>
+        {msg && <p className="sub mmsg" role="status">{msg}</p>}
+
+        {fview == null && search && <div className="msearch">
+          <label className="vh" htmlFor="mq">{tr("Пошук матеріалів")}</label>
+          <input id="mq" type="search" autoFocus placeholder={tr("Пошук матеріалів")} value={q} onChange={e => setQ(e.target.value)} />
+          <button className="btn2" onClick={() => { setSearch(false); setQ(''); }}>{tr("Скасувати")}</button>
+        </div>}
+
+        {fview == null && (needle ? <section className="msec" aria-label={tr("Результати пошуку")}>{found.length ? listing(found) : <p className="mempty">{tr("Нічого не знайдено.")}</p>}</section> : <>
+          {!mats.length && !folders.length && <div className="mempty"><p>{tr("Тут будуть ваші зошити, дошки, нотатки й фото.")}</p><p className="sub">{tr("Створіть перший матеріал або папку.")}</p></div>}
+          {recents.length > 0 && <section className="msec" aria-labelledby="m-rec">
+            <div className="msh phone-only"><h2 className="msh-t" id="m-rec">{tr("Нещодавні")}</h2><button className="lnk" onClick={() => setFview('all')}>{tr("Усі")}</button></div>
+            <div className="mrow phone-only">{recents.map(card)}</div>
+            <div className="wide-only"><div className="msh"><span className="flex1" /><button className="lnk" onClick={() => setFview('all')}>{tr("Усі матеріали")}</button></div>{listing(recents)}</div>
+          </section>}
+          {folders.length > 0 && <section className="msec phone-only" aria-labelledby="m-fold">
+            <div className="msh"><h2 className="msh-t" id="m-fold">{tr("Папки")}</h2></div>
+            <div className="fgrid2">{top.map(tile)}</div>
+            <button className="fnew" onClick={newFolder}><EIcon n="plus" size={16} />{tr("Нова папка")}</button>
+          </section>}
+          {!folders.length && mats.length > 0 && <button className="fnew phone-only" onClick={newFolder}><EIcon n="plus" size={16} />{tr("Нова папка")}</button>}
+          {loose.length > 0 && folders.length > 0 && <section className="msec" aria-labelledby="m-loose">
+            <div className="msh"><h2 className="msh-t" id="m-loose">{tr("Без папки")}</h2></div>
+            {listing(loose)}
+          </section>}
+        </>)}
+
+        {title != null && <>
+          {subs.length > 0 && <div className="fgrid2 phone-only msub">{subs.map(tile)}</div>}
+          {showTools && <div className="mtools">
+            <div className="mt-types" role="group" aria-label={tr("Тип матеріалу")}>
+              {TFILT.filter(([k]) => k === 'all' || cnt[k] > 0).map(([k, n]) => <button key={k} className="pill" aria-pressed={eFlt === k} onClick={() => setFlt(k)}>{tr(n)} · {cnt[k]}</button>)}
+            </div>
+            <div className="mt-more">
+              {fview !== 'fav' && <button className="pill" aria-pressed={favOnly} onClick={() => setFavOnly(!favOnly)}><span aria-hidden="true">★ </span>{tr("Обране")}</button>}
+              <span className="flex1" />
+              <label className="vh" htmlFor="msort">{tr("Сортування")}</label>
+              <select id="msort" className="msort" value={sort} onChange={e => setSort(e.target.value)}><option value="new">{tr("Спершу нові")}</option><option value="created">{tr("Спершу створені")}</option><option value="name">{tr("За назвою")}</option></select>
+              <div className="mview" role="group" aria-label={tr("Вигляд")}>
+                <button className="ibtn" aria-pressed={view === 'grid'} onClick={() => pickView('grid')} aria-label={tr("Сітка")} title={tr("Сітка")}><EIcon n="grid" size={20} /></button>
+                <button className="ibtn" aria-pressed={view === 'list'} onClick={() => pickView('list')} aria-label={tr("Список")} title={tr("Список")}><EIcon n="list" size={20} /></button>
+              </div>
+            </div>
+          </div>}
+          {list.length ? listing(list, eView)
+            : <div className="mempty"><p>{base.length ? tr("Нічого не знайдено.") : fview === 'fav' ? tr("Тут поки нічого немає.") : tr("У цій папці поки нічого немає.")}</p>
+              <p className="sub">{base.length ? '' : fview === 'fav' ? tr("Позначте матеріал зірочкою в меню «⋯», і він з’явиться тут.") : tr("Створіть зошит, нотатку або імпортуйте фото.")}</p></div>}
+          {fo && folderExtra && folderExtra(fo.id)}
+          {fo && base.length > 0 && <div className="mhint">
+            <p>{tr("З матеріалів цієї папки можна зробити картки або тест")}</p>
+            <div className="mhint-a"><button className="btn2" onClick={() => onStudy('cards', fo)}>{tr("Зробити картки")}</button><button className="btn-a" onClick={() => onStudy('test', fo)}>{tr("Скласти тест")}</button></div>
+          </div>}
+        </>}
+      </div>
+
+      {/* один вхід створення: FAB на телефоні, «Створити» в шапці на iPad — те саме меню */}
+      <button className="fab phone-only" onClick={() => { retFocus.current = document.activeElement; setMenu(true); }} aria-label={tr("Створити: зошит, дошку, нотатку, імпорт фото або папку")} title={tr("Створити")} aria-haspopup="dialog"><EIcon n="plus" size={26} /></button>
       <input ref={scRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'scan'); e.target.value = ''; }} />
       <input ref={imRef} type="file" accept="image/*" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
 
-      {menu && <div className="ov" onClick={() => setMenu(false)}><div className="sheet menu" onClick={e => e.stopPropagation()}>
-        <b>{tr("Створити")}</b><div style={{ height: 12 }} />
-        <button onClick={() => { setMenu(false); onNewNote(true); }}>{tr("Швидка нотатка")}<small>{tr("Слова згасають, поки ви пишете")}</small></button>
-        <button onClick={() => { setMenu(false); onNewNote(false); }}>{tr("Текстовий документ")}<small>{tr("Звичайний текст")}</small></button>
-        <button onClick={() => { setMenu(false); setNb({ title: '', cover: COVERS[0], tpl: 'lined' }); }}>{tr("Зошит")}<small>{tr("Обкладинка, сторінки з лінійкою, клітинкою чи крапками")}</small></button>
+      {menu && <div className="ov" onClick={() => setMenu(false)}><div className="sheet menu" role="dialog" aria-modal="true" aria-labelledby="mk-title" onClick={e => e.stopPropagation()}>
+        <div className="shd"><h2 id="mk-title">{fo ? tr("Створити в «") + fo.name + '»' : tr("Створити")}</h2><IB n="close" label={tr("Закрити")} onClick={() => setMenu(false)} /></div>
+        <button autoFocus onClick={() => { setMenu(false); setNb({ title: '', cover: COVERS[0], tpl: 'lined' }); }}>{tr("Зошит")}<small>{tr("Обкладинка, сторінки з лінійкою, клітинкою чи крапками")}</small></button>
         <button onClick={() => start(newDoc('board', dflt('board'), fid, 'blank'))}>{tr("Дошка")}<small>{tr("Велике вільне полотно")}</small></button>
-        <button onClick={() => phRef.current && phRef.current.click()}>{tr("Сфотографувати")}<small>{tr("Фото, яке можна підписувати")}</small></button>
-        <button onClick={() => scRef.current && scRef.current.click()}>{tr("Сканувати документ")}<small>{tr("Фото з вирівнюванням яскравості, як скан")}</small></button>
-        <button onClick={() => imRef.current && imRef.current.click()}>{tr("Імпортувати зображення")}<small>{tr("З галереї або файлів")}</small></button>
+        <button onClick={() => { setMenu(false); onNewNote(false); }}>{tr("Текстова нотатка")}<small>{tr("Звичайний текст; з неї можна скласти тест")}</small></button>
+        <button onClick={() => imRef.current && imRef.current.click()}>{tr("Імпорт фото")}<small>{tr("З галереї, файлів або камери")}</small></button>
+        <button onClick={() => scRef.current && scRef.current.click()}>{tr("Сканувати")}<small>{tr("Фото з вирівнюванням яскравості, як скан")}</small></button>
+        <button onClick={() => { setMenu(false); newFolder(); }}>{fo ? tr("Підпапка") : tr("Папка")}<small>{fo ? tr("Нова папка всередині цієї") : tr("Для предмета або теми")}</small></button>
       </div></div>}
 
-      {nb && <div className="ov" onClick={() => setNb(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
-        <b>{tr("Новий зошит")}</b>
-        <input style={{ marginTop: 12 }} autoFocus placeholder={tr("Назва (необов’язково)")} value={nb.title} onChange={e => setNb({ ...nb, title: e.target.value })} />
-        <div className="sec" style={{ marginTop: 14 }}>{tr("Обкладинка")}</div>
-        <div className="sw">{COVERS.map(c => <button key={c} className={'swatch' + (nb.cover === c ? ' on' : '')} style={{ background: c }} onClick={() => setNb({ ...nb, cover: c })} aria-label={c} />)}</div>
-        <div className="sec" style={{ marginTop: 14 }}>{tr("Папір")}</div>
-        <div className="seg">{[['blank', tr("Чиста")], ['lined', tr("У лінійку")], ['grid', tr("Клітинка")], ['dots', tr("Крапки")]].map(([k, n]) => <button key={k} className={nb.tpl === k ? 'on' : ''} onClick={() => setNb({ ...nb, tpl: k })}>{n}</button>)}</div>
-        <div className="row"><button className="btn" onClick={() => start(newDoc('notebook', nb.title.trim() || dflt('notebook'), fid, nb.tpl, nb.cover))}>{tr("Створити")}</button></div>
+      {fmenu && fo && <div className="ov" onClick={() => setFmenu(false)}><div className="sheet menu" role="dialog" aria-modal="true" aria-labelledby="fm-title" onClick={e => e.stopPropagation()}>
+        <div className="shd"><h2 id="fm-title">{fo.name}</h2><IB n="close" label={tr("Закрити")} onClick={() => setFmenu(false)} /></div>
+        {[['name', "Перейменувати"], ['color', "Колір"], ['move', "Перемістити"], ['delete', "Видалити"]].map(([mode, n], i) => <button key={mode} autoFocus={i === 0} className={mode === 'delete' ? 'danger-t' : ''} onClick={() => { setFmenu(false); onFolderForm({ ...fo, mode }); }}>{tr(n)}</button>)}
       </div></div>}
 
-      {act && <div className="ov" onClick={closeAct}><div className="sheet menu" onClick={e => e.stopPropagation()}>
-        <input value={act.title} onChange={e => setAct({ ...act, title: e.target.value })} aria-label={tr("Назва")} style={{ marginBottom: 10 }} />
-        <button onClick={() => { const x = act; setAct(null); openDoc(x); }}>{tr("Відкрити")}</button>
-        <button onClick={async () => { const m = { ...act, fav: !act.fav }; try { await putMeta(m); setAct(m); } catch (e) {} }}>{act.fav ? tr("★ Прибрати з обраного") : tr("☆ Додати в обране")}</button>
-        <button onClick={async () => { try { await duplicateDoc(act.id); } catch (e) { setMsg(tr("Не вдалося дублювати: можливо, закінчилося місце.")); } setAct(null); }}>{tr("Дублювати")}</button>
-        <select value={act.folder === '' || act.folder == null ? '' : act.folder} style={{ marginBottom: 8 }}
-          onChange={async e => { const f = e.target.value === '' ? '' : Number(e.target.value); const m = { ...act, folder: f }; try { await putMeta(m); setAct(m); } catch (er) {} }}>
-          <option value="">{tr("Без папки")}</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{folderPath(folders, fo.id)}</option>)}</select>
-        <button className={confirm ? 'danger' : ''} onClick={async () => { if (!confirm) { setConfirm(true); return; } try { await delDoc(act.id); } catch (e) {} setAct(null); setConfirm(false); }}>{confirm ? tr("Підтвердити видалення") : tr("Видалити")}</button>
+      {nb && <div className="ov" onClick={() => setNb(null)}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="nb-title" onClick={e => e.stopPropagation()}>
+        <div className="shd"><h2 id="nb-title">{tr("Новий зошит")}</h2><IB n="close" label={tr("Закрити")} onClick={() => setNb(null)} /></div>
+        <label className="flab" htmlFor="nb-name">{tr("Назва (необов’язково)")}</label>
+        <input id="nb-name" style={{ marginTop: 6 }} autoFocus value={nb.title} onChange={e => setNb({ ...nb, title: e.target.value })} />
+        <div className="flab" id="nb-cov" style={{ marginTop: 14 }}>{tr("Обкладинка")}</div>
+        <div className="sw" role="group" aria-labelledby="nb-cov" style={{ marginTop: 8 }}>{PALETTE_C.map(([c, k, n]) => <button key={c} className={'swatch' + (nb.cover === c ? ' on' : '')} style={{ background: SOLID[k] }} onClick={() => setNb({ ...nb, cover: c })} aria-pressed={nb.cover === c} aria-label={tr(n)} />)}</div>
+        <div className="flab" id="nb-pap" style={{ marginTop: 14 }}>{tr("Папір")}</div>
+        <div className="seg" role="group" aria-labelledby="nb-pap" style={{ marginTop: 8 }}>{[['blank', tr("Чиста")], ['lined', tr("У лінійку")], ['grid', tr("Клітинка")], ['dots', tr("Крапки")]].map(([k, n]) => <button key={k} className={nb.tpl === k ? 'on' : ''} aria-pressed={nb.tpl === k} onClick={() => setNb({ ...nb, tpl: k })}>{n}</button>)}</div>
+        <div className="row" style={{ marginTop: 16 }}><button className="btn" onClick={() => start(newDoc('notebook', nb.title.trim() || dflt('notebook'), fid, nb.tpl, nb.cover))}>{tr("Створити")}</button></div>
+      </div></div>}
+
+      {act && <div className="ov" onClick={closeAct}><div className="sheet menu" role="dialog" aria-modal="true" aria-labelledby="act-title" onClick={e => e.stopPropagation()}>
+        <div className="shd"><h2 id="act-title">{tr(TYPES[act.type] || 'Зошит')}</h2><IB n="close" label={tr("Закрити")} onClick={closeAct} /></div>
+        {act.k === 'doc' ? <><label className="vh" htmlFor="act-name">{tr("Назва")}</label><input id="act-name" value={act.title} onChange={e => setAct({ ...act, title: e.target.value })} style={{ marginBottom: 10 }} /></> : <p className="act-nt">{act.title}</p>}
+        <button autoFocus onClick={() => { const x = act; closeAct(); openM(x); }}>{tr("Відкрити")}</button>
+        <button aria-pressed={act.fav} onClick={async () => {
+          const fav = !act.fav;
+          if (act.k === 'note') { onNoteFav(act.id); setAct({ ...act, fav }); return; }
+          const m = docs.find(x => x.id === act.id); if (!m) return; try { await putMeta({ ...m, fav }); setAct({ ...act, fav }); } catch (e) {}
+        }}>{act.fav ? tr("★ Прибрати з обраного") : tr("☆ Додати в обране")}</button>
+        {act.k === 'doc' && <button onClick={async () => { try { await duplicateDoc(act.id); } catch (e) { setMsg(tr("Не вдалося дублювати: можливо, закінчилося місце.")); } setAct(null); }}>{tr("Дублювати")}</button>}
+        <label className="flab" htmlFor="act-fold">{tr("Папка")}</label>
+        <select id="act-fold" value={act.folder === '' || act.folder == null ? '' : act.folder} style={{ margin: '6px 0 8px' }}
+          onChange={async e => {
+            const f = e.target.value === '' ? '' : Number(e.target.value);
+            if (act.k === 'note') { onNoteMove(act.id, f); setAct({ ...act, folder: f }); return; }
+            const m = docs.find(x => x.id === act.id); if (!m) return; try { await putMeta({ ...m, folder: f }); setAct({ ...act, folder: f }); } catch (er) {}
+          }}>
+          <option value="">{tr("Без папки")}</option>{folders.map(f => <option key={f.id} value={f.id}>{folderPath(folders, f.id)}</option>)}</select>
+        <button className={confirm ? 'danger' : 'danger-t'} onClick={async () => {
+          if (!confirm) { setConfirm(true); return; }
+          if (act.k === 'note') onNoteDel(act.id); else { try { await delDoc(act.id); } catch (e) {} }
+          setAct(null); setConfirm(false);
+        }}>{confirm ? tr("Підтвердити видалення") : tr("Видалити")}</button>
         <button onClick={closeAct}>{tr("Готово")}</button>
       </div></div>}
 
