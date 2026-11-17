@@ -6,7 +6,10 @@ export const maxDuration = 60;
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-5-5';
 
 // Глибина міркувань: швидкі режими (чат, швидке додавання) — low; тести й перевірка — medium.
-const EFFORT = { chat: 'low', parse: 'low', quiz: 'medium', grade: 'medium' };
+const EFFORT = { chat: 'low', parse: 'low', tutor: 'low', quiz: 'medium', grade: 'medium' };
+
+// Підпис перед кожним зображенням (наприклад «с. 4»): m.imageLabels[i] відповідає m.images[i].
+const labelOf = (m, i) => (Array.isArray(m.imageLabels) && m.imageLabels[i] ? String(m.imageLabels[i]).slice(0, 80) : '');
 
 // data:image/png;base64,... → блок зображення Claude.
 function imageBlock(url) {
@@ -24,7 +27,9 @@ function toClaudeMessages(messages) {
       const images = role === 'user' ? (m.images || []) : [];
       if (!text && !images.length) return null;
       if (!images.length) return { role, content: text };
-      return { role, content: [...images.map(imageBlock), { type: 'text', text: text || 'Опиши зображення.' }] };
+      const blocks = [];
+      images.forEach((u, i) => { const l = labelOf(m, i); if (l) blocks.push({ type: 'text', text: l + ':' }); blocks.push(imageBlock(u)); });
+      return { role, content: [...blocks, { type: 'text', text: text || 'Опиши зображення.' }] };
     })
     .filter(Boolean);
   // Розмова має починатися з повідомлення користувача.
@@ -71,7 +76,7 @@ async function deepseek(system, appMessages) {
         stream: false,
         max_tokens: 8192, // тест на 30 питань із поясненнями не вміщується в ліміт за замовчуванням
         response_format: { type: 'json_object' },
-        messages: [{ role: 'system', content: system }].concat(appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.images && m.images.length ? [{ type: 'text', text: m.text }].concat(m.images.map(u => ({ type: 'image_url', image_url: { url: u } }))) : m.text })))
+        messages: [{ role: 'system', content: system }].concat(appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.images && m.images.length ? [{ type: 'text', text: m.text }].concat(...m.images.map((u, i) => (labelOf(m, i) ? [{ type: 'text', text: labelOf(m, i) + ':' }] : []).concat([{ type: 'image_url', image_url: { url: u } }]))) : m.text })))
       })
     });
     const d = await r.json().catch(() => ({}));
@@ -94,7 +99,7 @@ async function gemini(system, appMessages) {
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
-        contents: appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }].concat((m.images || []).map(u => ({ inlineData: { mimeType: (String(u).match(/^data:([^;]+)/) || [])[1] || 'image/jpeg', data: String(u).split(',')[1] } }))) })),
+        contents: appMessages.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.text }].concat(...(m.images || []).map((u, i) => (labelOf(m, i) ? [{ text: labelOf(m, i) + ':' }] : []).concat([{ inlineData: { mimeType: (String(u).match(/^data:([^;]+)/) || [])[1] || 'image/jpeg', data: String(u).split(',')[1] } }]))) })),
         generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 }
       })
     });
@@ -134,16 +139,47 @@ const ACTIONS2 = ' Також: {"type":"create_folder","name":"..","color":"#hex
 
 const ACTIONS = 'Доступні дії: {"type":"add_task","t":"назва","area":"study|work|personal|health|home","h":години числом,"due":"YYYY-MM-DD або порожній рядок","pri":1 або 2,"repeat":"none|daily|weekdays|weekly"}; {"type":"add_event","t":"назва","area":"..","date":"YYYY-MM-DD","time":"HH:MM","h":тривалість у годинах,"repeat":"none|daily|weekdays|weekly"}; {"type":"update_task","id":число,"t":"..","area":"..","h":число,"date":"YYYY-MM-DD","time":"HH:MM","pri":1 або 2,"repeat":".."} (лише поля, що змінюються); {"type":"complete_task","id":число}; {"type":"delete_task","id":число}; {"type":"set_capacity","day":від 0 до 6 (0 це неділя),"h":години}; {"type":"set_start","hour":від 0 до 23}; {"type":"add_note","text":"текст нотатки"}; {"type":"add_cards","deck":"назва колоди","cards":[{"q":"питання","a":"відповідь"}]}.';
 
+// Матеріал, прикріплений чипом контексту (ctx.material): нотатка — текстом, зошит/дошка/фото — зображеннями сторінок
+// (у повідомленні користувача, кожне з підписом «с. N»), набір карток — списком q/a.
+function materialPrompt(m) {
+  if (!m || typeof m !== 'object') return '';
+  const title = String(m.title || '').slice(0, 80);
+  const pages = Array.isArray(m.pages) ? m.pages.filter(n => Number.isInteger(n) && n > 0).slice(0, 4) : [];
+  const head = 'МАТЕРІАЛ КОРИСТУВАЧА «' + title + '». Відповідай насамперед за ним. Якщо відповіді в матеріалі немає, прямо скажи про це («У матеріалі цього немає») і лише потім, якщо доречно, коротко поясни із загальних знань, позначивши це.';
+  if (m.kind === 'note') return head + '\nТекст матеріалу:\n"""\n' + String(m.text || '').slice(0, 15000) + '\n"""';
+  if (m.kind === 'deck') {
+    const cards = Array.isArray(m.cards) ? m.cards.filter(c => c && c.q).slice(0, 200).map(c => ({ q: String(c.q).slice(0, 500), a: String(c.a || '').slice(0, 1000) })) : [];
+    return head + ' Це набір карток (q питання, a відповідь): ' + JSON.stringify(cards);
+  }
+  if (m.kind === 'doc') return head + ' Сторінки додано до повідомлення як зображення, перед кожним підпис «с. N»: ' + pages.map(n => 'с. ' + n).join(', ') + '. Уважно прочитай рукописний текст і схеми. Коли спираєшся на конкретну сторінку, став позначку точно у форматі [с. N] (N — номер сторінки цифрами, наприклад [с. 4]); цю позначку не перекладай і не змінюй навіть німецькою. Не вигадуй номери сторінок, яких немає у списку.';
+  return '';
+}
+
 function appPrompt(ctx, parse) {
+  const { material, ...state } = ctx || {};
   return [
     'Ти особистий помічник для повсякденного життя людини: навчання, робота, особисті справи, здоров’я, дім. Відповідай українською, коротко й по суті.',
     'Ти керуєш застосунком через дії. Відповідай ТІЛЬКИ валідним JSON без markdown у форматі {"reply":"текст користувачу","actions":[...]}.',
     ACTIONS + ACTIONS2,
     'ПОДІЯ має конкретну дату й час і не переноситься (візит до лікаря, зустріч, пара, зміна): використовуй add_event. ЗАДАЧА це робота, яку можна зробити в будь-який час до терміну: використовуй add_task. Візит до лікаря ніколи не є задачею.',
     'Дати визначай за полем next21days (дата і день тижня). Не вгадуй. Якщо для події немає дати або часу, або день тижня не збігається з датою, НЕ додавай нічого: у reply постав одне коротке уточнювальне питання, actions порожній.',
-    parse ? 'РЕЖИМ ШВИДКОГО ДОДАВАННЯ: перетвори фразу користувача на 1-3 дії add_task або add_event, інших дій не роби. У reply одне коротке речення (або уточнення, якщо чогось бракує).' : 'Якщо користувач лише питає або просить пояснити, actions порожній. Дії виконуй лише тоді, коли користувач про це просить. Не вигадуй id: використовуй лише id зі стану.',
-    'Стан застосунку (JSON): ' + JSON.stringify(ctx)
-  ].join('\n');
+    parse ? 'РЕЖИМ ШВИДКОГО ДОДАВАННЯ: перетвори фразу користувача на 1-3 дії add_task або add_event, інших дій не роби. У reply одне коротке речення (або уточнення, якщо чогось бракує).' : 'Якщо користувач лише питає або просить пояснити, actions порожній. Дії виконуй лише тоді, коли користувач про це просить. Не вигадуй id: використовуй лише id зі стану. Користувач побачить запропоновані дії як картку з підтвердженням, тому в reply не пиши, що вже все зроблено: пиши, що пропонуєш (наприклад «Пропоную 3 задачі:»).',
+    parse ? '' : materialPrompt(material),
+    'Стан застосунку (JSON): ' + JSON.stringify(state)
+  ].filter(Boolean).join('\n');
+}
+
+// Режим «Навчання»: репетитор, який веде запитаннями, а не дає готову відповідь. Контракт відповіді той самий.
+function tutorPrompt(ctx) {
+  const { material } = ctx || {};
+  return [
+    'Ти репетитор, який допомагає людині навчитися, а не списати. Відповідай українською, коротко, дружньо, без зверхності.',
+    'Відповідай ТІЛЬКИ валідним JSON без markdown у форматі {"reply":"текст користувачу","actions":[...]}.',
+    'ПРАВИЛА: 1) Не давай готову відповідь чи розв’язок одразу, навіть якщо просять. Спершу з’ясуй, що людина вже знає. 2) Став ОДНЕ питання за раз і чекай відповіді; не став кілька питань в одному повідомленні. 3) На відповідь людини: коротко скажи, що правильно, що ні, і чому, потім наступне питання або наступний крок. 4) Якщо людина просить підказку («підказка», «не знаю», «Tipp») — дай одну невелику підказку, а не відповідь. Повну відповідь давай лише після двох спроб або якщо людина прямо попросить «покажи відповідь». 5) Коли тема пройдена (зазвичай після 3–5 питань) або людина хоче завершити — підсумуй: що вже добре, що повторити (конкретні пункти), і запропонуй «Зробити картки з помилок».',
+    'Дії: лише {"type":"add_cards","deck":"назва набору","cards":[{"q":"питання","a":"відповідь"}]} і лише тоді, коли людина прямо просить картки (наприклад «картки з помилок»): картки складай із питань, де були помилки або підказки. В усіх інших випадках actions порожній.',
+    materialPrompt(material),
+    'Сьогодні: ' + String(ctx && ctx.today || '')
+  ].filter(Boolean).join('\n');
 }
 
 function quizPrompt(ctx) {
@@ -173,7 +209,7 @@ export async function POST(req) {
     .filter(n => PROVIDERS[n] && process.env[PROVIDERS[n].key]);
   if (!order.length) return Response.json({ error: unavailable + 'не задано жодного ключа ШІ (ANTHROPIC_API_KEY, DEEPSEEK_API_KEY або GEMINI_API_KEY)' }, { status: 502 });
   const LANG_DE = '\n\nМОВА (найважливіше): усі тексти для користувача (поле reply, пояснення, назви задач і подій, питання та відповіді тестів, картки) пиши НІМЕЦЬКОЮ мовою (Deutsch), з правильною німецькою граматикою. Ключі JSON і службові значення (type, area, repeat, kind, template тощо) залишай точно за специфікацією. Питання тесту пиши мовою теми матеріалу (наприклад, англійською для англійської граматики), а пояснення до відповідей німецькою. Назви днів тижня й місяців німецькі.';
-  const base = mode === 'quiz' ? quizPrompt(ctx) : mode === 'grade' ? gradePrompt : appPrompt(ctx, mode === 'parse');
+  const base = mode === 'quiz' ? quizPrompt(ctx) : mode === 'grade' ? gradePrompt : mode === 'tutor' ? tutorPrompt(ctx) : appPrompt(ctx, mode === 'parse');
   const system = de ? base + LANG_DE : base;
   if (!messages.some(m => m && m.role === 'user' && (String(m.text || '').trim() || (m.images || []).length))) {
     return Response.json({ error: (de ? 'Leere Anfrage.' : 'Порожній запит.') }, { status: 400 });
