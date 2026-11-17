@@ -131,6 +131,60 @@ export function ptsOf(s, ws) {
   return s.p;
 }
 
+// ===== Ласо =====
+// Рамка об'єкта в координатах сторінки: [x0, y0, x1, y1] з урахуванням товщини лінії
+let measureG = null;
+export function strokeBox(s, ws) {
+  if (s.k === 'text') {
+    const fs = s.s * ws, lines = String(s.t || '').split('\n');
+    if (!measureG && typeof document !== 'undefined') measureG = document.createElement('canvas').getContext('2d');
+    let w = 0;
+    if (measureG) { measureG.font = fs + 'px -apple-system, system-ui, sans-serif'; for (const ln of lines) w = Math.max(w, measureG.measureText(ln).width); }
+    else w = Math.max(...lines.map(l => l.length)) * fs * 0.55;
+    return [s.x, s.y - fs * 0.85, s.x + w, s.y + (lines.length - 1) * fs * 1.25 + fs * 0.25];
+  }
+  const q = s.k ? ptsOf(s, ws) : s.p;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < q.length; i += 2) { if (q[i] < x0) x0 = q[i]; if (q[i] > x1) x1 = q[i]; if (q[i + 1] < y0) y0 = q[i + 1]; if (q[i + 1] > y1) y1 = q[i + 1]; }
+  let m = (s.w || 3) * ws / 2;
+  if (s.k === 'arrow') m = Math.max(m, Math.max(26 * ws, (s.w || 3) * ws * 4) * 0.5);
+  else if (!s.k && s.n === 'brush') m *= 1.95; else if (!s.k && s.n === 'fountain') m *= 1.6;
+  return [x0 - m, y0 - m, x1 + m, y1 + m];
+}
+export function boxOf(list, ws) {
+  let b = null;
+  for (const s of list) { const r = strokeBox(s, ws); b = b ? [Math.min(b[0], r[0]), Math.min(b[1], r[1]), Math.max(b[2], r[2]), Math.max(b[3], r[3])] : r; }
+  return b;
+}
+const r1 = v => Math.round(v * 10) / 10;
+// Перенесення й пропорційне масштабування: x' = ox + (x - ox)·k + dx. Повертає новий об'єкт тих самих полів (без нових ключів).
+export function xformStroke(s, f) {
+  const k = f.k == null ? 1 : f.k, X = x => r1(f.ox + (x - f.ox) * k + f.dx), Y = y => r1(f.oy + (y - f.oy) * k + f.dy);
+  const o = { ...s };
+  if (s.k === 'text') { o.x = X(s.x); o.y = Y(s.y); if (k !== 1) o.s = r1(s.s * k); return o; }
+  if (s.p) { const p = new Array(s.p.length); for (let i = 0; i < p.length; i += 2) { p[i] = X(s.p[i]); p[i + 1] = Y(s.p[i + 1]); } o.p = p; }
+  if (k !== 1 && s.w) o.w = Math.max(0.5, r1(s.w * k));
+  return o;
+}
+export function inPoly(poly, x, y) {
+  let c = false;
+  for (let i = 0, j = poly.length - 2; i < poly.length; j = i, i += 2) {
+    const xi = poly[i], yi = poly[i + 1], xj = poly[j], yj = poly[j + 1];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c;
+  }
+  return c;
+}
+// Що потрапило в петлю: рукописні штрихи — якщо ≥ 50 % точок усередині; фігури й текст — ≥ 50 % контрольних точок або центр рамки
+export function lassoPick(strokes, poly, ws) {
+  return strokes.filter(s => {
+    if (s.k === 'text') { const b = strokeBox(s, ws), cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; return inPoly(poly, cx, cy) || [[b[0], b[1]], [b[2], b[1]], [b[0], b[3]], [b[2], b[3]]].filter(q => inPoly(poly, q[0], q[1])).length >= 3; }
+    const q = s.k ? ptsOf(s, ws) : s.p, n = q.length / 2; if (!n) return false;
+    const step = Math.max(1, Math.floor(n / 200)); let a = 0, t = 0;
+    for (let i = 0; i < n; i += step) { t++; if (inPoly(poly, q[2 * i], q[2 * i + 1])) a++; }
+    return a / t >= 0.5;
+  });
+}
+
 const segDist = (px, py, ax, ay, bx, by) => {
   const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? clamp(((px - ax) * dx + (py - ay) * dy) / l, 0, 1) : 0;
   return Math.hypot(px - ax - dx * t, py - ay - dy * t);

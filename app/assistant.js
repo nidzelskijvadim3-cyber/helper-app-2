@@ -56,7 +56,7 @@ const pagesStr = ps => {
   for (let i = 0; i < a.length; i++) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(j > i ? a[i] + '–' + a[j] : String(a[i])); i = j; }
   return out.join(', ');
 };
-export const ctxLabel = c => (!c ? '' : c.k === 'doc' && c.pages && c.pages.length ? c.title + ' · ' + tr("с.") + ' ' + pagesStr(c.pages) : c.title);
+export const ctxLabel = c => (!c ? '' : c.k === 'doc' && c.sel && c.pages && c.pages.length ? tr("Виділено") + ': ' + c.title + ', ' + tr("с.") + ' ' + pagesStr(c.pages) : c.k === 'doc' && c.pages && c.pages.length ? c.title + ' · ' + tr("с.") + ' ' + pagesStr(c.pages) : c.title);
 const whenStr = ts => {
   const d = new Date(ts), t0 = new Date(); t0.setHours(0, 0, 0, 0); const d0 = new Date(d); d0.setHours(0, 0, 0, 0);
   const diff = Math.round((t0 - d0) / 864e5);
@@ -197,9 +197,9 @@ export default function Assistant(props) {
     if (!c) return { material: null, images: [], labels: [] };
     if (c.k === 'note') { const n = notes.find(x => x.id === c.id); if (!n) throw new Error(tr("Матеріал не знайдено. Приберіть його з контексту.")); return { material: { kind: 'note', title: c.title, text: n.text.slice(0, 15000) }, images: [], labels: [] }; }
     if (c.k === 'deck') { const dc = cards.filter(x => (x.deck || '') === c.id).slice(0, 200).map(({ q, a }) => ({ q, a })); return { material: { kind: 'deck', title: c.title, cards: dc }, images: [], labels: [] }; }
-    const r = await docPageImages(c.id, c.pages && c.pages.length ? c.pages : [1]).catch(() => null);
+    const r = await docPageImages(c.id, c.pages && c.pages.length ? c.pages : [1], 1600, 0.7, c.sel).catch(() => null); // c.sel — фрагмент, виділений ласо
     if (!r) throw new Error(tr("Матеріал не знайдено. Приберіть його з контексту."));
-    return { material: { kind: 'doc', title: c.title, pages: r.imgs.map(x => x.page) }, images: r.imgs.map(x => x.url), labels: r.imgs.map(x => 'с. ' + x.page) };
+    return { material: { kind: 'doc', title: c.title, pages: r.imgs.map(x => x.page) }, images: r.imgs.map(x => x.url), labels: r.imgs.map(x => 'с. ' + x.page + (c.sel ? ' (виділений фрагмент сторінки)' : '')) };
   }
   const forAI = m => {
     if (m.role !== 'model' || !m.prev) return m.text || '';

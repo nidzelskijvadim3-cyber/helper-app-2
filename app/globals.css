@@ -887,3 +887,30 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .asst.side .a-comp{padding:10px 12px 14px;border-top:1px solid var(--bd2)}
 }
 .a-ta::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ===== Ласо: петля, рамка виділення з ручками, плаваюче меню ===== */
+/* Папір завжди білий, тож колір виділення фіксований (#A65F00 на #fff — 4.9:1) + біла підкладка для темного чорнила й фото */
+.lassosvg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2}
+.selfr{position:absolute;z-index:3;box-sizing:border-box;border:2px dashed #A65F00;border-radius:6px;background:rgba(242,169,59,.06);box-shadow:0 0 0 1px rgba(255,255,255,.85);cursor:move;touch-action:none}
+.selfr.drag{background:none}
+.selh{position:absolute;width:44px;height:44px;display:flex;align-items:center;justify-content:center;touch-action:none}
+.selh i{display:block;width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid #A65F00;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.selh.h0{left:-23px;top:-23px;cursor:nwse-resize}.selh.h1{right:-23px;top:-23px;cursor:nesw-resize}
+.selh.h2{right:-23px;bottom:-23px;cursor:nwse-resize}.selh.h3{left:-23px;bottom:-23px;cursor:nesw-resize}
+.selmenu{position:absolute;z-index:4;box-sizing:border-box;width:max-content;padding:4px;border-radius:var(--r-12);background:var(--surface);border:1px solid var(--bd);box-shadow:0 8px 20px rgba(0,0,0,.35);color:var(--tx)}
+.selrow{display:flex;flex-wrap:wrap;gap:2px}
+.selb{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--tx);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap}
+.selb:hover{background:var(--fill)}
+.selb:focus-visible{outline:2px solid var(--accent-tx);outline-offset:-2px}
+.selb.pri{background:var(--accent-soft);color:var(--accent-tx);font-weight:600}
+.selb.wn{color:var(--wn)}
+.selb[aria-expanded="true"]{background:var(--fill)}
+.seldot{display:block;width:18px;height:18px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--tx3)}
+.selpal{margin:4px 0 0;padding-top:4px;border-top:1px solid var(--bd2);grid-template-columns:repeat(auto-fill,minmax(44px,44px));justify-content:start}
+.edtb{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;border:0;border-radius:var(--r-12);background:none;color:var(--tx);font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
+.edtb:hover{background:var(--fill)}
+.edctx .edhint{white-space:nowrap}
+/* 9 інструментів (з «Ласо») на телефоні: рівні частки ряду, до 44 px; 375 → ≈ 40 px, 320 → ≈ 34 px (висота 44; мінімум WCAG 2.2 — 24) */
+@media (max-width:767px){.edtools{flex:1 1 100%;justify-content:space-between}.edtools .ib{flex:1 1 0;min-width:0;max-width:44px}}
+/* на вузькому екрані меню переноситься: дві «ШІ»-дії першим рядком, решта — значки з підписами нижче */
+@media (max-width:520px){.selb{padding:0 10px;font-size:13px}}
