@@ -24,7 +24,8 @@ const P = {
   check: <path d="M5 13l4 4L19 7" />,
   copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></>,
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
-  edit: <><path d="M4 20h4L19 9l-4-4L4 16z" /></>
+  edit: <><path d="M4 20h4L19 9l-4-4L4 16z" /></>,
+  flag: <><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>
 };
 const I = ({ n, s = 20 }) => <svg viewBox="0 0 24 24" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{P[n]}</svg>;
 
@@ -68,7 +69,7 @@ const dayStr = s => new Date(s + 'T00:00:00').toLocaleDateString(loc(), { weekda
 const durStr = h => { const v = Number(h) > 0 ? Number(h) : 1; return v < 1 ? Math.round(v * 60) + ' ' + tr("хв") : r1(v) + ' ' + tr("год"); };
 
 // Групи дій у картці-превʼю
-const GROUP = t => (t === 'add_task' || t === 'add_event' ? 'plan' : t === 'delete_task' ? 'del' : ['add_note', 'add_cards', 'create_folder', 'create_doc'].includes(t) ? 'create' : 'change');
+const GROUP = t => (t === 'add_task' || t === 'add_event' || t === 'add_exam' ? 'plan' : t === 'delete_task' ? 'del' : ['add_note', 'add_cards', 'create_folder', 'create_doc'].includes(t) ? 'create' : 'change');
 const GORDER = ['plan', 'create', 'change', 'del'];
 
 // Розмітка відповіді: **жирний**, `код`, списки, посилання на сторінки [с. N]
@@ -95,7 +96,7 @@ function AText({ text, refDoc, onRef }) {
 const SR = () => (typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null);
 
 export default function Assistant(props) {
-  const { side, onClose, chats, setChats, curId, setCurId, call, buildState, apply, undo, items, notes, cards, folders, lastMat, pending, clearPending, onReview, onOpenRef, on401 } = props;
+  const { side, onClose, chats, setChats, curId, setCurId, call, buildState, apply, undo, items, notes, cards, folders, lastMat, pending, clearPending, onReview, onOpenRef, on401, rev, exam, onExamPlan } = props;
   const [draft, setDraft] = useState({ mode: 'chat', ctx: null });
   const [view, setView] = useState('chat'); // chat | history
   const [inp, setInp] = useState('');
@@ -170,8 +171,9 @@ export default function Assistant(props) {
   useEffect(() => { if (view === 'history' && histH.current) histH.current.focus(); }, [view]);
 
   // ===== дані для стартових дій і пікерів =====
-  const left = cards.filter(c => !c.known);
-  const leftDecks = [...new Set(left.map(c => c.deck || ''))];
+  // «Повторити N карток»: N — черга інтервального повторення з page.js (due ≤ зараз + нові в межах ліміту)
+  const revN = rev ? rev.n : 0;
+  const leftDecks = rev ? rev.decks : [];
   const noTime = items.filter(i => i.kind !== 'event' && !(i.repeat && i.repeat !== 'none') && !i.done && !isTime(i.time));
   const decks = (() => { const m = new Map(); for (const c of cards) { const k = c.deck || ''; m.set(k, (m.get(k) || 0) + 1); } return [...m.entries()]; })();
   const deckName = d => d || tr("Без набору");
@@ -181,7 +183,8 @@ export default function Assistant(props) {
   const hr = new Date().getHours();
   const hello = hr >= 5 && hr < 12 ? tr("Добрий ранок.") : hr >= 12 && hr < 18 ? tr("Добрий день.") : tr("Добрий вечір.");
   const starts = [];
-  if (left.length) starts.push({ k: 'rev', ic: 'cards', hot: true, t: tr("Повторити") + ' ' + left.length + ' ' + plural(left.length, "картку", "картки", "карток"), s: leftDecks.length === 1 ? deckName(leftDecks[0]) : leftDecks.length + ' ' + plural(leftDecks.length, "набір", "набори", "наборів"), go: () => onReview() });
+  if (revN) starts.push({ k: 'rev', ic: 'cards', hot: true, t: tr("Повторити") + ' ' + revN + ' ' + plural(revN, "картку", "картки", "карток"), s: leftDecks.length === 1 ? deckName(leftDecks[0]) : leftDecks.length + ' ' + plural(leftDecks.length, "набір", "набори", "наборів"), go: () => onReview() });
+  if (exam && onExamPlan) starts.push({ k: 'exam', ic: 'flag', tone: 'health', t: tr("План підготовки до іспиту") + ' ' + exam.t, s: exam.days === 0 ? tr("Іспит сьогодні") : exam.days === 1 ? tr("Іспит завтра") : getLang() === 'de' ? 'in ' + exam.days + ' Tagen' : 'через ' + exam.days + ' ' + plural(exam.days, "день", "дні", "днів"), go: () => onExamPlan() });
   if (noTime.length) starts.push({ k: 'tom', ic: 'plan', tone: 'home', t: tr("Скласти план на завтра"), s: noTime.length + ' ' + plural(noTime.length, "задача", "задачі", "задач") + ' ' + tr("без дати або часу"), go: () => send(tr("Склади план на завтра з моїх задач без дати або часу. Врахуй години на задачі й події, що вже є."), { mode: 'chat' }) });
   if (lastCtx) starts.push({ k: 'ask', ic: 'doc', tone: 'study', t: tr("Запитати про") + ' «' + lastCtx.title + '»', s: tr("Останній відкритий матеріал"), go: () => { setCtx(lastCtx); taRef.current && taRef.current.focus(); } });
   starts.push({ k: 'now', ic: 'now', tone: 'health', t: tr("Що робити просто зараз?"), s: items.length ? tr("З урахуванням плану на сьогодні") : tr("Підказка, з чого почати"), go: () => send(tr("Що робити просто зараз?")) });
@@ -196,6 +199,14 @@ export default function Assistant(props) {
   async function loadMaterial(c) {
     if (!c) return { material: null, images: [], labels: [] };
     if (c.k === 'note') { const n = notes.find(x => x.id === c.id); if (!n) throw new Error(tr("Матеріал не знайдено. Приберіть його з контексту.")); return { material: { kind: 'note', title: c.title, text: n.text.slice(0, 15000) }, images: [], labels: [] }; }
+    // папка (напр. матеріали іспиту): текстові нотатки папки + назви зошитів/дошок (їхні сторінки не надсилаються)
+    if (c.k === 'folder') {
+      const ns = notes.filter(x => x.folder === c.id && x.text && x.text.trim()).sort((a, b) => (b.upd || 0) - (a.upd || 0));
+      let budget = 15000; const nl = [];
+      for (const x of ns) { if (budget <= 0) break; const tx = x.text.slice(0, budget); budget -= tx.length; nl.push({ t: x.text.trim().split('\n')[0].slice(0, 60), text: tx }); }
+      const ds = (await listDocs().catch(() => [])).filter(d => d.folder === c.id).slice(0, 40).map(d => d.title || tr("Без назви"));
+      return { material: { kind: 'folder', title: c.title, notes: nl, docs: ds }, images: [], labels: [] };
+    }
     if (c.k === 'deck') { const dc = cards.filter(x => (x.deck || '') === c.id).slice(0, 200).map(({ q, a }) => ({ q, a })); return { material: { kind: 'deck', title: c.title, cards: dc }, images: [], labels: [] }; }
     const r = await docPageImages(c.id, c.pages && c.pages.length ? c.pages : [1]).catch(() => null);
     if (!r) throw new Error(tr("Матеріал не знайдено. Приберіть його з контексту."));
@@ -285,6 +296,7 @@ export default function Assistant(props) {
         if (rep) ch.push(rep); if (fo) ch.push(fo);
         return { t: tr("Змінити") + ' ' + nm(a.id), m: ch.join(' · ') };
       }
+      case 'add_exam': return { t: tr("Іспит") + ': ' + (a.t || ''), m: j([isDate(a.date) ? dayStr(a.date) : '?', isTime(a.time) ? a.time : '', fo]) };
       case 'complete_task': return { t: tr("Позначити виконаною") + ' ' + nm(a.id), m: '' };
       case 'delete_task': return { t: tr("Видалити") + ' ' + nm(a.id), m: tr("Запис зникне з Плану") };
       case 'set_capacity': return { t: tr("Годин на задачі") + ': ' + tr(DNF[Number(a.day)] || '?'), m: r1(Number(a.h) || 0) + ' ' + tr("год") };
@@ -460,7 +472,7 @@ export default function Assistant(props) {
   const composer = <section className="a-comp" aria-label={tr("Поле запиту")}>
     {toast && toast.id === cur.id && <div className="a-toast" role="status" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}><I n="check" s={18} /><span>{tr("Готово")} · {toast.sum}</span><button className="a-tl" onClick={undoToast}>{tr("Скасувати")}</button></div>}
     {(ctx || att.length > 0) && <div className="a-chips">
-      {ctx && <span className="a-chip"><I n={ctx.k === 'deck' ? 'cards' : 'doc'} s={14} /><span className="a-chipt">{ctxLabel(ctx)}</span><button onClick={() => setCtx(null)} aria-label={tr("Прибрати контекст") + ' ' + ctxLabel(ctx)} title={tr("Прибрати")}>×</button></span>}
+      {ctx && <span className="a-chip"><I n={ctx.k === 'deck' ? 'cards' : ctx.k === 'folder' ? 'folder' : 'doc'} s={14} /><span className="a-chipt">{ctxLabel(ctx)}</span><button onClick={() => setCtx(null)} aria-label={tr("Прибрати контекст") + ' ' + ctxLabel(ctx)} title={tr("Прибрати")}>×</button></span>}
       {att.map((u, i) => <span className="a-chip ph" key={i}><span className="a-thumb" style={{ backgroundImage: 'url(' + u + ')' }} aria-hidden="true" /><span className="a-chipt">{tr("Фото")} {i + 1}</span><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label={tr("Прибрати фото") + ' ' + (i + 1)} title={tr("Прибрати")}>×</button></span>)}
     </div>}
     <div className="a-mode">

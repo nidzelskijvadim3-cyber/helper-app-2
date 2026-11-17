@@ -887,3 +887,67 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .asst.side .a-comp{padding:10px 12px 14px;border-top:1px solid var(--bd2)}
 }
 .a-ta::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ===== Навчання: інтервальне повторення, «Поясни», картки з помилок; План: іспити ===== */
+.rvs-a{display:flex;margin:0 0 8px}
+.rvs-a .btn-a.big{width:100%}
+.fqq{font-size:14px;color:var(--tx2);white-space:pre-wrap}
+.rvs-g{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}
+.rg{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:60px;padding:8px 10px;border-radius:var(--r-14);border:1px solid var(--bd);background:var(--surface);color:var(--tx);font:inherit;cursor:pointer}
+.rg-t{font-size:16px;font-weight:600}
+.rg-s{font-size:13px;color:var(--tx2);font-variant-numeric:tabular-nums}
+.rg.again{border-color:var(--wn)}.rg.again .rg-t{color:var(--wn)}
+.rg.good{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}.rg.good .rg-s{color:var(--on-accent);opacity:.85}
+.rg.easy{grid-column:1 / -1;min-height:48px;flex-direction:row;gap:8px}
+.rg:focus-visible{outline:3px solid var(--accent-tx);outline-offset:2px}
+.rvs-k{text-align:center}
+@media (min-width:768px){.rvs-g{grid-template-columns:1fr 1fr 1fr}.rg.easy{grid-column:auto;flex-direction:column;min-height:60px;gap:2px}}
+.dk-prog{height:6px;border-radius:3px;background:var(--fill);overflow:hidden;margin:6px 0 16px}
+.dk-prog i{display:block;height:100%;background:var(--ok)}
+.xpl{margin-top:10px}
+.xpl-b{display:inline-flex;align-items:center;gap:6px}
+.xpl-o:empty{display:none}
+.xpl-l{display:flex;align-items:center;gap:8px;margin:8px 0 0;font-size:14px;color:var(--tx2)}
+.xpl-e{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin-top:8px;font-size:14px;color:var(--wn)}
+.xpl-t{margin-top:8px;padding:10px 12px;border-radius:var(--r-12);background:var(--accent-soft);font-size:15px;line-height:1.45;color:var(--tx)}
+.xpl-t .li{display:flex;gap:6px}.xpl-t .gap{height:6px}
+.ctp-h{display:flex;align-items:center;justify-content:space-between;margin-top:14px}
+.ctp-l{list-style:none;margin:6px 0 0;padding:0;border:1px solid var(--bd);border-radius:var(--r-14);overflow:hidden}
+.ctp-l li:last-child .a-pvr{border-bottom:0}
+.ctp-l .a-pvr{border-bottom-color:var(--bd2)}
+.ctp-l .a-pvm{white-space:pre-wrap}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom));z-index:60;display:flex;align-items:center;gap:10px;width:max-content;max-width:calc(100% - 32px);min-height:48px;background:var(--surface);border:1px solid var(--bd);border-radius:var(--r-14);padding:0 4px 0 14px;font-size:14px;color:var(--tx);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.toast svg{color:var(--ok-tx);flex:none}
+.toast span{min-width:0}
+/* іспит: тон «здоров’я/попередження» (токени --c-health*), іконка-прапорець */
+.exb{display:flex;align-items:center;gap:10px;width:100%;min-height:48px;margin:0 0 14px;padding:8px 12px;border:0;border-left:4px solid var(--c-health);border-radius:var(--r-14);background:var(--c-health-bg);color:var(--tx);font:inherit;font-size:15px;text-align:left;cursor:pointer}
+.exb.soon{box-shadow:inset 0 0 0 1px var(--c-health)}
+.exb-i{color:var(--c-health);display:flex;flex:none}
+.exb-t{flex:1;min-width:0}
+.exb-a{display:flex;align-items:center;gap:2px;flex:none;font-size:13px;font-weight:600;color:var(--c-health-sub)}
+.exr{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;margin:0 0 10px;padding:8px 12px;border:0;border-left:4px solid var(--c-health);border-radius:var(--r-14);background:var(--c-health-bg);color:var(--tx);font:inherit;text-align:left;cursor:pointer}
+.card .exr{margin:6px 0}
+.exr-i{color:var(--c-health);display:flex;flex:none}
+.exr-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.exr-t{font-size:15px;font-weight:600}
+.exr-m{font-size:13px;color:var(--c-health-sub)}
+.exr>svg:last-child{color:var(--c-health-sub);flex:none}
+.tlb.ev.ex{--cat:var(--c-health);--cat-bg:var(--c-health-bg);--cat-sub:var(--c-health-sub)}
+.tlb.ev.ex .tlt svg{vertical-align:-2px;color:var(--c-health)}
+.cd .exm{position:absolute;top:3px;right:4px;display:flex;color:var(--c-health)}
+.cd.ex:not(.td){box-shadow:inset 0 0 0 2px var(--c-health)}
+.cd.td .exm{color:var(--on-accent)}
+.ex-k{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--c-health);text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px}
+.exd-cd{display:flex;align-items:baseline;gap:8px;padding:14px 16px;border-radius:var(--r-14);background:var(--c-health-bg);margin-bottom:14px}
+.exd-cd b{font-family:var(--font-display);font-size:34px;line-height:1;color:var(--tx)}
+.exd-cd span{font-size:15px;color:var(--c-health-sub)}
+.exd-l{margin:0 0 16px;display:flex;flex-direction:column;gap:10px}
+.exd-l div{display:flex;flex-direction:column;gap:2px}
+.exd-l dt{font-size:12px;font-weight:600;color:var(--tx2);text-transform:uppercase;letter-spacing:.5px}
+.exd-l dd{margin:0;font-size:15px;white-space:pre-wrap}
+.exd-l .lnk{padding:0;font-size:15px;text-align:left}
+.exd-go{width:100%;margin-bottom:8px}
+.exf{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+.exf .row{margin:4px 0}
+.exf-c{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.rv>.rv-go.full{grid-column:1 / -1;grid-row:auto;margin-top:8px}
