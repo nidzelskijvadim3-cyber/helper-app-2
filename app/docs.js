@@ -32,6 +32,23 @@ export async function shrink(file, max = 1024, q = 0.72) {
 const readFile = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
 const loadImg = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
 
+// Помічник: сторінки зошита/дошки/фото → JPEG (offscreen canvas, renderPage), до 4 сторінок, довша сторона ≤ max.
+// nums — номери сторінок з 1. Повертає { title, pages: кількість сторінок, imgs: [{ page, url }] }.
+export const getDocFull = getDoc;
+export async function docPageImages(id, nums, max = 1600, q = 0.7) {
+  const d = await getDoc(id); if (!d) return null;
+  const imgs = [];
+  for (const n of (nums || []).slice(0, 4)) {
+    const p = d.pages[n - 1]; if (!p) continue;
+    const im = p.img ? await loadImg(p.img).catch(() => null) : null;
+    const sc = Math.min(1, max / Math.max(p.w, p.h));
+    const c = document.createElement('canvas'); c.width = Math.round(p.w * sc); c.height = Math.round(p.h * sc);
+    const g = c.getContext('2d'); g.scale(sc, sc); renderPage(g, p, im);
+    imgs.push({ page: n, url: c.toDataURL('image/jpeg', q) });
+  }
+  return { title: d.title, type: d.type, pages: d.pages.length, imgs };
+}
+
 async function prepImage(file, scan) {
   const img = await loadImg(await readFile(file));
   const sc = Math.min(1, 1600 / Math.max(img.width, img.height));
@@ -138,9 +155,9 @@ async function makeThumb(d) {
   return c.toDataURL('image/jpeg', 0.6);
 }
 
-function Editor({ doc, onSave, onClose }) {
+function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   const [d, setD] = useState(doc);
-  const [pi, setPi] = useState(0);
+  const [pi, setPi] = useState(() => Math.max(0, Math.min(doc.pages.length - 1, (Number(startPage) || 1) - 1)));
   const [tool, setTool] = useState(() => { const t = lsGet('helper-tool'); return TOOLS.includes(t) && t !== 'hand' ? t : 'pen'; });
   const [pens, setPens] = useState(loadPens);
   const [shape, setShape] = useState('line');
@@ -377,6 +394,14 @@ function Editor({ doc, onSave, onClose }) {
     }, 'image/png');
   };
   const close = async () => { try { const t = await makeThumb(d); await flush({ thumb: t }); } catch (e) {} onClose(); };
+  // Помічник: посилання [с. N] у відповіді відкриває цю сторінку (jump = { page, t })
+  useEffect(() => { if (jump && jump.page) goPage(jump.page - 1); }, [jump]);
+  // «Помічник» у шапці: на iPad ≥1024 — панель поруч (документ лишається), інакше — зберегти, закрити й перейти у вкладку
+  const askAI = async () => {
+    const info = { id: d.id, title: d.title, type: d.type, page: pi + 1, pages: d.pages.length };
+    if (window.matchMedia('(min-width:1024px)').matches) { flush().catch(() => {}); onAsk(info); return; }
+    await close(); onAsk(info);
+  };
 
   const toolLabel = k => tr(k === 'marker' ? NIBN[pens.marker.nib] : TOOLN[k]);
   const toolIcon = k => (k === 'shape' ? shape : k);
@@ -398,7 +423,7 @@ function Editor({ doc, onSave, onClose }) {
   const stylusTg = <button className={'tg' + (penOnly ? ' on' : '')} aria-pressed={penOnly} onClick={togglePenOnly}><span>{tr("Малювати лише стилусом")}<small className="tgsub">{tr("Палець гортає й масштабує сторінку")}</small></span><b>{penOnly ? '✓' : ''}</b></button>;
 
   return (
-    <div className="nv ed">
+    <div className={'nv ed' + (aiOn ? ' with-ai' : '')}>
       <div className="edbar" ref={barRef}>
         <div className="edrow2">
           <IB n="check" label={tr("Готово")} onClick={close} />
@@ -408,6 +433,9 @@ function Editor({ doc, onSave, onClose }) {
           <IB n="pages" label={tr("Сторінки")} on={strip} onClick={() => setStrip(!strip)} />
           <IB n="share" label={tr("Поділитися")} onClick={share} />
           <IB n="more" label={tr("Ще")} on={pop === 'more'} onClick={() => openPop('more')} />
+          {onAsk && <button className={'ed-ai' + (aiOn ? ' on' : '')} onClick={askAI} aria-pressed={!!aiOn} aria-label={tr("Помічник: запитати про цю сторінку")} title={tr("Помічник: запитати про цю сторінку")}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" /></svg>
+            <span className="ed-ai-l">{tr("Помічник")}</span></button>}
         </div>
         <div className="edrow3">
           <div className="edtools" role="group" aria-label={tr("Інструменти")}>
@@ -504,8 +532,10 @@ function Cover({ m }) {
   return <span className={'cv paper' + (m.type === 'board' ? '' : ' lined')} aria-hidden="true">{fav}</span>;
 }
 
-export default function Materials({ folders, notes, fview, setFview, onOpenNote, onNewNote, onFolderForm, onNoteFav, onNoteMove, onNoteDel, onStudy, folderExtra }) {
+export default function Materials({ folders, notes, fview, setFview, onOpenNote, onNewNote, onFolderForm, onNoteFav, onNoteMove, onNoteDel, onStudy, folderExtra, onAsk, aiSide, openReq, onOpenReqDone, onOpened, onEdClose }) {
   const [docs, setDocs] = useState([]);
+  const [edPage, setEdPage] = useState(1);
+  const [jump, setJump] = useState(null);
   const [flt, setFlt] = useState('all');
   const [favOnly, setFavOnly] = useState(false);
   const [sort, setSort] = useState('new');
@@ -565,9 +595,22 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
   const pathIds = new Set(fo ? breadcrumb(folders, fo.id).map(f => f.id) : []);
 
   const dflt = type => tr(TYPES[type]) + ' ' + new Date().toLocaleDateString(loc());
-  const openDoc = async x => { try { const d = await getDoc(x.id); if (d) setEd(d); else setMsg(tr("Не вдалося відкрити документ.")); } catch (e) { setMsg(tr("Не вдалося відкрити документ.")); } };
+  const openDoc = async (x, page) => {
+    try {
+      const d = await getDoc(x.id);
+      if (d) { setEdPage(page || 1); setEd(d); if (onOpened) onOpened({ k: 'doc', id: d.id, title: d.title, type: d.type, page: page || 1 }); }
+      else setMsg(tr("Не вдалося відкрити документ."));
+    } catch (e) { setMsg(tr("Не вдалося відкрити документ.")); }
+  };
+  // Помічник: відкрити матеріал на сторінці N (посилання [с. N]); якщо цей документ уже відкритий — лише перейти на сторінку
+  useEffect(() => {
+    if (!openReq) return;
+    if (ed && ed.id === openReq.id) setJump({ page: openReq.page, t: Date.now() });
+    else openDoc({ id: openReq.id }, openReq.page);
+    if (onOpenReqDone) onOpenReqDone();
+  }, [openReq]);
   const start = async dd => {
-    try { await saveDoc(dd, 'all'); setEd(dd); }
+    try { await saveDoc(dd, 'all'); setEdPage(1); setEd(dd); }
     catch (e) { setMsg(tr("Не вдалося зберегти документ: можливо, закінчилося місце.")); }
     setMenu(false); setNb(null);
   };
@@ -763,7 +806,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
         <button onClick={closeAct}>{tr("Готово")}</button>
       </div></div>}
 
-      {ed && <Editor doc={ed} onSave={(d, dirty) => saveDoc(d, dirty)} onClose={() => setEd(null)} />}
+      {ed && <Editor key={ed.id} doc={ed} startPage={edPage} jump={jump} onAsk={onAsk} aiOn={aiSide} onSave={(d, dirty) => saveDoc(d, dirty)} onClose={() => { setEd(null); setJump(null); if (onEdClose) onEdClose(); }} />}
     </div>
   );
 }

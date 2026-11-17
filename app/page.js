@@ -6,6 +6,7 @@ import { canMoveFolder, folderPath } from './lib';
 import { syncNow, syncStatus, getSyncMeta, setSyncOn } from './sync';
 import { nsKey, listAccounts, getActiveId, setActiveId, addAccount, activeAccount, deriveAccountId, validateCredentials } from './accounts';
 import { t as tr, loc, setLang, getLang, plural } from './i18n';
+import Assistant, { migrateChats } from './assistant';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 const DNF = ['неділя', 'понеділок', 'вівторок', 'середа', 'четвер', 'п’ятниця', 'субота'];
@@ -193,11 +194,11 @@ function parseQuiz(raw) {
 const okOf = (t, q, i) => (q.type === 'choice' ? t.ans[i] === q.answer : (t.grades && t.grades[i] ? t.grades[i].score >= 0.7 : null));
 const tScore = t => t.qs.reduce((s, q, i) => s + (q.type === 'choice' ? (t.ans[i] === q.answer ? 1 : 0) : (t.grades && t.grades[i] ? t.grades[i].score : 0)), 0);
 
-async function callAI(body) {
+async function callAI(body, signal) {
   let r;
   try {
-    r = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-pass': localStorage.getItem('helper-pass') || '' }, body: JSON.stringify({ ...body, lang: getLang() }) });
-  } catch (e) { throw new Error(tr("Немає зв’язку із сервером.")); }
+    r = await fetch('/api/chat', { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'x-pass': localStorage.getItem('helper-pass') || '' }, body: JSON.stringify({ ...body, lang: getLang() }) });
+  } catch (e) { if (e && e.name === 'AbortError') throw e; throw new Error(tr("Немає зв’язку із сервером.")); }
   const d = await r.json().catch(() => ({}));
   if (r.status === 401) { const err = new Error(tr("Введіть пароль у налаштуваннях (шестерня вгорі) і повторіть запит.")); err.code = 401; throw err; }
   if (!d.text) throw new Error(d.error || tr("Порожня відповідь"));
@@ -230,10 +231,14 @@ export default function Home() {
   const [cards, setCards] = useState([]);
   const [notes, setNotes] = useState([]);
   const [tests, setTests] = useState([]);
-  const [msgs, setMsgs] = useState([]);
+  // Помічник: розмови (замість одного msgs), поточна розмова, останній відкритий матеріал, бічна панель у редакторі (iPad ≥1024)
+  const [chats, setChats] = useState([]);
+  const [chatCur, setChatCur] = useState(null);
+  const [lastMat, setLastMat] = useState(null);
+  const [aiSide, setAiSide] = useState(false);
+  const [aiPend, setAiPend] = useState(null);
+  const [openReq, setOpenReq] = useState(null);
   const [undo, setUndo] = useState(null);
-  const [inp, setInp] = useState('');
-  const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
   const [sheet, setSheet] = useState(null);
   const [f, setF] = useState(EMPTY);
@@ -265,24 +270,20 @@ export default function Home() {
   const [fview, setFview] = useState(null);
   const [fform, setFform] = useState(null);
   const [nfold, setNfold] = useState('');
-  const [aiOpen, setAiOpen] = useState(false);
   const [acf, setAcf] = useState({ name: '', pass: '', busy: false, err: '' });
   const [sy, setSy] = useState({ on: false, state: 'idle', last: 0, msg: '', configured: null });
-  const [see, setSee] = useState(false);
-  const [att, setAtt] = useState([]);
   const [docUndo, setDocUndo] = useState([]);
   const [pv, setPv] = useState('day');
   const [more, setMore] = useState(true);
   const [, setTick] = useState(0);
   const taRef = useRef(null);
-  const endRef = useRef(null);
   const stRef = useRef(null);
   const sheetPrev = useRef(null);
 
   useEffect(() => {
     try {
       const s = JSON.parse(localStorage.getItem(nsKey('helper-next')) || '{}');
-      if (s.items) setItems(s.items); if (s.cap) setCap(s.cap); if (s.msgs) setMsgs(s.msgs);
+      if (s.items) setItems(s.items); if (s.cap) setCap(s.cap); setChats(migrateChats(s)); if (s.chatCur) setChatCur(s.chatCur); if (s.aiLast) setLastMat(s.aiLast);
       if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes); if (s.tests) setTests(s.tests); { const sm = getSyncMeta(); setSy(x => ({ ...x, on: !!sm.on, last: sm.last || 0 })); } if (s.folders) setFolders(s.folders.map(f => ({ parent: '', ...f }))); if (s.ui) setUi({ ...UI0, ...s.ui });
     } catch (e) {}
     try { const v = localStorage.getItem(PV_KEY); if (VIEWS.some(([k]) => k === v)) setPv(v); } catch (e) {}
@@ -290,13 +291,12 @@ export default function Home() {
   }, []);
   // лінія «зараз» на шкалі дня: перемальовувати раз на хвилину
   useEffect(() => { const iv = setInterval(() => setTick(x => x + 1), 60000); return () => clearInterval(iv); }, []);
-  useEffect(() => { if (ready) { try { localStorage.setItem(nsKey('helper-next'), JSON.stringify({ items, cap, msgs, start, cards, notes, tests, folders, ui })); } catch (e) {} } }, [items, cap, msgs, start, cards, notes, tests, folders, ui, ready]);
+  useEffect(() => { if (ready) { try { localStorage.setItem(nsKey('helper-next'), JSON.stringify({ items, cap, chats: chats.slice(0, 50), chatCur, aiLast: lastMat, start, cards, notes, tests, folders, ui })); } catch (e) {} } }, [items, cap, chats, chatCur, lastMat, start, cards, notes, tests, folders, ui, ready]);
   useEffect(() => {
     if (!ready) return;
     const r = document.documentElement;
     r.lang = ui.lang === 'de' ? 'de' : 'uk'; r.dataset.theme = ui.theme;
   }, [ui, ready]);
-  useEffect(() => { if (endRef.current) endRef.current.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'end' }); }, [msgs, busy, tab]);
   useEffect(() => {
     if (!sheet) return;
     const onKey = e => { if (e.key === 'Escape') setSheet(null); };
@@ -363,7 +363,7 @@ export default function Home() {
   const closeSheet = () => setSheet(null);
   const openNote = id => {
     if (id === 'new') { setNview(Date.now()); setNtext(''); setNfold(typeof fview === 'number' ? fview : ''); setFlow(true); }
-    else { const n = notes.find(x => x.id === id); setNview(id); setNtext(n ? n.text : ''); setFlow(false); }
+    else { const n = notes.find(x => x.id === id); setNview(id); setNtext(n ? n.text : ''); setFlow(false); if (n && n.text.trim()) setLastMat({ k: 'note', id, title: n.text.trim().split('\n')[0].slice(0, 60) }); }
   };
   const closeNote = () => { setNotes(notes.filter(n => n.text.trim())); setNview(null); setNtext(''); setFlow(false); };
   const newNote = flowMode => { openNote('new'); setFlow(flowMode); };
@@ -410,7 +410,7 @@ export default function Home() {
   // «Скласти тест» — форму тесту: джерело = текстова нотатка з папки, якщо є, інакше тема = назва папки
   const goNewTest = () => { setTimeout(() => { const el = document.getElementById('new-test'); if (el) { el.scrollIntoView({ block: 'start' }); el.focus({ preventScroll: true }); } }, 60); };
   const onStudy = (kind, fo) => {
-    if (kind === 'cards') { setTab('ai'); setInp(tr("Зроби картки за темою: ") + fo.name); return; }
+    if (kind === 'cards') { setTab('ai'); setAiPend({ text: tr("Зроби картки за темою: ") + fo.name }); return; }
     const nt = notes.filter(n => n.folder === fo.id && n.text && n.text.trim()).sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
     setTcfg(c => (nt ? { ...c, src: 'mat', mat: String(nt.id) } : { ...c, src: 'topic', topic: fo.name }));
     setDeckV(null); setTab('cards'); goNewTest();
@@ -426,14 +426,6 @@ export default function Home() {
     };
   };
 
-  const screenInfo = () => {
-    const o = { tab };
-    if (tab === 'today') { o.date = selDate; o.view = pv; }
-    if (tab === 'folders' && fview != null) { const fo = folders.find(x => x.id === fview); o.folder = fo ? fo.name : fview === 'fav' ? tr("Обране") : tr("Усі матеріали"); }
-    if (nview != null) o.openNote = ntext.slice(0, 3000);
-    if (bridge.info) o.openDocument = bridge.info();
-    return o;
-  };
   async function runDocOps(ops) {
     const undoOps = [], all = await listDocs();
     for (const o of ops) {
@@ -446,80 +438,41 @@ export default function Home() {
     }
     return undoOps;
   }
-  async function ask(text) {
-    if (busy || (!text.trim() && !att.length)) return;
-    const imgs = [...att];
-    if (see && bridge.getImage) { try { const im = bridge.getImage(); if (im) imgs.push(im); } catch (e) {} }
-    const next = [...msgs, { role: 'user', text: text.trim() || tr("Подивись на зображення."), pics: imgs.length }];
-    setMsgs(next); setInp(''); setAtt([]); setBusy(true);
-    try {
-      const ctx = makeCtx();
-      ctx.folders = folders.map(({ id, name, parent }) => ({ id, name, parent: parent || '' }));
-      ctx.notes = notes.slice(0, 40).map(n => ({ id: n.id, t: n.text.split('\n')[0].slice(0, 50), folder: n.folder || '' }));
-      ctx.docs = (await listDocs()).slice(0, 60).map(({ id, title, type, folder }) => ({ id, title, type, folder: folder || '' }));
-      ctx.screen = see ? screenInfo() : { tab };
-      const raw = await callAI({ messages: next.slice(-12).map((m, i, arr) => ({ role: m.role, text: m.text, images: i === arr.length - 1 && imgs.length ? imgs : undefined })), ctx });
-      const { reply, actions } = parseAI(raw);
-      let n = 0;
-      if (actions.length) {
-        const cur = stRef.current; const res = applyActions(actions, cur); n = res.n;
-        if (n) { setUndo(cur); applySt(res.st); setDocUndo(res.docOps.length ? await runDocOps(res.docOps) : []); }
-      }
-      setMsgs([...next, { role: 'model', text: reply || (n ? tr("Готово.") : tr("Порожня відповідь")), n }]);
-    } catch (e) {
-      if (e.code === 401) { setAiOpen(false); setTab('set'); }
-      setMsgs([...next, { role: 'model', text: e.message }]);
-    }
-    setBusy(false);
-  }
   const doUndo = async () => {
     if (!undo) return;
     applySt({ ...undo, notes: undo.notes || [] });
     for (const o of docUndo) { try { if (o.del) await delDoc(o.del); else await putDoc(o.put); } catch (e) {} }
     setDocUndo([]); setUndo(null);
   };
-  const addPics = async files => {
-    const out = [];
-    for (const f of Array.from(files || []).slice(0, 3 - att.length)) { try { out.push(await shrink(f, 1024, 0.72)); } catch (e) {} }
-    if (out.length) setAtt(p => [...p, ...out].slice(0, 3));
+  // Помічник: стан застосунку для ШІ (як раніше в ask) і застосування дій після підтвердження картки-превʼю
+  const buildState = async () => {
+    const ctx = makeCtx();
+    ctx.folders = folders.map(({ id, name, parent }) => ({ id, name, parent: parent || '' }));
+    ctx.notes = notes.slice(0, 40).map(n => ({ id: n.id, t: n.text.split('\n')[0].slice(0, 50), folder: n.folder || '' }));
+    ctx.docs = (await listDocs()).slice(0, 60).map(({ id, title, type, folder }) => ({ id, title, type, folder: folder || '' }));
+    ctx.screen = { tab };
+    return ctx;
   };
-  const grow = el => { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 140) + 'px'; };
-  const aiPanel = sheetMode => {
-    const SUGG = [[tr("Склади план на тиждень з моїх задач"), tr("Автоматично розкласти задачі за днями"), true], [tr("Що робити просто зараз?"), tr("Підказка, з чого почати"), true], [tr("Створи зошит для предмета: "), tr("Новий зошит у потрібній папці"), false], [tr("Зроби картки за темою: "), tr("Питання й відповіді за темою"), false]];
-    return (
-      <div className={'aiw ' + (sheetMode ? 'sm' : 'tab')}>
-        <div className="aihd">
-          <span className="avatar"><Icon n="ai" s={18} /></span>
-          <div className="aht"><b>{tr("Помічник")}</b><small>{busy ? tr("Думаю…") : tr("Керує задачами, подіями, папками й документами")}</small></div>
-          {msgs.length > 0 && <button className="ib" onClick={() => setMsgs([])} aria-label={tr("Очистити")} title={tr("Очистити")}><Icon n="trash" s={20} /></button>}
-          {sheetMode && <button className="ib" onClick={() => setAiOpen(false)} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button>}
-        </div>
-        <div className="amsgs">
-          {!msgs.length && <div className="empty-ai"><div className="avatar big"><Icon n="ai" s={26} /></div><h2>{tr("Чим допомогти?")}</h2>
-            <div className="sugg">{SUGG.map(([q, d, go]) => <button className="sg" key={q} onClick={() => (go ? ask(q) : setInp(q))}>{q.replace(': ', '…')}<small>{d}</small></button>)}</div></div>}
-          {msgs.map((x, i) => x.role === 'user'
-            ? <div className="um" key={i}>{x.text}{x.pics > 0 && <div className="applied" style={{ color: 'inherit', opacity: 0.8 }}>{tr("Додано зображень:")} {x.pics}</div>}</div>
-            : <div className="am" key={i}><span className="avatar sm"><Icon n="ai" s={13} /></span><div className="at"><Rich text={x.text} />{x.n > 0 && <div className="chg">{tr("Внесено змін:")} {x.n}</div>}</div></div>)}
-          {busy && <div className="am"><span className="avatar sm"><Icon n="ai" s={13} /></span><div className="at"><span className="typing"><i /><i /><i /></span></div></div>}
-          {undo && <div className="undoc"><span>{tr("ШІ змінив застосунок")}</span><button className="chip" onClick={doUndo}>{tr("Скасувати зміни")}</button></div>}
-          <div ref={endRef} />
-        </div>
-        <div className="comp">
-          {att.length > 0 && <div className="atts">{att.map((u, i) => <div className="att" key={i} style={{ backgroundImage: 'url(' + u + ')' }}><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label={tr("Прибрати")}>×</button></div>)}</div>}
-          <div className="cbox">
-            <textarea className="cta" rows={1} placeholder={tr("Напишіть, що зробити або що пояснити")} value={inp}
-              onChange={e => { setInp(e.target.value); grow(e.target); }}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && window.innerWidth >= 700) { e.preventDefault(); ask(inp); } }} />
-            <div className="crow">
-              <label className="cb" aria-label={tr("Фото")} title={tr("Фото")}><Icon n="image" s={21} /><input type="file" accept="image/*" multiple className="hidefile" onChange={e => { addPics(e.target.files); e.target.value = ''; }} /></label>
-              <button className={'cb' + (see ? ' on' : '')} onClick={() => setSee(!see)} aria-label={tr("Показати ШІ цей екран")} title={tr("Показати ШІ цей екран")}><Icon n="eye" s={21} />{see && <span className="cbl">{tr("Екран")}</span>}</button>
-              <span className="flex1" />
-              <button className="send" onClick={() => ask(inp)} disabled={busy || (!inp.trim() && !att.length)} aria-label={tr("Надіслати")} title={tr("Надіслати")}><Icon n="send" s={20} /></button>
-            </div>
-          </div>
-        </div>
-      </div>);
+  const applyAI = async acts => {
+    const cur = stRef.current; const res = applyActions(acts, cur);
+    if (res.n) { setUndo(cur); applySt(res.st); setDocUndo(res.docOps.length ? await runDocOps(res.docOps) : []); }
+    return res.n;
   };
+  const openRef = (ref, page) => {
+    if (!ref) return;
+    if (ref.k === 'note') { if (notes.some(n => n.id === ref.id)) openNote(ref.id); return; }
+    setOpenReq({ id: ref.id, page: page || 1, t: Date.now() });
+    if (!aiSide) setTab('folders');
+  };
+  const askFromEditor = info => {
+    setLastMat({ k: 'doc', id: info.id, title: info.title, type: info.type, page: info.page });
+    setAiPend({ ctx: { k: 'doc', id: info.id, title: info.title, type: info.type, pages: [info.page] } });
+    if (window.matchMedia('(min-width:1024px)').matches) setAiSide(true); else { setAiSide(false); setTab('ai'); }
+  };
+  const assistant = side => <Assistant side={side} onClose={() => setAiSide(false)} chats={chats} setChats={setChats} curId={chatCur} setCurId={setChatCur}
+    call={callAI} buildState={buildState} apply={applyAI} undo={doUndo} items={items} notes={notes} cards={cards} folders={folders} lastMat={lastMat}
+    pending={aiPend} clearPending={() => setAiPend(null)} onReview={() => { setTab('cards'); setDeckV(null); startRev(null); }} onOpenRef={openRef}
+    on401={() => { setAiSide(false); setTab('set'); }} />;
 
   async function quickAdd() {
     const text = qa.trim();
@@ -751,7 +704,7 @@ export default function Home() {
   const meLetter = (acc && acc.name ? String(acc.name).trim().charAt(0).toUpperCase() : '') || tr("Я");
 
   return (
-    <div className="wrap">
+    <div className={'wrap' + (tab === 'ai' ? ' t-ai' : '')}>
       <button className={'me' + syncCls + (tab === 'set' ? ' cur' : '')} onClick={() => setTab('set')} aria-label={tr("Налаштування") + '. ' + syncTxt} title={tr("Налаштування") + ' · ' + syncTxt} aria-current={tab === 'set' ? 'page' : undefined}>{meLetter}<i aria-hidden="true" /></button>
 
       {tab === 'today' && <>
@@ -766,7 +719,7 @@ export default function Home() {
               {isToday && overdue.length > 0 && <div className="card warn"><div className="sec">{tr("Прострочено")}</div>{overdue.map(row)}</div>}
               {dayEmpty
                 ? <div className="emptyday"><p>{selDate < today ? tr("Минулий день.") : tr("На цей день нічого немає.")}</p>
-                  {selDate >= today && <button className="btn2" onClick={() => { setTab('ai'); ask(tr("Що мені краще зробити сьогодні і в якому порядку?")); }}>{tr("Скласти план із ШІ")}</button>}</div>
+                  {selDate >= today && <button className="btn2" onClick={() => { setTab('ai'); setAiPend({ text: tr("Що мені краще зробити сьогодні і в якому порядку?"), send: true }); }}>{tr("Скласти план із ШІ")}</button>}</div>
                 : tlItems.length > 0 && <section className="tl" aria-label={tr("Шкала дня")} style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 8px)' }}>
                   {Array.from({ length: tlH1 - tlH0 + 1 }, (_, k) => <span key={k} className="tl-h" aria-hidden="true" style={{ top: 'calc(var(--hh) * ' + k + ')' }}>{pad((tlH0 + k) % 24 === 0 && k > 0 ? 24 : tlH0 + k)}:00</span>)}
                   <div className="tl-g" aria-hidden="true" style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 1px)' }} />
@@ -818,7 +771,8 @@ export default function Home() {
         onOpenNote={openNote} onNewNote={newNote} onFolderForm={x => setFform(x)} onStudy={onStudy} folderExtra={folderTasks}
         onNoteFav={id => setNotes(notes.map(n => n.id === id ? { ...n, fav: !n.fav } : n))}
         onNoteMove={(id, folder) => setNotes(notes.map(n => n.id === id ? { ...n, folder } : n))}
-        onNoteDel={id => setNotes(notes.filter(n => n.id !== id))} />}
+        onNoteDel={id => setNotes(notes.filter(n => n.id !== id))}
+        onAsk={askFromEditor} aiSide={aiSide} openReq={openReq} onOpenReqDone={() => setOpenReq(null)} onOpened={m => setLastMat(m)} onEdClose={() => setAiSide(false)} />}
 
       {tab === 'cards' && !deckV && (() => {
         const testsList = idp => tests.length > 0 && <section className="lsec" aria-labelledby={idp + '-h'}>
@@ -944,7 +898,8 @@ export default function Home() {
         </div>;
       })()}
 
-      {tab === 'ai' && aiPanel(false)}
+      {tab === 'ai' && assistant(false)}
+      {tab === 'folders' && aiSide && <aside className="a-side" aria-label={tr("Помічник")}>{assistant(true)}</aside>}
 
       {tab === 'set' && <>
         <div className="top"><h1>{tr("Налаштування")}</h1></div>
@@ -1109,7 +1064,6 @@ export default function Home() {
           </div>)}
       </div>}
 
-      {aiOpen && <div className="ov ai" onClick={() => setAiOpen(false)}><div className="sheet aisheet" onClick={e => e.stopPropagation()}>{aiPanel(true)}</div></div>}
 
       <nav className="nav" aria-label={tr("Розділи")}>{TABS.map(([k, n, ic]) => <button key={k} onClick={() => goTab(k)} aria-current={k === tab ? 'page' : undefined}><Icon n={ic} s={24} /><span className="lbl">{tr(n)}</span></button>)}</nav>
     </div>
