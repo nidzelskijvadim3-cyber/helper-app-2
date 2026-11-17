@@ -714,7 +714,28 @@ export const DE = {
  "План підготовки до іспиту": "Lernplan für die Prüfung",
  "Іспит сьогодні": "Prüfung heute",
  "Іспит завтра": "Prüfung morgen",
- "Продовжити вивчення": "Weiterlernen"
+ "Продовжити вивчення": "Weiterlernen",
+ "Ласо": "Lasso",
+ "Видалено": "Gelöscht",
+ "об’єкт": "Objekt",
+ "об’єкти": "Objekte",
+ "об’єктів": "Objekte",
+ "Дубльовано": "Dupliziert",
+ "Вставлено": "Eingefügt",
+ "На сторінці нічого немає": "Auf der Seite ist nichts",
+ "Виділено": "Ausgewählt",
+ "Нічого не виділено": "Nichts ausgewählt",
+ "Переміщено": "Verschoben",
+ "Розмір змінено": "Größe geändert",
+ "Обведіть, щоб виділити": "Zum Auswählen umkreisen",
+ "Виділити все": "Alles auswählen",
+ "Вставити": "Einfügen",
+ "Палець гортає сторінку": "Finger scrollt die Seite",
+ "Дії з виділеним": "Aktionen für die Auswahl",
+ "Запитати Помічника": "Assistent fragen",
+ "Зроби картки з виділеного": "Mach Karten aus der Auswahl",
+ "Копіювати": "Kopieren",
+ "Колір виділеного": "Farbe der Auswahl"
 };
 // Множина: українська — 3 форми (1 картка, 2 картки, 5 карток), німецька — 2 (переклад форм f1 і f5).
 export function plural(n, f1, f2, f5) {

@@ -500,7 +500,8 @@ export default function Home() {
   };
   const askFromEditor = info => {
     setLastMat({ k: 'doc', id: info.id, title: info.title, type: info.type, page: info.page });
-    setAiPend({ ctx: { k: 'doc', id: info.id, title: info.title, type: info.type, pages: [info.page] } });
+    // ласо: info.sel — область виділення (рендериться лише вона), info.text — заготовка запиту без автонадсилання
+    setAiPend({ ctx: { k: 'doc', id: info.id, title: info.title, type: info.type, pages: [info.page], ...(info.sel ? { sel: info.sel } : {}) }, ...(info.text ? { text: info.text } : {}) });
     if (window.matchMedia('(min-width:1024px)').matches) setAiSide(true); else { setAiSide(false); setTab('ai'); }
   };
   const assistant = side => <Assistant side={side} onClose={() => setAiSide(false)} chats={chats} setChats={setChats} curId={chatCur} setCurId={setChatCur}

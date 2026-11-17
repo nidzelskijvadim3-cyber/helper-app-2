@@ -1,10 +1,10 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { listMeta, getDoc, saveDoc, putMeta, putDoc, delDoc, duplicateDoc, reparentDocs, moveDoc } from './store';
 import { Fragment } from 'react';
 import { newDoc, newId, folderPath, fitPage, descendants, breadcrumb } from './lib';
 import { t as tr, loc, plural } from './i18n';
-import { drawStroke, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, hitStroke, splitStroke, nearlyStraight, isHl, PENS, PRESSURE_NIBS, SHAPES } from './draw';
+import { drawStroke, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, hitStroke, splitStroke, nearlyStraight, isHl, PENS, PRESSURE_NIBS, SHAPES, strokeBox, boxOf, xformStroke, lassoPick } from './draw';
 import { FolderGlyph, FOLDER_COLORS } from './folder-icons';
 
 export { putDoc, delDoc, newDoc, reparentDocs, moveDoc };
@@ -35,19 +35,25 @@ const loadImg = src => new Promise((res, rej) => { const i = new Image(); i.onlo
 // Помічник: сторінки зошита/дошки/фото → JPEG (offscreen canvas, renderPage), до 4 сторінок, довша сторона ≤ max.
 // nums — номери сторінок з 1. Повертає { title, pages: кількість сторінок, imgs: [{ page, url }] }.
 export const getDocFull = getDoc;
-export async function docPageImages(id, nums, max = 1600, q = 0.7) {
+// crop — виділення ласо { x, y, w, h } у координатах сторінки: рендериться лише ця область (дрібну — до 2× для читабельності).
+export async function docPageImages(id, nums, max = 1600, q = 0.7, crop) {
   const d = await getDoc(id); if (!d) return null;
   const imgs = [];
   for (const n of (nums || []).slice(0, 4)) {
     const p = d.pages[n - 1]; if (!p) continue;
     const im = p.img ? await loadImg(p.img).catch(() => null) : null;
-    const sc = Math.min(1, max / Math.max(p.w, p.h));
-    const c = document.createElement('canvas'); c.width = Math.round(p.w * sc); c.height = Math.round(p.h * sc);
-    const g = c.getContext('2d'); g.scale(sc, sc); renderPage(g, p, im);
+    const cr = crop && crop.w > 0 && crop.h > 0 ? cropBox(crop, p) : null;
+    const W = cr ? cr.w : p.w, H = cr ? cr.h : p.h;
+    const sc = Math.min(cr ? 2 : 1, max / Math.max(W, H));
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(W * sc)); c.height = Math.max(1, Math.round(H * sc));
+    const g = c.getContext('2d'); g.scale(sc, sc); if (cr) g.translate(-cr.x, -cr.y); renderPage(g, p, im);
     imgs.push({ page: n, url: c.toDataURL('image/jpeg', q) });
   }
   return { title: d.title, type: d.type, pages: d.pages.length, imgs };
 }
+const cropBox = (c, p) => { const x = Math.max(0, c.x), y = Math.max(0, c.y); return { x, y, w: Math.min(p.w, c.x + c.w) - x, h: Math.min(p.h, c.y + c.h) - y }; };
+// Внутрішній буфер ласо (між сторінками й документами в межах сесії)
+let CLIP = null;
 
 async function prepImage(file, scan) {
   const img = await loadImg(await readFile(file));
@@ -102,11 +108,17 @@ Object.assign(EI, {
   pencil: <><path d="M16.5 3.5l4 4L9 19l-5 1 1-5z" /><path d="M14 6l4 4" /><path d="M5.6 16.6l1.8 1.8" /></>,
   marker: <><path d="M14 3.5l6.5 6.5-7.5 7.5L6.5 11z" /><path d="M6.5 11L4 17.5 6.5 20l6.5-2.5" /><path d="M3.5 21h4" /></>,
   tune: <><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>,
+  lasso: <><path d="M12 3.5c4.7 0 8.5 2.6 8.5 5.8s-3.8 5.8-8.5 5.8-8.5-2.6-8.5-5.8S7.3 3.5 12 3.5z" strokeDasharray="3.2 2.6" /><path d="M8.6 14.6c-1.4 1.3-1.3 2.9.2 3.7 1.3.7 1.2 2-.3 2.7" /></>,
+  spark: <path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" />,
+  cards: <><rect x="3.5" y="7" width="13" height="13" rx="2" /><path d="M8 4h10.5a2 2 0 0 1 2 2v10.5" /></>,
+  copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
+  dup: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2M14 11v6M11 14h6" /></>,
+  paste: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V3h6v1M9 11h6M9 15h4" /></>,
 });
 // Інструменти тулбара (лінійка — у контекстному ряду, поруч із кольорами й товщиною)
-const TOOLS = ['pen', 'pencil', 'marker', 'hl', 'eraser', 'shape', 'text', 'hand'];
+const TOOLS = ['pen', 'pencil', 'marker', 'hl', 'eraser', 'lasso', 'shape', 'text', 'hand'];
 const DRAW = ['pen', 'pencil', 'marker', 'hl'];
-const TOOLN = { pen: 'Ручка', pencil: 'Олівець', marker: 'Маркер', hl: 'Виділювач', eraser: 'Гумка', shape: 'Фігури', text: 'Текст', ruler: 'Лінійка', hand: 'Рука' };
+const TOOLN = { pen: 'Ручка', pencil: 'Олівець', marker: 'Маркер', hl: 'Виділювач', eraser: 'Гумка', lasso: 'Ласо', shape: 'Фігури', text: 'Текст', ruler: 'Лінійка', hand: 'Рука' };
 const NIBN = { ball: 'Кулькова', fountain: 'Перова', fineliner: 'Лайнер', brush: 'Пензель', calli: 'Каліграфія', pencil: 'Олівець', felt: 'Фломастер', chisel: 'Маркер' };
 const SHAPEN = { line: 'Лінія', arrow: 'Стрілка', rect: 'Рамка', oval: 'Овал', triangle: 'Трикутник' };
 // Кольори чорнила — дані документа, не токени інтерфейсу
@@ -213,7 +225,8 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     const f = () => {
       const W = el.clientWidth, H = el.clientHeight; if (!W || !H) return;
       const r = fitPage(page, W, H);
-      if (r.pageH !== page.h) setPage({ ...page, h: r.pageH });
+      // лише h і через функціональне оновлення: замикання ResizeObserver тримає стару `page`, і { ...page } повертав би старі штрихи (втрата намальованого при повороті iPad / зміні вікна)
+      if (r.pageH !== page.h) { const i0 = piRef.current; setD(o => ({ ...o, pages: o.pages.map((q, i) => (i === i0 ? { ...q, h: r.pageH } : q)) })); }
       setFit({ w: r.cssW, h: r.cssH });
     };
     f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect();
@@ -259,6 +272,120 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     }
     if (changed) { if (c && !c.snap) c.snap = page.strokes; if (c) c.strokes = out; setPage({ ...page, strokes: out }); }
   };
+  // ===== Ласо: виділення, перенесення, масштаб, колір, копіювання, Помічник =====
+  // sel = { pi, items: [об'єкти штрихів] } — посилання на самі штрихи; якщо їх уже немає на сторінці (undo, інша сторінка), виділення зникає
+  const [sel, setSel] = useState(null);
+  const [selPal, setSelPal] = useState(false);
+  const [pasteAt, setPasteAt] = useState(null);
+  const [clipOn, setClipOn] = useState(() => !!CLIP);
+  const [dragging, setDragging] = useState(false);
+  const [live, setLive] = useState('');
+  const [msz, setMsz] = useState({ w: 0, h: 0 });
+  const lassoRef = useRef(null), frameRef = useRef(null), menuRef = useRef(null), sdrag = useRef(null);
+  const ws0 = page.w / 1200;
+  const selOk = !!(sel && sel.pi === pi && sel.items.length && (() => { const st = new Set(page.strokes); return sel.items.every(s => st.has(s)); })());
+  const selBox = selOk ? boxOf(sel.items, ws0) : null;
+  useEffect(() => { if (tool !== 'lasso') { setSel(null); setPasteAt(null); } }, [tool]);
+  useEffect(() => { setSel(null); setPasteAt(null); }, [pi]);
+  useEffect(() => { if (!selOk) setSelPal(false); }, [selOk]);
+  const say = m => setLive(l => (l === m ? m + ' ' : m));
+  const nObj = n => n + ' ' + plural(n, "об’єкт", "об’єкти", "об’єктів");
+  const clearLasso = () => { if (lassoRef.current) lassoRef.current.setAttribute('points', ''); };
+  const commitStrokes = (strokes, items) => {
+    hist.current.push({ pi, strokes: page.strokes }); if (hist.current.length > 40) hist.current.shift(); redo.current = [];
+    setPage({ ...page, strokes }); setSel(items && items.length ? { pi, items } : null);
+  };
+  const replaceSel = fn => {
+    const map = new Map(), items = sel.items.map(s => { const n = fn(s); map.set(s, n); return n; });
+    commitStrokes(page.strokes.map(s => map.get(s) || s), items);
+  };
+  const selDelete = () => { if (!selOk) return; const st = new Set(sel.items), n = sel.items.length; commitStrokes(page.strokes.filter(s => !st.has(s)), null); say(tr("Видалено") + ': ' + nObj(n)); };
+  const selCopy = () => { if (!selOk) return; CLIP = { items: JSON.parse(JSON.stringify(sel.items)), box: selBox, doc: d.id, pi, w: page.w }; setClipOn(true); setToast(tr("Скопійовано") + ': ' + nObj(sel.items.length)); };
+  const selDup = () => {
+    if (!selOk) return; const o = 24 * ws0, items = sel.items.map(s => xformStroke(s, { ox: 0, oy: 0, dx: o, dy: o }));
+    commitStrokes([...page.strokes, ...items], items); say(tr("Дубльовано") + ': ' + nObj(items.length));
+  };
+  const selColor = c => {
+    if (!selOk) return; const allHl = sel.items.every(isHl);
+    replaceSel(s => (allHl || !isHl(s) ? { ...s, c } : s)); say(tr("Колір") + ': ' + colorName(c));
+  };
+  // Вставка: у точку довгого натискання; на ту саму сторінку — зі зсувом; на іншу — на те саме місце (з поправкою на ширину сторінки)
+  const pasteClip = at => {
+    if (!CLIP) return; setPasteAt(null);
+    const k = page.w / CLIP.w, b = CLIP.box, bw = (b[2] - b[0]) * k, bh = (b[3] - b[1]) * k;
+    let nx = b[0] * k, ny = b[1] * k;
+    if (at) { nx = at.x - bw / 2; ny = at.y - bh / 2; }
+    else if (CLIP.doc === d.id && CLIP.pi === pi) { nx += 24 * ws0; ny += 24 * ws0; }
+    nx = Math.max(0, Math.min(nx, page.w - bw)); ny = Math.max(0, Math.min(ny, page.h - bh));
+    // координати масштабуються на k, товщина й кегль — ні (вони вже множаться на ws сторінки)
+    const items = CLIP.items.map(s => { const o = xformStroke(s, { k, ox: 0, oy: 0, dx: nx - b[0] * k, dy: ny - b[1] * k }); if (s.w != null) o.w = s.w; if (s.k === 'text') o.s = s.s; return o; });
+    if (tool !== 'lasso') setTool('lasso');
+    commitStrokes([...page.strokes, ...items], items); say(tr("Вставлено") + ': ' + nObj(items.length));
+  };
+  const selectAll = () => { if (!page.strokes.length) { say(tr("На сторінці нічого немає")); return; } if (tool !== 'lasso') setTool('lasso'); setSel({ pi, items: [...page.strokes] }); say(tr("Виділено") + ': ' + nObj(page.strokes.length)); };
+  const pathLen = q => { let L = 0; for (let i = 2; i < q.length; i += 2) L += Math.hypot(q[i] - q[i - 2], q[i + 1] - q[i - 1]); return L; };
+  const finishLasso = q => {
+    if (pathLen(q) < 12 * ws0) {
+      // дотик: виділити один об'єкт під пером або зняти виділення
+      const x = q[0], y = q[1];
+      const hit = [...page.strokes].reverse().find(s => { if (s.k === 'text') { const b = strokeBox(s, ws0); return x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]; } return hitStroke(s, ws0, x, y, 10 * ws0); });
+      setSel(hit ? { pi, items: [hit] } : null); if (hit) say(tr("Виділено") + ': ' + nObj(1));
+      return;
+    }
+    const items = lassoPick(page.strokes, q, ws0);
+    setSel(items.length ? { pi, items } : null); say(items.length ? tr("Виділено") + ': ' + nObj(items.length) : tr("Нічого не виділено"));
+  };
+  // Рамка у CSS-пікселях полотна (мінімум 44×44, щоб ручки не злипалися)
+  const scNow = (fit.w * zoom) / page.w;
+  const frameRect = b => {
+    const P = 8; let l = b[0] * scNow - P, t = b[1] * scNow - P, w = (b[2] - b[0]) * scNow + 2 * P, h = (b[3] - b[1]) * scNow + 2 * P;
+    if (w < 44) { l -= (44 - w) / 2; w = 44; } if (h < 44) { t -= (44 - h) / 2; h = 44; }
+    return { l, t, w, h };
+  };
+  // Перетягування: сторінку без виділеного рендеримо один раз в offscreen-полотно, виділене — в окремий шар; кадр = 2 drawImage
+  const sDown = (e, mode, corner) => {
+    if (!selOk) return;
+    e.stopPropagation(); e.preventDefault(); try { e.currentTarget.setPointerCapture(e.pointerId); } catch (er) {}
+    const [x, y] = pos(e), b = selBox, st = new Set(sel.items);
+    const base = document.createElement('canvas'); base.width = page.w; base.height = page.h;
+    renderPage(base.getContext('2d'), { ...page, strokes: page.strokes.filter(s => !st.has(s)) }, imgRef.current);
+    const lay = document.createElement('canvas'); lay.width = page.w; lay.height = page.h; const lg = lay.getContext('2d');
+    for (const s of sel.items) if (s.u) drawStroke(lg, s, ws0);
+    for (const s of sel.items) if (!s.u) drawStroke(lg, s, ws0);
+    const C = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], c0 = mode === 'scale' ? C[corner] : null, an = mode === 'scale' ? C[(corner + 2) % 4] : null;
+    sdrag.current = { mode, x0: x, y0: y, b, base, lay, c0, an, f: { k: 1, ox: 0, oy: 0, dx: 0, dy: 0 }, moved: false, raf: 0 };
+    setDragging(true); setSelPal(false);
+  };
+  const paintDrag = s => {
+    const cv = cvRef.current; if (!cv) return; const g = cv.getContext('2d'), f = s.f;
+    g.drawImage(s.base, 0, 0); g.save(); g.translate(f.ox + f.dx, f.oy + f.dy); g.scale(f.k, f.k); g.translate(-f.ox, -f.oy); g.drawImage(s.lay, 0, 0); g.restore();
+    const b = s.b, nb = [f.ox + (b[0] - f.ox) * f.k + f.dx, f.oy + (b[1] - f.oy) * f.k + f.dy, f.ox + (b[2] - f.ox) * f.k + f.dx, f.oy + (b[3] - f.oy) * f.k + f.dy];
+    const el = frameRef.current; if (el) { const r = frameRect([Math.min(nb[0], nb[2]), Math.min(nb[1], nb[3]), Math.max(nb[0], nb[2]), Math.max(nb[1], nb[3])]); el.style.left = r.l + 'px'; el.style.top = r.t + 'px'; el.style.width = r.w + 'px'; el.style.height = r.h + 'px'; }
+  };
+  const sMove = e => {
+    const s = sdrag.current; if (!s) return;
+    const [x, y] = pos(e);
+    if (s.mode === 'move') s.f = { k: 1, ox: 0, oy: 0, dx: x - s.x0, dy: y - s.y0 };
+    else {
+      const vx = s.c0[0] - s.an[0], vy = s.c0[1] - s.an[1], L2 = vx * vx + vy * vy || 1;
+      let k = ((x - s.an[0]) * vx + (y - s.an[1]) * vy) / L2;
+      k = Math.max(16 * ws0 / Math.max(Math.abs(vx), Math.abs(vy), 1), Math.min(k, 12));
+      s.f = { k, ox: s.an[0], oy: s.an[1], dx: 0, dy: 0 };
+    }
+    if (!s.moved && Math.hypot(x - s.x0, y - s.y0) > 3 / scNow) s.moved = true;
+    if (s.moved && !s.raf) s.raf = requestAnimationFrame(() => { s.raf = 0; if (sdrag.current === s) paintDrag(s); });
+  };
+  const sUp = () => {
+    const s = sdrag.current; if (!s) return; sdrag.current = null; if (s.raf) cancelAnimationFrame(s.raf); setDragging(false);
+    if (s.moved && (s.f.dx || s.f.dy || s.f.k !== 1)) { const f = s.f; replaceSel(st => xformStroke(st, f)); say(s.mode === 'move' ? tr("Переміщено") : tr("Розмір змінено")); }
+    else { const cv = cvRef.current; if (cv) renderPage(cv.getContext('2d'), page, imgRef.current); }
+  };
+  // «Запитати Помічника» / «Зробити картки» по виділеному: область рамки + відступ, номер сторінки
+  const askSel = text => {
+    if (!selOk) return; const b = selBox, pad = 24 * ws0, r = v => Math.round(v);
+    askAI({ sel: { x: r(b[0] - pad), y: r(b[1] - pad), w: r(b[2] - b[0] + 2 * pad), h: r(b[3] - b[1] + 2 * pad) }, ...(text ? { text } : {}) });
+  };
+  useLayoutEffect(() => { const el = menuRef.current; if (!el) return; const w = el.offsetWidth, h = el.offsetHeight; if (w !== msz.w || h !== msz.h) setMsz({ w, h }); });
   const straighten = s => { const q = s.p; s.p = [q[0], q[1], q[q.length - 2], q[q.length - 1]]; if (s.pr) s.pr = [s.pr[0], s.pr[s.pr.length - 1]]; s.straight = true; };
   const down = e => {
     if (tool === 'hand') return;
@@ -270,15 +397,23 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
       touches.current.set(e.pointerId, [e.clientX, e.clientY]);
       const el = boxRef.current;
       if (touches.current.size >= 2) {
-        cur.current = null; clearTimeout(holdT.current); renderPage(cvRef.current.getContext('2d'), page, imgRef.current);
+        cur.current = null; clearTimeout(holdT.current); clearLasso(); renderPage(cvRef.current.getContext('2d'), page, imgRef.current);
         const [a, b] = [...touches.current.values()];
         gest.current = { d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: zoom, m0: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], sl: el.scrollLeft, st: el.scrollTop };
         return;
       }
       if (penOnly) { gest.current = { pan: true, m0: [e.clientX, e.clientY], sl: el.scrollLeft, st: el.scrollTop }; return; }
     }
-    e.preventDefault(); cvRef.current.setPointerCapture(e.pointerId);
+    e.preventDefault(); try { cvRef.current.setPointerCapture(e.pointerId); } catch (er) {}
     let [x, y] = pos(e);
+    if (tool === 'lasso') {
+      // нова петля: попереднє виділення знімається; довге натискання на місці (0,55 с) — «Вставити», якщо буфер не порожній
+      setSel(null); setPasteAt(null);
+      const st = { lasso: [x, y] }; cur.current = st; if (lassoRef.current) lassoRef.current.setAttribute('points', x + ',' + y);
+      clearTimeout(holdT.current);
+      if (CLIP) holdT.current = setTimeout(() => { if (cur.current === st && pathLen(st.lasso) < 12 * ws0) { cur.current = null; clearLasso(); setPasteAt({ x, y }); } }, 550);
+      return;
+    }
     if (tool === 'text') { setTin({ x, y, v: '' }); return; }
     if (tool === 'eraser') { cur.current = { erase: true }; eraseAt(x, y); return; }
     const ws = page.w / 1200, snap = ruler.on ? rulerSnap(ruler, x, y, 40 * ws) : null;
@@ -316,6 +451,11 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     const s = cur.current; if (!s) return;
     const [x, y] = pos(e);
     if (s.erase) { eraseAt(x, y); return; }
+    if (s.lasso) {
+      const q = s.lasso; if (Math.hypot(x - q[q.length - 2], y - q[q.length - 1]) < 3) return;
+      q.push(x, y); if (lassoRef.current) lassoRef.current.setAttribute('points', q.join(' '));
+      return;
+    }
     const g = cvRef.current.getContext('2d'), ws = page.w / 1200, img = imgRef.current;
     if (s.k) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p[2] = ex; s.p[3] = ey; renderPage(g, page, img, s); return; }
     if (s.straight) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p = [s.p[0], s.p[1], ex, ey]; renderPage(g, page, img, s); return; }
@@ -345,6 +485,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     }
     clearTimeout(holdT.current);
     const s = cur.current; cur.current = null; if (!s) return;
+    if (s.lasso) { clearLasso(); finishLasso(s.lasso); return; }
     if (s.erase) { if (s.snap) { hist.current.push({ pi, strokes: s.snap }); redo.current = []; } return; }
     if (s.k && Math.hypot(s.p[2] - s.p[0], s.p[3] - s.p[1]) < 4) { renderPage(cvRef.current.getContext('2d'), page, imgRef.current); return; }
     // виділювач: майже пряму лінію вирівнюємо автоматично
@@ -378,6 +519,20 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   useEffect(() => {
     const h = e => {
       if (e.key === 'Escape' && pop) { setPop(null); return; }
+      // ласо: Delete — видалити, Esc — зняти, Cmd/Ctrl+C / X / V / D / A
+      const tg = e.target, inField = tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.isContentEditable);
+      if (!tin && !inField && !pop) {
+        const mod = e.metaKey || e.ctrlKey, k = e.key.toLowerCase();
+        if (e.key === 'Escape' && (selOk || pasteAt || selPal)) { e.preventDefault(); if (selPal) setSelPal(false); else { setSel(null); setPasteAt(null); } return; }
+        if (selOk && !mod && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); selDelete(); return; }
+        if (mod && !e.shiftKey && !e.altKey) {
+          if (k === 'c' && selOk) { e.preventDefault(); selCopy(); return; }
+          if (k === 'x' && selOk) { e.preventDefault(); selCopy(); selDelete(); return; }
+          if (k === 'd' && selOk) { e.preventDefault(); selDup(); return; }
+          if (k === 'v' && CLIP) { e.preventDefault(); pasteClip(); return; }
+          if (k === 'a' && tool === 'lasso') { e.preventDefault(); selectAll(); return; }
+        }
+      }
       if (tin || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
       e.preventDefault(); if (e.shiftKey) swap(redo, hist); else swap(hist, redo);
     };
@@ -397,8 +552,9 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   // Помічник: посилання [с. N] у відповіді відкриває цю сторінку (jump = { page, t })
   useEffect(() => { if (jump && jump.page) goPage(jump.page - 1); }, [jump]);
   // «Помічник» у шапці: на iPad ≥1024 — панель поруч (документ лишається), інакше — зберегти, закрити й перейти у вкладку
-  const askAI = async () => {
-    const info = { id: d.id, title: d.title, type: d.type, page: pi + 1, pages: d.pages.length };
+  // extra: { sel: { x, y, w, h } — область ласо, text — заготовка запиту (без автонадсилання) }
+  const askAI = async extra => {
+    const info = { id: d.id, title: d.title, type: d.type, page: pi + 1, pages: d.pages.length, ...(extra && extra.sel ? extra : {}) };
     if (window.matchMedia('(min-width:1024px)').matches) { flush().catch(() => {}); onAsk(info); return; }
     await close(); onAsk(info);
   };
@@ -415,6 +571,11 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     onClick={() => { if (wi === i) openPop('style'); else setWi(i); }}><i style={{ width: dotOf(w), height: dotOf(w), background: 'currentColor' }} /></button>)}</>;
   const tuneBtn = <IB n="tune" label={tr("Налаштування інструмента")} on={pop === 'style'} onClick={() => openPop('style')} />;
   const ctxRow = tool === 'hand' ? <span className="sub edhint">{tr("Гортайте й масштабуйте сторінку")}</span>
+    : tool === 'lasso' ? <>
+      <span className="sub edhint">{selOk ? tr("Виділено") + ': ' + nObj(sel.items.length) : tr("Обведіть, щоб виділити")}</span>
+      <button className="edtb" onClick={selectAll}>{tr("Виділити все")}</button>
+      {clipOn && <button className="edtb" onClick={() => pasteClip()}><EIcon n="paste" size={18} />{tr("Вставити")}</button>}
+      {penOnly && <span className="sub edhint">{tr("Палець гортає сторінку")}</span>}</>
     : tool === 'eraser' ? <>
       <div className="seg edseg" role="group" aria-label={tr("Режим гумки")}>{[['stroke', 'Штрих'], ['point', 'Точково']].map(([k, n]) => <button key={k} className={er.mode === k ? 'on' : ''} aria-pressed={er.mode === k} onClick={() => upd('eraser', { mode: k })}>{tr(n)}</button>)}</div>
       {er.sizes.map((w, i) => <button key={i} className="wbtn" aria-pressed={er.wi === i} aria-label={tr("Розмір гумки") + ': ' + tr(['Малий', 'Середній', 'Великий'][i])} onClick={() => upd('eraser', { wi: i })}><i className="ring" style={{ width: 6 + i * 6, height: 6 + i * 6 }} /></button>)}
@@ -433,7 +594,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
           <IB n="pages" label={tr("Сторінки")} on={strip} onClick={() => setStrip(!strip)} />
           <IB n="share" label={tr("Поділитися")} onClick={share} />
           <IB n="more" label={tr("Ще")} on={pop === 'more'} onClick={() => openPop('more')} />
-          {onAsk && <button className={'ed-ai' + (aiOn ? ' on' : '')} onClick={askAI} aria-pressed={!!aiOn} aria-label={tr("Помічник: запитати про цю сторінку")} title={tr("Помічник: запитати про цю сторінку")}>
+          {onAsk && <button className={'ed-ai' + (aiOn ? ' on' : '')} onClick={() => askAI()} aria-pressed={!!aiOn} aria-label={tr("Помічник: запитати про цю сторінку")} title={tr("Помічник: запитати про цю сторінку")}>
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" /></svg>
             <span className="ed-ai-l">{tr("Помічник")}</span></button>}
         </div>
@@ -453,8 +614,45 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
               <div className="rh rmove" onPointerDown={e => rulerDown(e, 'move')} onPointerMove={rulerMove} onPointerUp={() => { rdrag.current = null; }} onPointerCancel={() => { rdrag.current = null; }} />
               <div className="rh rrot" onPointerDown={e => rulerDown(e, 'rot')} onPointerMove={rulerMove} onPointerUp={() => { rdrag.current = null; }} onPointerCancel={() => { rdrag.current = null; }} />
             </div>); })()}
+          {tool === 'lasso' && <svg className="lassosvg" viewBox={'0 0 ' + page.w + ' ' + page.h} preserveAspectRatio="none" aria-hidden="true">
+            <defs><polyline id="lasso-pl" ref={lassoRef} points="" /></defs>
+            <use href="#lasso-pl" fill="none" stroke="#fff" strokeWidth={4 / scNow} strokeLinejoin="round" strokeLinecap="round" />
+            <use href="#lasso-pl" fill="rgba(242,169,59,.10)" stroke="#A65F00" strokeWidth={2 / scNow} strokeDasharray={(6 / scNow) + ' ' + (5 / scNow)} strokeLinejoin="round" strokeLinecap="round" />
+          </svg>}
+          {selOk && (() => { const r = frameRect(selBox); return (
+            <div ref={frameRef} className={'selfr' + (dragging ? ' drag' : '')} style={{ left: r.l, top: r.t, width: r.w, height: r.h }} onPointerDown={e => sDown(e, 'move')} onPointerMove={sMove} onPointerUp={sUp} onPointerCancel={sUp}>
+              {[0, 1, 2, 3].map(c => <div key={c} className={'selh h' + c} onPointerDown={e => sDown(e, 'scale', c)} onPointerMove={sMove} onPointerUp={sUp} onPointerCancel={sUp}><i /></div>)}
+            </div>); })()}
+          {selOk && !dragging && (() => {
+            const r = frameRect(selBox), el = boxRef.current, W = fit.w * zoom, H = fit.h * zoom;
+            const st = el ? el.scrollTop : 0, ch = el ? el.clientHeight : H, sl = el ? el.scrollLeft : 0, cw = el ? el.clientWidth : W;
+            const mh = msz.h || 52, mw = msz.w || 320, maxW = Math.max(160, Math.min(W, cw) - 8);
+            let top = r.t - mh - 8;
+            if (top < st + 4) top = r.t + r.h + 8 <= Math.min(H, st + ch) - mh ? r.t + r.h + 8 : Math.max(st + 4, r.t + 8);
+            const lo = Math.max(0, sl) + 4, hi = Math.min(W, sl + cw) - mw - 4, left = Math.max(lo, Math.min(r.l + r.w / 2 - mw / 2, hi));
+            const allHl = sel.items.every(isHl), selPalette = allHl ? HL_INK : INK, c0 = (sel.items.find(s => !isHl(s)) || sel.items[0]).c;
+            return (
+              <div ref={menuRef} className="selmenu" role="toolbar" aria-label={tr("Дії з виділеним")} style={{ left, top, maxWidth: maxW }}>
+                <div className="selrow">
+                  {onAsk && <><button className="selb pri" onClick={() => askSel()}><EIcon n="spark" size={18} />{tr("Запитати Помічника")}</button>
+                    <button className="selb" onClick={() => askSel(tr("Зроби картки з виділеного"))}><EIcon n="cards" size={18} />{tr("Зробити картки")}</button></>}
+                  <button className="selb" aria-expanded={selPal} onClick={() => setSelPal(!selPal)}><i className="seldot" style={{ background: c0 }} />{tr("Колір")}</button>
+                  <button className="selb" onClick={selCopy} title="Ctrl/⌘ C"><EIcon n="copy" size={18} />{tr("Копіювати")}</button>
+                  <button className="selb" onClick={selDup} title="Ctrl/⌘ D"><EIcon n="dup" size={18} />{tr("Дублювати")}</button>
+                  {clipOn && <button className="selb" onClick={() => pasteClip()} title="Ctrl/⌘ V"><EIcon n="paste" size={18} />{tr("Вставити")}</button>}
+                  <button className="selb wn" onClick={selDelete} title="Delete"><EIcon n="trash" size={18} />{tr("Видалити")}</button>
+                </div>
+                {selPal && <div className="ipal selpal" role="group" aria-label={tr("Колір виділеного")}>
+                  {selPalette.map(([c, nm]) => <button key={c} className="ipc" aria-pressed={sel.items.every(s => (allHl || !isHl(s) ? s.c === c : true))} aria-label={tr(nm)} title={tr(nm)} onClick={() => selColor(c)}><i style={{ background: c }} /></button>)}
+                  <label className="ipc icustom" title={tr("Свій колір")}><i /><input type="color" value={/^#[0-9a-f]{6}$/i.test(c0) ? c0 : '#000000'} onChange={e => selColor(e.target.value)} aria-label={tr("Свій колір")} /></label>
+                </div>}
+              </div>); })()}
+          {pasteAt && <div className="selmenu" style={{ left: Math.max(4, pasteAt.x * scNow - 60), top: Math.max(4, pasteAt.y * scNow - 60) }}>
+            <button className="selb pri" autoFocus onClick={() => pasteClip(pasteAt)}><EIcon n="paste" size={18} />{tr("Вставити")}</button>
+          </div>}
         </div>
       </div>
+      <span className="vh" role="status" aria-live="polite">{live}</span>
       {strip && <div className="strip">{thumbs.map((th, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + th + ')' }} aria-label={tr("Сторінка") + ' ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
       <div className="pgnav">
         <IB n="left" label={tr("Попередня сторінка")} onClick={() => goPage(pi - 1)} disabled={pi === 0} />
