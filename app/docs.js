@@ -6,12 +6,14 @@ import { newDoc, newId, folderPath, fitPage, descendants, breadcrumb } from './l
 import { t as tr, loc, plural } from './i18n';
 import { drawStroke, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, hitStroke, splitStroke, nearlyStraight, isHl, PENS, PRESSURE_NIBS, SHAPES, strokeBox, boxOf, xformStroke, lassoPick } from './draw';
 import { FolderGlyph, FOLDER_COLORS } from './folder-icons';
+import { isPdf, openPdf, renderPdfPages, pageHasText, searchText, searchPage, exportPdf, pdfName, savePdf, canSharePdf, sharePdf, openPdfTab, isIOS, PDF_MAX_PAGES, PDF_MAX_BYTES } from './pdfio';
 
 export { putDoc, delDoc, newDoc, reparentDocs, moveDoc };
 export const listDocs = listMeta;
-const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан', note: 'Нотатка' };
-// фільтр типу в папці (етап 2): «Обране» — окремий перемикач, не тип
-const TFILT = [['all', 'Усі'], ['notebook', 'Зошити'], ['board', 'Дошки'], ['img', 'Фото й скани'], ['note', 'Нотатки']];
+const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан', pdf: 'PDF', note: 'Нотатка' };
+// фільтр типу в папці (етап 2): «Обране» — окремий перемикач, не тип. PDF — окремий фільтр (документ, а не фото);
+// пігулка показується лише тоді, коли в папці є PDF.
+const TFILT = [['all', 'Усі'], ['notebook', 'Зошити'], ['board', 'Дошки'], ['pdf', 'PDF'], ['img', 'Фото й скани'], ['note', 'Нотатки']];
 // Палітра папок і обкладинок = токени стилю C. У даних лишається hex (сумісність зі старими версіями й синхронізацією),
 // а малюється CSS-змінна, тож у світлій темі колір автоматично темніший.
 export const PALETTE_C = [['#7AA2FF', 'study', 'Синій'], ['#F2A93B', 'accent', 'Бурштиновий'], ['#9BD46A', 'home', 'Зелений'], ['#C3A0FF', 'personal', 'Фіолетовий'], ['#FF9B6A', 'health', 'Помаранчевий'], ['#5FD0C0', 'work', 'Бірюзовий'], ['#8B9098', 'neutral', 'Сірий']];
@@ -36,8 +38,8 @@ const loadImg = src => new Promise((res, rej) => { const i = new Image(); i.onlo
 // nums — номери сторінок з 1. Повертає { title, pages: кількість сторінок, imgs: [{ page, url }] }.
 export const getDocFull = getDoc;
 // crop — виділення ласо { x, y, w, h } у координатах сторінки: рендериться лише ця область (дрібну — до 2× для читабельності).
-export async function docPageImages(id, nums, max = 1600, q = 0.7, crop) {
-  const d = await getDoc(id); if (!d) return null;
+export async function docPageImages(id, nums, max = 1600, q = 0.7, crop, doc) {
+  const d = doc || await getDoc(id); if (!d) return null;
   const imgs = [];
   for (const n of (nums || []).slice(0, 4)) {
     const p = d.pages[n - 1]; if (!p) continue;
@@ -50,6 +52,34 @@ export async function docPageImages(id, nums, max = 1600, q = 0.7, crop) {
     imgs.push({ page: n, url: c.toDataURL('image/jpeg', q) });
   }
   return { title: d.title, type: d.type, pages: d.pages.length, imgs };
+}
+// Матеріал для ШІ (Помічник, тест «З матеріалу», «Поясни»). Для сторінок із текстовим шаром (імпортований PDF) — ТЕКСТ
+// із підписом «с. N»; зображення — лише якщо тексту немає (скан усередині PDF) або на сторінці є власні позначки
+// (штрихи, виділення: у тексті PDF їх не видно). Зображень — до 4, сторінок із текстом — до TEXT_PAGES, тексту — до TEXT_BUDGET.
+// Повертає { title, type, pages: кількість сторінок, nums: надіслані сторінки, imgs: [{ page, url }], texts: [{ page, text }] }.
+export const TEXT_PAGES = 10;
+const TEXT_BUDGET = 24000;
+export async function docMaterial(id, nums, crop) {
+  const d = await getDoc(id); if (!d) return null;
+  const want = (nums || []).filter(n => d.pages[n - 1]);
+  const texts = [], imgNums = [];
+  let budget = TEXT_BUDGET;
+  for (const n of want.slice(0, TEXT_PAGES)) {
+    const p = d.pages[n - 1], txt = pageHasText(p);
+    if (txt && budget > 0) { const t = p.text.slice(0, budget); budget -= t.length; texts.push({ page: n, text: t }); }
+    if ((!txt || crop || (p.strokes && p.strokes.length)) && imgNums.length < 4) imgNums.push(n);
+  }
+  const r = imgNums.length ? await docPageImages(id, imgNums, 1600, 0.7, crop, d) : { imgs: [] };
+  const sent = [...new Set([...texts.map(x => x.page), ...r.imgs.map(x => x.page)])].sort((a, b) => a - b);
+  return { title: d.title, type: d.type, pages: d.pages.length, nums: sent, imgs: r.imgs, texts };
+}
+// Для контексту ШІ: { material, images, labels } з результату docMaterial
+export function materialOf(r, title, sel) {
+  return {
+    material: { kind: 'doc', title, pages: r.nums, imgPages: r.imgs.map(x => x.page), texts: r.texts },
+    images: r.imgs.map(x => x.url),
+    labels: r.imgs.map(x => 'с. ' + x.page + (sel ? ' (виділений фрагмент сторінки)' : '')),
+  };
 }
 const cropBox = (c, p) => { const x = Math.max(0, c.x), y = Math.max(0, c.y); return { x, y, w: Math.min(p.w, c.x + c.w) - x, h: Math.min(p.h, c.y + c.h) - y }; };
 // Внутрішній буфер ласо (між сторінками й документами в межах сесії)
@@ -159,6 +189,16 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 
 function EIcon({ n, size = 22 }) { return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{EI[n]}</svg>; }
 function IB({ n, label, on, onClick, disabled, pressed }) { return <button className={'ib' + (on ? ' on' : '')} onClick={onClick} aria-label={label} title={label} disabled={disabled} aria-pressed={pressed}><EIcon n={n} /></button>; }
+// Мініатюри стрічки сторінок: кеш за об'єктом сторінки (сторінка незмінна, доки її не змінили), щоб у PDF на 50 сторінок
+// кожен штрих не перемальовував усі мініатюри заново.
+const STRIP = new WeakMap();
+async function stripThumb(p) {
+  const hit = STRIP.get(p); if (hit) return hit;
+  const im = p.img ? await loadImg(p.img).catch(() => null) : null;
+  const c = document.createElement('canvas'); c.width = 90; c.height = Math.round(90 * p.h / p.w);
+  const g = c.getContext('2d'); g.scale(90 / p.w, 90 / p.w); renderPage(g, p, im);
+  const url = c.toDataURL('image/jpeg', 0.5); STRIP.set(p, url); return url;
+}
 async function makeThumb(d) {
   const p = d.pages[0]; if (!p) return '';
   const im = p.img ? await loadImg(p.img).catch(() => null) : null;
@@ -186,8 +226,9 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   const [strip, setStrip] = useState(false);
   const [pop, setPop] = useState(null);
   const [popTop, setPopTop] = useState(96);
-  const barRef = useRef(null), holdT = useRef(null);
+  const barRef = useRef(null), holdT = useRef(null), stxt = useRef(null);
   const [thumbs, setThumbs] = useState([]);
+  const [exp, setExp] = useState(false);
   const cvRef = useRef(null), boxRef = useRef(null), imgRef = useRef(null), cur = useRef(null), hist = useRef([]), redo = useRef([]), dRef = useRef(d), piRef = useRef(0), saved = useRef(doc.pages), touches = useRef(new Map()), gest = useRef(null);
   dRef.current = d; piRef.current = pi;
   const page = d.pages[pi];
@@ -241,18 +282,17 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   const flush = async extra => {
     const pages = d.pages;
     const dirty = pages.length !== saved.current.length ? 'all' : pages.map((p, i) => p === saved.current[i] ? -1 : i).filter(i => i >= 0);
-    await onSave({ ...d, ...extra, upd: Date.now() }, dirty); saved.current = pages;
+    // PDF: текст для пошуку в метаданих оновлюється, коли змінився склад сторінок (видалили / додали сторінку)
+    // (у ref, бо стан d зберігає старий текст, а наступні збереження пишуть метадані знову)
+    if (d.type === 'pdf' && dirty === 'all') stxt.current = searchText(pages);
+    await onSave({ ...d, ...(stxt.current != null ? { text: stxt.current } : null), ...extra, upd: Date.now() }, dirty); saved.current = pages;
   };
   useEffect(() => { const t = setTimeout(() => { flush().catch(() => {}); }, 1500); return () => clearTimeout(t); }, [d]);
   useEffect(() => {
     if (!strip) return; let off = false;
     (async () => {
       const out = [];
-      for (const p of d.pages) {
-        const im = p.img ? await loadImg(p.img).catch(() => null) : null;
-        const c = document.createElement('canvas'); c.width = 90; c.height = Math.round(90 * p.h / p.w);
-        const g = c.getContext('2d'); g.scale(90 / p.w, 90 / p.w); renderPage(g, p, im); out.push(c.toDataURL('image/jpeg', 0.5));
-      }
+      for (const p of d.pages) { if (off) return; out.push(await stripThumb(p)); }
       if (!off) setThumbs(out);
     })();
     return () => { off = true; };
@@ -518,6 +558,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; redo.current = []; };
   useEffect(() => {
     const h = e => {
+      if (exp) return; // відкрито вікно експорту: клавіші належать йому
       if (e.key === 'Escape' && pop) { setPop(null); return; }
       // ласо: Delete — видалити, Esc — зняти, Cmd/Ctrl+C / X / V / D / A
       const tg = e.target, inField = tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.isContentEditable);
@@ -692,9 +733,11 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
           {d.type === 'notebook' && !page.img && <div className="prow">{[['blank', 'Чиста'], ['lined', 'У лінійку'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} style={{ margin: 0 }} onClick={() => setPage({ ...page, tpl: k })}>{tr(n)}</button>)}</div>}
           {stylusTg}
           <button className={'tg' + (pressure ? ' on' : '')} aria-pressed={pressure} onClick={() => setPressure(!pressure)}><span>{tr("Чутливість до нажиму")}</span><b>{pressure ? '✓' : ''}</b></button>
+          <button className="tg" onClick={() => { setPop(null); setExp(true); }} aria-haspopup="dialog"><span>{tr("Експорт у PDF")}<small className="tgsub">{tr("Сторінки разом із позначками")}</small></span><EIcon n="share" size={20} /></button>
           {d.pages.length > 1 && <button className="tg" onClick={() => { delPage(); setPop(null); }}><span>{tr("Видалити сторінку")}</span><EIcon n="trash" size={20} /></button>}
         </>}
       </div></div>}
+      {exp && <ExportSheet doc={d} cur={pi + 1} onClose={() => setExp(false)} />}
       {tin && <div className="ov" onClick={() => setTin(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
         <b>{tr("Текст на сторінці")}</b>
         <textarea style={{ marginTop: 12 }} rows={3} autoFocus value={tin.v} onChange={e => setTin({ ...tin, v: e.target.value })} placeholder={tr("Введіть текст")} />
@@ -726,9 +769,134 @@ function Cover({ m }) {
     const st = k ? { '--cv': SOFT[k], '--sp': SOLID[k] } : { '--cv': m.cover, '--sp': m.cover };
     return <span className="cv nbk" style={st} aria-hidden="true">{fav}</span>;
   }
-  if (m.thumb) return <span className="cv img" style={{ backgroundImage: 'url(' + m.thumb + ')' }} aria-hidden="true">{fav}</span>;
+  const badge = m.type === 'pdf' && <span className="cv-badge">PDF</span>;
+  if (m.thumb) return <span className="cv img" style={{ backgroundImage: 'url(' + m.thumb + ')' }} aria-hidden="true">{badge}{fav}</span>;
+  if (badge) return <span className="cv paper" aria-hidden="true">{badge}{fav}</span>;
   return <span className={'cv paper' + (m.type === 'board' ? '' : ' lined')} aria-hidden="true">{fav}</span>;
 }
+
+const fmtMB = b => (b / 1048576).toLocaleString(loc(), { maximumFractionDigits: b < 10485760 ? 1 : 0 }) + ' ' + tr("МБ");
+// Вікно (діалог) з Esc і поверненням фокусу туди, звідки відкрили
+function useSheet(onClose) {
+  const ret = useRef(null), cb = useRef(onClose);
+  cb.current = onClose;
+  useEffect(() => {
+    ret.current = document.activeElement;
+    const k = e => { if (e.key === 'Escape') { e.stopPropagation(); cb.current(); } };
+    document.addEventListener('keydown', k);
+    return () => { document.removeEventListener('keydown', k); const r = ret.current; if (r && document.contains(r) && r.focus) setTimeout(() => r.focus(), 0); };
+  }, []);
+}
+function Progress({ label, n, m, onStop }) {
+  return <>
+    <progress className="pgbar" max={m || 1} value={n} aria-label={label} />
+    <p className="sub pgtx" role="status" aria-live="polite">{label}: {tr("сторінка")} {Math.min(n + 1, m)} {tr("з")} {m}</p>
+    <div className="row"><button className="btn2" autoFocus onClick={onStop}>{tr("Зупинити")}</button></div>
+  </>;
+}
+// Номери сторінок «від–до» (з 1) з перевіркою. Повертає { from, to, err }
+function rangeOf(f, t, total, max) {
+  const a = Math.floor(Number(f)), b = Math.floor(Number(t));
+  if (!a || !b || a < 1 || b < a || b > total) return { err: tr("Номери сторінок: від 1 до") + ' ' + total + '.' };
+  if (max && b - a + 1 > max) return { err: tr("За один раз — до") + ' ' + max + ' ' + tr("сторінок") + '.' };
+  return { from: a, to: b };
+}
+function RangeInputs({ id, f, t, total, onF, onT, err }) {
+  return <div className="rng">
+    <div className="rng-f"><label className="flab" htmlFor={id + '-f'}>{tr("Від")}</label><input id={id + '-f'} type="number" inputMode="numeric" min="1" max={total} value={f} onChange={e => onF(e.target.value)} aria-invalid={!!err} aria-describedby={err ? id + '-e' : undefined} /></div>
+    <span className="rng-d" aria-hidden="true">–</span>
+    <div className="rng-f"><label className="flab" htmlFor={id + '-t'}>{tr("До")}</label><input id={id + '-t'} type="number" inputMode="numeric" min="1" max={total} value={t} onChange={e => onT(e.target.value)} aria-invalid={!!err} aria-describedby={err ? id + '-e' : undefined} /></div>
+    {err && <p className="hint err rng-e" id={id + '-e'} role="alert">{err}</p>}
+  </div>;
+}
+
+// Експорт у PDF. doc — повний документ (з редактора, разом із незбереженими змінами) або load() — завантажити за id.
+// cur — поточна сторінка (лише в редакторі).
+export function ExportSheet({ doc, load, cur, onClose }) {
+  const [d, setD] = useState(doc || null);
+  const [scope, setScope] = useState('all');
+  const [f, setF] = useState('1'), [t, setT] = useState('1');
+  const [st, setSt] = useState(doc ? { ph: 'pick' } : { ph: 'load' });
+  const ac = useRef(null);
+  const close = () => { if (ac.current) ac.current.abort(); onClose(); };
+  useSheet(close);
+  useEffect(() => { if (doc) { setT(String(doc.pages.length)); return; } load().then(x => { if (!x) { setSt({ ph: 'err', msg: tr("Не вдалося відкрити документ.") }); return; } setD(x); setT(String(x.pages.length)); setSt({ ph: 'pick' }); }).catch(() => setSt({ ph: 'err', msg: tr("Не вдалося відкрити документ.") })); }, []);
+  const total = d ? d.pages.length : 0;
+  const rg = scope === 'range' ? rangeOf(f, t, total) : null;
+  const nums = !d ? [] : scope === 'cur' ? [cur] : scope === 'range' ? (rg.err ? [] : Array.from({ length: rg.to - rg.from + 1 }, (_, i) => rg.from + i)) : d.pages.map((_, i) => i + 1);
+  const name = d ? pdfName(d.title) : '';
+  const go = async () => {
+    if (!nums.length) return;
+    const a = new AbortController(); ac.current = a;
+    setSt({ ph: 'run', n: 0, m: nums.length });
+    try {
+      const blob = await exportPdf(d, nums, { signal: a.signal, onPage: (n, m) => setSt({ ph: 'run', n, m }) });
+      if (a.signal.aborted) return;
+      setSt({ ph: 'done', blob, n: nums.length, share: canSharePdf(blob, name) });
+    } catch (e) {
+      if (e && e.code === 'abort') { setSt({ ph: 'pick' }); return; }
+      setSt({ ph: 'err', msg: tr("Не вдалося створити PDF. Можливо, забагато сторінок для пам’яті пристрою: спробуйте діапазон.") });
+    }
+    ac.current = null;
+  };
+  const share = async () => { try { await sharePdf(st.blob, name, d.title); } catch (e) { if (!e || e.name !== 'AbortError') savePdf(st.blob, name); } };
+  const ios = isIOS();
+  // короткі підписи, щоб на телефоні 3 кнопки вміщалися в один рядок; повна назва — для скринрідера
+  const scopes = [['all', tr("Усі") + ' · ' + total, tr("Усі сторінки") + ': ' + total], ...(cur ? [['cur', tr("Поточна") + ' · ' + cur, tr("Поточна сторінка") + ': ' + cur]] : []), ['range', tr("Діапазон"), tr("Діапазон сторінок")]];
+  return <div className="ov" onClick={st.ph === 'run' ? undefined : close}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="exp-t" onClick={e => e.stopPropagation()}>
+    <div className="shd"><h2 id="exp-t">{tr("Експорт у PDF")}</h2><IB n="close" label={tr("Закрити")} onClick={close} /></div>
+    {st.ph === 'load' && <p className="sub" role="status">{tr("Відкриваю документ…")}</p>}
+    {st.ph === 'pick' && d && <>
+      <p className="sub exp-n">{name}</p>
+      <div className="seg" role="group" aria-label={tr("Сторінки")} style={{ marginTop: 12 }}>{scopes.map(([k, n, al], i) => <button key={k} autoFocus={i === 0} className={scope === k ? 'on' : ''} aria-pressed={scope === k} aria-label={al} onClick={() => setScope(k)}>{n}</button>)}</div>
+      {scope === 'range' && <RangeInputs id="exp" f={f} t={t} total={total} onF={setF} onT={setT} err={rg && rg.err} />}
+      <p className="hint" style={{ marginTop: 12 }}>{d.type === 'pdf' ? tr("Сторінки PDF разом із вашими позначками. Текст у файлі буде зображенням: його не можна виділити чи знайти пошуком.") : tr("Кожна сторінка — окрема сторінка PDF, як на екрані.")}</p>
+      <div className="row" style={{ marginTop: 16 }}><button className="btn" disabled={!nums.length} onClick={go}>{tr("Експортувати")}{nums.length ? ' · ' + nums.length + ' ' + tr("с.") : ''}</button></div>
+    </>}
+    {st.ph === 'run' && <Progress label={tr("Експорт")} n={st.n} m={st.m} onStop={() => ac.current && ac.current.abort()} />}
+    {st.ph === 'done' && <>
+      <p role="status">{tr("PDF готовий")}: <b>{name}</b></p>
+      <p className="sub">{st.n} {tr("с.")} · {fmtMB(st.blob.size)}</p>
+      <div className="exp-a">
+        {st.share && ios && <button className="btn-a" autoFocus onClick={share}>{tr("Поділитися або зберегти у Файли")}</button>}
+        <button className={st.share && ios ? 'btn2' : 'btn-a'} autoFocus={!(st.share && ios)} onClick={() => savePdf(st.blob, name)}>{tr("Завантажити PDF")}</button>
+        {st.share && !ios && <button className="btn2" onClick={share}>{tr("Поділитися")}</button>}
+        {ios && <button className="btn2" onClick={() => openPdfTab(st.blob)}>{tr("Відкрити в новій вкладці")}</button>}
+      </div>
+    </>}
+    {st.ph === 'err' && <><p className="hint err" role="alert">{st.msg}</p><div className="row"><button className="btn2" onClick={() => setSt(d ? { ph: 'pick' } : { ph: 'load' })} disabled={!d}>{tr("Назад")}</button></div></>}
+  </div></div>;
+}
+
+function ImportSheet({ imp, setImp, onRun, onClose, onRetry }) {
+  useSheet(onClose);
+  const rg = imp.ph === 'range' ? rangeOf(imp.f, imp.t, imp.total, PDF_MAX_PAGES) : null;
+  return <div className="ov" onClick={imp.ph === 'run' || imp.ph === 'open' ? undefined : onClose}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="imp-t" onClick={e => e.stopPropagation()}>
+    <div className="shd"><h2 id="imp-t">{tr("Імпорт PDF")}</h2>{imp.ph !== 'run' && <IB n="close" label={tr("Закрити")} onClick={onClose} />}</div>
+    {imp.ph === 'open' && <p className="sub" role="status" aria-live="polite">{tr("Відкриваю файл…")}</p>}
+    {imp.ph === 'range' && <>
+      <p>{tr("Сторінок у файлі")}: {imp.total}. {tr("За один раз можна імпортувати до 50 сторінок.")}</p>
+      <p className="hint">{tr("Оберіть потрібні сторінки. Решту можна імпортувати окремим документом.")}</p>
+      <RangeInputs id="imp" f={imp.f} t={imp.t} total={imp.total} onF={v => setImp({ ...imp, f: v })} onT={v => setImp({ ...imp, t: v })} err={rg.err} />
+      <div className="row" style={{ marginTop: 16 }}><button className="btn" autoFocus disabled={!!rg.err} onClick={() => onRun(rg.from, rg.to)}>{tr("Імпортувати")}{rg.err ? '' : ' · ' + tr("с.") + ' ' + rg.from + '–' + rg.to}</button></div>
+    </>}
+    {imp.ph === 'run' && <>
+      <Progress label={tr("Імпорт")} n={imp.n} m={imp.m} onStop={onClose} />
+      <p className="hint">{tr("Зупинка скасує імпорт: документ не буде створено.")}</p>
+    </>}
+    {imp.ph === 'err' && <>
+      <p className="hint err" role="alert">{tr(PDF_ERR[imp.code] || PDF_ERR.read)}</p>
+      <div className="row" style={{ marginTop: 12 }}><button className="btn-a" autoFocus onClick={onRetry}>{tr("Обрати інший файл")}</button><button className="btn2" onClick={onClose}>{tr("Закрити")}</button></div>
+    </>}
+  </div></div>;
+}
+// Помилки імпорту PDF → зрозумілий текст
+const PDF_ERR = {
+  size: "Файл завеликий: можна до 50 МБ. Стисніть PDF або розділіть його на частини.",
+  password: "PDF захищено паролем. Відкрийте його в іншій програмі, збережіть копію без пароля й спробуйте ще раз.",
+  invalid: "Файл пошкоджений або це не PDF.",
+  read: "Не вдалося прочитати PDF. Спробуйте інший файл.",
+};
 
 export default function Materials({ folders, notes, fview, setFview, onOpenNote, onNewNote, onFolderForm, onNoteFav, onNoteMove, onNoteDel, onStudy, folderExtra, onAsk, aiSide, openReq, onOpenReqDone, onOpened, onEdClose }) {
   const [docs, setDocs] = useState([]);
@@ -747,7 +915,9 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
   const [act, setAct] = useState(null);
   const [confirm, setConfirm] = useState(false);
   const [msg, setMsg] = useState('');
-  const scRef = useRef(null), imRef = useRef(null), lp = useRef(null), fired = useRef(false), retFocus = useRef(null);
+  const [imp, setImp] = useState(null); // імпорт PDF: { ph: 'open' | 'range' | 'run' | 'err', ... }
+  const [expId, setExpId] = useState(null); // експорт у PDF із меню матеріалу
+  const scRef = useRef(null), imRef = useRef(null), pdfRef = useRef(null), impAc = useRef(null), impTok = useRef(null), lp = useRef(null), fired = useRef(false), retFocus = useRef(null);
 
   useEffect(() => { try { const v = localStorage.getItem('helper-docview'); if (v === 'list' || v === 'grid') setView(v); } catch (e) {} }, []);
   const pickView = v => { setView(v); try { localStorage.setItem('helper-docview', v); } catch (e) {} };
@@ -771,12 +941,13 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
   const fo = typeof fview === 'number' ? folders.find(f => f.id === fview) : null;
   const fid = fo ? fo.id : '';
   const mats = [
-    ...docs.map(d => ({ k: 'doc', key: 'd' + d.id, id: d.id, type: d.type, title: d.title || tr(TYPES[d.type] || 'Зошит'), folder: fids.has(d.folder) ? d.folder : '', upd: d.upd || 0, created: d.created || 0, fav: !!d.fav, thumb: d.thumb, cover: d.cover, raw: d })),
+    ...docs.map(d => ({ k: 'doc', key: 'd' + d.id, id: d.id, type: d.type, title: d.title || tr(TYPES[d.type] || 'Зошит'), folder: fids.has(d.folder) ? d.folder : '', upd: d.upd || 0, created: d.created || 0, fav: !!d.fav, thumb: d.thumb, cover: d.cover, stext: typeof d.text === 'string' ? d.text : '', raw: d })),
     ...notes.filter(n => n.text && n.text.trim()).map(n => ({ k: 'note', key: 'n' + n.id, id: n.id, type: 'note', title: n.text.trim().split('\n')[0].slice(0, 60), folder: fids.has(n.folder) ? n.folder : '', upd: n.upd || n.id, created: n.id, fav: !!n.fav, text: n.text, raw: n }))
   ];
   const sorted = (l, by = sort) => { const c = [...l]; if (by === 'name') c.sort((a, b) => a.title.localeCompare(b.title, loc())); else if (by === 'created') c.sort((a, b) => b.created - a.created); else c.sort((a, b) => b.upd - a.upd); return c; };
   const countIn = id => { const s = descendants(folders, id); s.add(id); return mats.filter(m => s.has(m.folder)).length; };
-  const tOk = (m, f) => f === 'all' || (f === 'img' ? (m.type === 'photo' || m.type === 'scan') : m.type === f);
+  // невідомий тип (з новішої версії) рахується як фото/скан, щоб не загубився у фільтрах
+  const tOk = (m, f) => f === 'all' || (f === 'img' ? (m.type === 'photo' || m.type === 'scan' || !TYPES[m.type]) : m.type === f);
   const nMat = n => n + ' ' + plural(n, "матеріал", "матеріали", "матеріалів");
 
   const base = fo ? mats.filter(m => m.folder === fo.id) : fview === 'all' ? mats : fview === 'fav' ? mats.filter(m => m.fav) : [];
@@ -789,7 +960,10 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
   const top = folders.filter(f => !fids.has(f.parent));
   const subs = fo ? folders.filter(f => f.parent === fo.id) : [];
   const needle = q.trim().toLowerCase();
-  const found = needle ? sorted(mats.filter(m => m.title.toLowerCase().includes(needle) || (m.text || '').toLowerCase().includes(needle)), 'new') : [];
+  // пошук: назва, текст нотатки й текстовий шар PDF (stext — сторінки через \f)
+  const found = needle ? sorted(mats.filter(m => m.title.toLowerCase().includes(needle) || (m.text || '').toLowerCase().includes(needle) || (m.stext && m.stext.toLowerCase().includes(needle))), 'new') : [];
+  const searching = fview == null && search && !!needle;
+  const hitPage = m => (searching && m.stext ? searchPage(m.stext, needle) : 0);
   const pathIds = new Set(fo ? breadcrumb(folders, fo.id).map(f => f.id) : []);
 
   const dflt = type => tr(TYPES[type]) + ' ' + new Date().toLocaleDateString(loc());
@@ -812,8 +986,39 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
     catch (e) { setMsg(tr("Не вдалося зберегти документ: можливо, закінчилося місце.")); }
     setMenu(false); setNb(null);
   };
+  // ===== Імпорт PDF: кожна сторінка → сторінка з растровим фоном img (як у скана) + текстовий шар page.text =====
+  const fromPdf = async file => {
+    if (!file) return;
+    setMenu(false); setMsg('');
+    if (file.size > PDF_MAX_BYTES) { setImp({ ph: 'err', code: 'size' }); return; }
+    const tok = impTok.current = {};
+    setImp({ ph: 'open', name: file.name });
+    let o;
+    try { o = await openPdf(file); } catch (e) { if (impTok.current === tok) setImp({ ph: 'err', code: e.code || 'read' }); return; }
+    if (impTok.current !== tok) { try { o.pdf.destroy(); } catch (e) {} return; } // закрили, поки файл відкривався
+    const base = String(file.name || '').replace(/\.pdf$/i, '').trim() || tr("PDF") + ' ' + new Date().toLocaleDateString(loc());
+    if (o.numPages > PDF_MAX_PAGES) { setImp({ ph: 'range', pdf: o.pdf, total: o.numPages, base, f: '1', t: String(PDF_MAX_PAGES) }); return; }
+    runPdf(o.pdf, 1, o.numPages, o.numPages, base);
+  };
+  const runPdf = async (pdf, from, to, total, base) => {
+    const a = new AbortController(); impAc.current = a;
+    setImp({ ph: 'run', n: 0, m: to - from + 1 });
+    try {
+      const pages = await renderPdfPages(pdf, from, to, { signal: a.signal, onPage: (n, m) => setImp({ ph: 'run', n, m }) });
+      const title = from === 1 && to === total ? base : base + ' (' + tr("с.") + ' ' + from + '–' + to + ')';
+      const dd = { id: newId(), type: 'pdf', title, folder: fid, cover: '', created: Date.now(), upd: Date.now(), thumb: '', fav: false, text: searchText(pages), pdf: { pages: total, from, to }, pages };
+      try { dd.thumb = await makeThumb(dd); } catch (e) {}
+      setImp(null);
+      await start(dd);
+    } catch (e) {
+      if (e && e.code === 'abort') { setImp(null); setMsg(tr("Імпорт зупинено. Нічого не збережено.")); }
+      else setImp({ ph: 'err', code: 'read' });
+    } finally { impAc.current = null; try { pdf.destroy(); } catch (e) {} }
+  };
+  const closeImp = () => { impTok.current = null; if (impAc.current) impAc.current.abort(); else { if (imp && imp.pdf) { try { imp.pdf.destroy(); } catch (e) {} } setImp(null); } };
   const fromFile = async (file, type) => {
     if (!file) return;
+    if (isPdf(file)) { fromPdf(file); return; } // PDF, обраний через «Імпорт фото»
     setMenu(false); setMsg(tr("Обробка зображення…"));
     try {
       const im = await prepImage(file, type === 'scan');
@@ -825,8 +1030,9 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
     if (act && act.k === 'doc') { const m = docs.find(x => x.id === act.id); const t = (act.title || '').trim(); if (m && t && m.title !== t) { try { await putMeta({ ...m, title: t, upd: Date.now() }); } catch (e) {} } }
     setAct(null); setConfirm(false);
   }
-  const openM = m => { if (m.k === 'note') onOpenNote(m.id); else openDoc(m.raw); };
-  const metaOf = m => tr(TYPES[m.type] || 'Зошит') + ' · ' + when(m.upd);
+  // з результатів пошуку PDF відкривається на сторінці, де знайдено текст
+  const openM = m => { if (m.k === 'note') onOpenNote(m.id); else openDoc(m.raw, hitPage(m) || undefined); };
+  const metaOf = m => { const hp = hitPage(m); return tr(TYPES[m.type] || 'Зошит') + (m.type === 'pdf' && m.raw.pageCount ? ' · ' + m.raw.pageCount + ' ' + tr("с.") : '') + (hp ? ' · ' + tr("знайдено на с.") + ' ' + hp : ' · ' + when(m.upd)); };
   const labelOf = m => m.title + ', ' + metaOf(m) + (m.fav ? ', ' + tr("в обраному") : '');
   const openAct = m => { retFocus.current = document.activeElement; setConfirm(false); setAct({ ...m }); };
   const press = m => ({
@@ -948,9 +1154,10 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
       </div>
 
       {/* один вхід створення: FAB на телефоні, «Створити» в шапці на iPad — те саме меню */}
-      <button className="fab phone-only" onClick={() => { retFocus.current = document.activeElement; setMenu(true); }} aria-label={tr("Створити: зошит, дошку, нотатку, імпорт фото або папку")} title={tr("Створити")} aria-haspopup="dialog"><EIcon n="plus" size={26} /></button>
+      <button className="fab phone-only" onClick={() => { retFocus.current = document.activeElement; setMenu(true); }} aria-label={tr("Створити: зошит, дошку, нотатку, імпорт фото чи PDF або папку")} title={tr("Створити")} aria-haspopup="dialog"><EIcon n="plus" size={26} /></button>
       <input ref={scRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'scan'); e.target.value = ''; }} />
-      <input ref={imRef} type="file" accept="image/*" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
+      <input ref={imRef} type="file" accept="image/*,application/pdf,.pdf" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
+      <input ref={pdfRef} type="file" accept="application/pdf,.pdf" className="hidefile" data-testid="pdf-input" onChange={e => { fromPdf(e.target.files && e.target.files[0]); e.target.value = ''; }} />
 
       {menu && <div className="ov" onClick={() => setMenu(false)}><div className="sheet menu" role="dialog" aria-modal="true" aria-labelledby="mk-title" onClick={e => e.stopPropagation()}>
         <div className="shd"><h2 id="mk-title">{fo ? tr("Створити в «") + fo.name + '»' : tr("Створити")}</h2><IB n="close" label={tr("Закрити")} onClick={() => setMenu(false)} /></div>
@@ -958,6 +1165,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
         <button onClick={() => start(newDoc('board', dflt('board'), fid, 'blank'))}>{tr("Дошка")}<small>{tr("Велике вільне полотно")}</small></button>
         <button onClick={() => { setMenu(false); onNewNote(false); }}>{tr("Текстова нотатка")}<small>{tr("Звичайний текст; з неї можна скласти тест")}</small></button>
         <button onClick={() => imRef.current && imRef.current.click()}>{tr("Імпорт фото")}<small>{tr("З галереї, файлів або камери")}</small></button>
+        <button onClick={() => pdfRef.current && pdfRef.current.click()}>{tr("Імпорт PDF")}<small>{tr("Конспект, підручник, методичка: до 50 сторінок і 50 МБ")}</small></button>
         <button onClick={() => scRef.current && scRef.current.click()}>{tr("Сканувати")}<small>{tr("Фото з вирівнюванням яскравості, як скан")}</small></button>
         <button onClick={() => { setMenu(false); newFolder(); }}>{fo ? tr("Підпапка") : tr("Папка")}<small>{fo ? tr("Нова папка всередині цієї") : tr("Для предмета або теми")}</small></button>
       </div></div>}
@@ -987,6 +1195,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
           if (act.k === 'note') { onNoteFav(act.id); setAct({ ...act, fav }); return; }
           const m = docs.find(x => x.id === act.id); if (!m) return; try { await putMeta({ ...m, fav }); setAct({ ...act, fav }); } catch (e) {}
         }}>{act.fav ? tr("★ Прибрати з обраного") : tr("☆ Додати в обране")}</button>
+        {act.k === 'doc' && <button aria-haspopup="dialog" onClick={() => { const id = act.id; closeAct(); setExpId(id); }}>{tr("Експорт у PDF")}</button>}
         {act.k === 'doc' && <button onClick={async () => { try { await duplicateDoc(act.id); } catch (e) { setMsg(tr("Не вдалося дублювати: можливо, закінчилося місце.")); } setAct(null); }}>{tr("Дублювати")}</button>}
         <label className="flab" htmlFor="act-fold">{tr("Папка")}</label>
         <select id="act-fold" value={act.folder === '' || act.folder == null ? '' : act.folder} style={{ margin: '6px 0 8px' }}
@@ -1004,6 +1213,8 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
         <button onClick={closeAct}>{tr("Готово")}</button>
       </div></div>}
 
+      {imp && <ImportSheet imp={imp} setImp={setImp} onRun={(f, t) => { const x = imp; runPdf(x.pdf, f, t, x.total, x.base); }} onClose={closeImp} onRetry={() => { setImp(null); pdfRef.current && pdfRef.current.click(); }} />}
+      {expId != null && <ExportSheet load={() => getDoc(expId)} onClose={() => setExpId(null)} />}
       {ed && <Editor key={ed.id} doc={ed} startPage={edPage} jump={jump} onAsk={onAsk} aiOn={aiSide} onSave={(d, dirty) => saveDoc(d, dirty)} onClose={() => { setEd(null); setJump(null); if (onEdClose) onEdClose(); }} />}
     </div>
   );
