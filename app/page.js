@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import Materials, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, docPageImages, PALETTE_C, SOLID, colorKey } from './docs';
+import Materials, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, docMaterial, materialOf, TEXT_PAGES, PALETTE_C, SOLID, colorKey } from './docs';
 import { FolderGlyph, FOLDER_COLORS, FICONS, LineIcon, isHex } from './folder-icons';
 import { canMoveFolder, folderPath } from './lib';
 import { syncNow, syncStatus, getSyncMeta, setSyncOn } from './sync';
@@ -566,17 +566,18 @@ export default function Home() {
     const n = Number(tcfg.n) || 10, ctx = { n, kind: tcfg.kind, level: tcfg.level };
     let text = '', title = '', images = null, labels = null, docSrc = null;
     if (tcfg.src === 'mat' && selDoc) {
-      // зошит / дошка / фото: обрані сторінки (до 4) ідуть зображеннями, як у Помічнику
-      const pages = (tcfg.pages || []).filter(n => n >= 1 && n <= docPages(selDoc)).slice(0, 4);
+      // зошит / дошка / фото: обрані сторінки (до 4) ідуть зображеннями, як у Помічнику; PDF (до 10) — текстом сторінок
+      const pages = (tcfg.pages || []).filter(n => n >= 1 && n <= docPages(selDoc)).slice(0, pageMax(selDoc));
       if (!pages.length) return;
       setTbusy(true); setTmsg('');
-      const r = await docPageImages(selDoc.id, pages, 1600, 0.7).catch(() => null);
-      if (!r || !r.imgs.length) { setTbusy(false); setTmsg(tr("Не вдалося підготувати сторінки. Відкрийте зошит і спробуйте ще раз.")); return; }
-      images = r.imgs.map(x => x.url); labels = r.imgs.map(x => 'с. ' + x.page);
+      const r = await docMaterial(selDoc.id, pages).catch(() => null);
+      if (!r || !r.nums.length) { setTbusy(false); setTmsg(tr("Не вдалося підготувати сторінки. Відкрийте зошит і спробуйте ще раз.")); return; }
       title = String(selDoc.title || tr("Зошит")).slice(0, 40);
-      ctx.material = { kind: 'doc', title, pages: r.imgs.map(x => x.page) };
-      text = tr("Склади тест за цими сторінками") + ': ' + title + ', ' + tr("с.") + ' ' + r.imgs.map(x => x.page).join(', ');
-      docSrc = { k: 'doc', id: selDoc.id, title, pages: r.imgs.map(x => x.page) };
+      const mo = materialOf(r, title);
+      if (mo.images.length) { images = mo.images; labels = mo.labels; }
+      ctx.material = mo.material;
+      text = tr("Склади тест за цими сторінками") + ': ' + title + ', ' + tr("с.") + ' ' + r.nums.join(', ');
+      docSrc = { k: 'doc', id: selDoc.id, title, pages: r.nums };
     }
     else if (tcfg.src === 'mat') { const nt = notes.find(x => String(x.id) === String(tcfg.mat)); if (!nt || !nt.text.trim()) return; text = nt.text.slice(0, 15000); title = nt.text.trim().split('\n')[0].slice(0, 40); }
     else if (tcfg.src === 'deck') { if (tcfg.deck == null) return; const dc = cards.filter(c => (c.deck || '') === tcfg.deck); if (!dc.length) return; ctx.cards = dc.slice(0, 200).map(({ q, a }) => ({ q, a })); title = tcfg.deck || tr("Без набору"); text = tr("Тест за набором карток: ") + title; }
@@ -635,9 +636,9 @@ export default function Home() {
     if (t.src && t.src.k === 'deck') { const dc = cards.filter(c => (c.deck || '') === t.src.id).slice(0, 200).map(({ q, a }) => ({ q, a })); if (dc.length) ctx.material = { kind: 'deck', title: deckName(t.src.id), cards: dc }; }
     let msg = { role: 'user', text: tr("Поясни мою помилку.") };
     if (t.src && t.src.k === 'doc') {
-      // тест із зошита: ті самі сторінки знову йдуть зображеннями (якщо зошит ще існує)
-      const r = await docPageImages(t.src.id, t.src.pages || [1], 1600, 0.7).catch(() => null);
-      if (r && r.imgs.length) { ctx.material = { kind: 'doc', title: t.src.title || r.title, pages: r.imgs.map(x => x.page) }; msg = { ...msg, images: r.imgs.map(x => x.url), imageLabels: r.imgs.map(x => 'с. ' + x.page) }; }
+      // тест із зошита: ті самі сторінки знову йдуть до ШІ (якщо зошит ще існує): зображеннями, а PDF — текстом
+      const r = await docMaterial(t.src.id, t.src.pages || [1]).catch(() => null);
+      if (r && r.nums.length) { const mo = materialOf(r, t.src.title || r.title); ctx.material = mo.material; if (mo.images.length) msg = { ...msg, images: mo.images, imageLabels: mo.labels }; }
     }
     try {
       const raw = await callAI({ mode: 'explain', messages: [msg], ctx });
@@ -721,6 +722,7 @@ export default function Home() {
   // «З матеріалу»: текстова нотатка (mat = id) або зошит / дошка / фото (mat = 'd:' + id, pages — до 4 сторінок)
   const pageDocs = [...docMeta].sort((a, b) => (b.upd || 0) - (a.upd || 0));
   const docPages = d => Math.max(1, Number(d && d.pageCount) || 1);
+  const pageMax = d => (d && d.type === 'pdf' ? TEXT_PAGES : 4); // PDF іде текстом — сторінок можна більше
   const selDoc = String(tcfg.mat || '').startsWith('d:') ? pageDocs.find(d => 'd:' + d.id === tcfg.mat) || null : null;
   const selPages = selDoc ? (tcfg.pages || []).filter(n => n >= 1 && n <= docPages(selDoc)) : [];
   const hasMats = textNotes.length > 0 || pageDocs.length > 0;
@@ -1093,11 +1095,11 @@ export default function Home() {
                     <select id="tf-mat" value={selDoc ? 'd:' + selDoc.id : selNote ? String(selNote.id) : ''} onChange={e => { const v = e.target.value; setTcfg(c => ({ ...c, mat: v, pages: v.startsWith('d:') ? [1] : [] })); }} aria-describedby="tf-mat-h">
                       <option value="">{tr("Оберіть матеріал")}</option>
                       {textNotes.length > 0 && <optgroup label={tr("Нотатки")}>{textNotes.map(x => <option key={x.id} value={String(x.id)}>{noteTitle(x)}</option>)}</optgroup>}
-                      {pageDocs.length > 0 && <optgroup label={tr("Зошити, дошки й фото")}>{pageDocs.map(d => <option key={'d' + d.id} value={'d:' + d.id}>{String(d.title || tr("Без назви")).slice(0, 50)} · {docPages(d)} {tr("с.")}</option>)}</optgroup>}
+                      {pageDocs.length > 0 && <optgroup label={tr("Зошити, дошки, фото й PDF")}>{pageDocs.map(d => <option key={'d' + d.id} value={'d:' + d.id}>{String(d.title || tr("Без назви")).slice(0, 50)} · {docPages(d)} {tr("с.")}</option>)}</optgroup>}
                     </select>
-                    {selDoc && <><p className="flab" id="tf-pg" style={{ marginTop: 12 }}>{tr("Сторінки (до 4)")}</p>
-                      <div className="a-pgs tf-pgs" role="group" aria-labelledby="tf-pg">{Array.from({ length: docPages(selDoc) }, (_, k) => k + 1).map(n => { const on = selPages.includes(n); return <button key={n} className="a-pgb" aria-pressed={on} disabled={!on && selPages.length >= 4} onClick={() => setTcfg(c => ({ ...c, pages: on ? selPages.filter(x => x !== n) : [...selPages, n].sort((a, b) => a - b) }))} aria-label={tr("Сторінка") + ' ' + n}>{n}</button>; })}</div></>}
-                    <p className="hint" id="tf-mat-h">{selDoc ? tr("Сторінки підуть до ШІ зображеннями. ШІ розпізнає рукопис, можливі помилки — перевіряйте питання.") : tr("Текстова нотатка або сторінки зошита, дошки чи фото.")}</p></>}
+                    {selDoc && <><p className="flab" id="tf-pg" style={{ marginTop: 12 }}>{selDoc.type === 'pdf' ? tr("Сторінки (до 10)") : tr("Сторінки (до 4)")}</p>
+                      <div className="a-pgs tf-pgs" role="group" aria-labelledby="tf-pg">{Array.from({ length: docPages(selDoc) }, (_, k) => k + 1).map(n => { const on = selPages.includes(n); return <button key={n} className="a-pgb" aria-pressed={on} disabled={!on && selPages.length >= pageMax(selDoc)} onClick={() => setTcfg(c => ({ ...c, pages: on ? selPages.filter(x => x !== n) : [...selPages, n].sort((a, b) => a - b) }))} aria-label={tr("Сторінка") + ' ' + n}>{n}</button>; })}</div></>}
+                    <p className="hint" id="tf-mat-h">{selDoc ? (selDoc.type === 'pdf' ? tr("До ШІ піде текст сторінок PDF; сторінки без тексту (скан) або з вашими позначками — зображеннями.") : tr("Сторінки підуть до ШІ зображеннями. ШІ розпізнає рукопис, можливі помилки — перевіряйте питання.")) : tr("Текстова нотатка або сторінки зошита, дошки чи фото.")}</p></>}
                   {tcfg.src === 'deck' && <><label className="vh" htmlFor="tf-deck">{tr("Набір карток")}</label>
                     <select id="tf-deck" value={tcfg.deck == null ? '' : 'd:' + tcfg.deck} onChange={e => setTcfg(c => ({ ...c, deck: e.target.value === '' ? null : e.target.value.slice(2) }))}><option value="">{tr("Оберіть набір")}</option>{decks.map(d => <option key={d.name} value={'d:' + d.name}>{deckName(d.name)} · {nCards(d.all)}</option>)}</select></>}
                 </div>
@@ -1444,7 +1446,7 @@ export default function Home() {
             <ul className="bkd-l">
               <li>{tr("Задачі, події й іспити")}: {c.items}</li><li>{tr("Нотатки")}: {c.notes}</li><li>{tr("Картки")}: {c.cards}</li>
               <li>{tr("Тести")}: {c.tests}</li><li>{tr("Папки")}: {c.folders}</li><li>{tr("Розмови з Помічником")}: {c.chats}</li>
-              <li>{tr("Зошити, дошки й фото")}: {c.docs} ({c.pages} {tr("с.")})</li>
+              <li>{tr("Зошити, дошки, фото й PDF")}: {c.docs} ({c.pages} {tr("с.")})</li>
             </ul>
             <div className="flab" id="bkd-m">{tr("Як відновити")}</div>
             <div className="bkd-ms" role="radiogroup" aria-labelledby="bkd-m">

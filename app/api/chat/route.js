@@ -139,12 +139,32 @@ const ACTIONS2 = ' Також: {"type":"create_folder","name":"..","color":"#hex
 
 const ACTIONS = 'Доступні дії: {"type":"add_task","t":"назва","area":"study|work|personal|health|home","h":години числом,"due":"YYYY-MM-DD або порожній рядок","pri":1 або 2,"repeat":"none|daily|weekdays|weekly"}; {"type":"add_event","t":"назва","area":"..","date":"YYYY-MM-DD","time":"HH:MM","h":тривалість у годинах,"repeat":"none|daily|weekdays|weekly"}; {"type":"update_task","id":число,"t":"..","area":"..","h":число,"date":"YYYY-MM-DD","time":"HH:MM","pri":1 або 2,"repeat":".."} (лише поля, що змінюються); {"type":"complete_task","id":число}; {"type":"delete_task","id":число}; {"type":"set_capacity","day":від 0 до 6 (0 це неділя),"h":години}; {"type":"set_start","hour":від 0 до 23}; {"type":"add_note","text":"текст нотатки"}; {"type":"add_cards","deck":"назва колоди","cards":[{"q":"питання","a":"відповідь"}]}; {"type":"add_exam","t":"предмет","date":"YYYY-MM-DD","time":"HH:MM або порожній рядок","folder":"id або назва папки з матеріалами або порожній рядок"} (лише коли користувач прямо каже про іспит, залік або екзамен з датою).';
 
+// Сторінки документа, що прийшли ТЕКСТОМ (текстовий шар імпортованого PDF): [{ page, text }] → блок «с. N».
+const pageNums = (a, max) => (Array.isArray(a) ? a.filter(n => Number.isInteger(n) && n > 0).slice(0, max) : []);
+function docTexts(m) {
+  const list = Array.isArray(m.texts) ? m.texts.filter(x => x && Number.isInteger(x.page) && x.page > 0 && typeof x.text === 'string' && x.text.trim()).slice(0, 10) : [];
+  let budget = 24000; const out = [];
+  for (const x of list) { if (budget <= 0) break; const t = x.text.slice(0, budget); budget -= t.length; out.push({ page: x.page, text: t }); }
+  return out;
+}
+const NL = String.fromCharCode(10);
+const docTextBlock = texts => texts.map(x => '--- с. ' + x.page + ' ---' + NL + x.text).join(NL);
+// Опис матеріалу-документа: які сторінки текстом, які зображеннями.
+function docPrompt(m) {
+  const texts = docTexts(m);
+  // старі клієнти не надсилають imgPages: тоді всі pages — зображення
+  const imgs = Array.isArray(m.imgPages) ? pageNums(m.imgPages, 4) : pageNums(m.pages, 4);
+  const parts = [];
+  if (texts.length) parts.push('Текст сторінок PDF (витягнутий із файлу, перед кожною сторінкою підпис «с. N»):' + NL + '"""' + NL + docTextBlock(texts) + NL + '"""');
+  if (imgs.length) parts.push('Сторінки ' + imgs.map(n => 'с. ' + n).join(', ') + ' додано до повідомлення як зображення, перед кожним підпис «с. N»' + (texts.length ? ' (на них можуть бути позначки користувача: виділення, підкреслення, рукописні нотатки, або це скан без тексту)' : '') + '. Уважно прочитай рукописний текст і схеми.');
+  return { texts, imgs, all: [...new Set([...texts.map(x => x.page), ...imgs])].sort((a, b) => a - b), body: parts.join(NL) };
+}
+
 // Матеріал, прикріплений чипом контексту (ctx.material): нотатка — текстом, зошит/дошка/фото — зображеннями сторінок
-// (у повідомленні користувача, кожне з підписом «с. N»), набір карток — списком q/a.
+// (у повідомленні користувача, кожне з підписом «с. N»), PDF — текстом сторінок (docPrompt), набір карток — списком q/a.
 function materialPrompt(m) {
   if (!m || typeof m !== 'object') return '';
   const title = String(m.title || '').slice(0, 80);
-  const pages = Array.isArray(m.pages) ? m.pages.filter(n => Number.isInteger(n) && n > 0).slice(0, 4) : [];
   const head = 'МАТЕРІАЛ КОРИСТУВАЧА «' + title + '». Відповідай насамперед за ним. Якщо відповіді в матеріалі немає, прямо скажи про це («У матеріалі цього немає») і лише потім, якщо доречно, коротко поясни із загальних знань, позначивши це.';
   if (m.kind === 'note') return head + '\nТекст матеріалу:\n"""\n' + String(m.text || '').slice(0, 15000) + '\n"""';
   if (m.kind === 'deck') {
@@ -156,7 +176,7 @@ function materialPrompt(m) {
     const docs = Array.isArray(m.docs) ? m.docs.slice(0, 40).map(d => String(d).slice(0, 80)) : [];
     return head.replace('МАТЕРІАЛ', 'ПАПКА МАТЕРІАЛІВ') + (notes ? '\nТекстові нотатки папки:\n"""\n' + notes + '\n"""' : '\nТекстових нотаток у папці немає.') + (docs.length ? '\nЗошити й дошки в папці (лише назви, їхній вміст тобі не видно): ' + JSON.stringify(docs) : '');
   }
-  if (m.kind === 'doc') return head + ' Сторінки додано до повідомлення як зображення, перед кожним підпис «с. N»: ' + pages.map(n => 'с. ' + n).join(', ') + '. Уважно прочитай рукописний текст і схеми. Коли спираєшся на конкретну сторінку, став позначку точно у форматі [с. N] (N — номер сторінки цифрами, наприклад [с. 4]); цю позначку не перекладай і не змінюй навіть німецькою. Не вигадуй номери сторінок, яких немає у списку.';
+  if (m.kind === 'doc') { const dp = docPrompt(m); return head + NL + dp.body + NL + 'Сторінки матеріалу: ' + dp.all.map(n => 'с. ' + n).join(', ') + '. Коли спираєшся на конкретну сторінку, став позначку точно у форматі [с. N] (N — номер сторінки цифрами, наприклад [с. 4]); цю позначку не перекладай і не змінюй навіть німецькою. Не вигадуй номери сторінок, яких немає у списку.'; }
   return '';
 }
 
@@ -202,6 +222,8 @@ function quizPrompt(ctx) {
     'Питання за темою або матеріалом, який надав користувач. Якщо користувач вставив матеріал, спирайся лише на нього. Якщо тема це вивчення мови (англійська, німецька тощо), питання і варіанти пиши мовою, що вивчається, а пояснення українською.',
     cards.length ? 'Матеріал це набір карток (q питання, a відповідь). Склади питання лише за їхнім змістом, не копіюй картки дослівно, перевіряй розуміння: ' + JSON.stringify(cards) : '',
     // тест із зошита / дошки / фото: сторінки приходять зображеннями з підписами «с. N»
+    // PDF: текст сторінок іде прямо в промпт (docPrompt), зображення — лише сторінки без тексту або з позначками
+    ctx.material && ctx.material.kind === 'doc' && docTexts(ctx.material).length ? 'МАТЕРІАЛ — PDF «' + String(ctx.material.title || '').slice(0, 80) + '».' + NL + docPrompt(ctx.material).body + NL + 'Питання складай лише за тим, що є на цих сторінках; не вигадуй фактів, яких там немає. У полі explain вказуй сторінку у форматі [с. N] (N цифрами; позначку не перекладай). Якщо на сторінках майже немає змісту, зроби менше питань, ніж просили.' :
     ctx.material && ctx.material.kind === 'doc' ? 'МАТЕРІАЛ — сторінки зошита, дошки або фото «' + String(ctx.material.title || '').slice(0, 80) + '», додані до повідомлення як зображення; перед кожною підпис «с. N». Уважно розпізнай рукописний текст, формули й схеми. Питання складай лише за тим, що є на цих сторінках; не вигадуй фактів, яких там немає. Якщо текст нерозбірливий, пропусти цей фрагмент. У полі explain вказуй сторінку у форматі [с. N] (N цифрами; позначку не перекладай). Якщо на сторінках майже немає змісту, зроби менше питань, ніж просили.' : '',
     'Для choice рівно 4 варіанти, лише один правильний, позицію правильної відповіді розподіляй випадково.'
   ].filter(Boolean).join('\n');

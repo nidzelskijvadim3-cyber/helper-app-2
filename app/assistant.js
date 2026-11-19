@@ -3,7 +3,7 @@
 // контекст (матеріал / набір / фото), посилання [с. N], голосовий ввід. Дії застосовує page.js (applyActions) через apply().
 import { useState, useEffect, useRef } from 'react';
 import { t as tr, loc, getLang, plural } from './i18n';
-import { listDocs, getDocFull, docPageImages, shrink } from './docs';
+import { listDocs, getDocFull, docMaterial, materialOf, TEXT_PAGES, shrink } from './docs';
 import { noDateTasks } from './plan';
 
 const P = {
@@ -210,9 +210,10 @@ export default function Assistant(props) {
       return { material: { kind: 'folder', title: c.title, notes: nl, docs: ds }, images: [], labels: [] };
     }
     if (c.k === 'deck') { const dc = cards.filter(x => (x.deck || '') === c.id).slice(0, 200).map(({ q, a }) => ({ q, a })); return { material: { kind: 'deck', title: c.title, cards: dc }, images: [], labels: [] }; }
-    const r = await docPageImages(c.id, c.pages && c.pages.length ? c.pages : [1], 1600, 0.7, c.sel).catch(() => null); // c.sel — фрагмент, виділений ласо
+    // PDF із текстовим шаром — текстом сторінок; зошит/дошка/фото/скан — зображеннями (c.sel — фрагмент, виділений ласо)
+    const r = await docMaterial(c.id, c.pages && c.pages.length ? c.pages : [1], c.sel).catch(() => null);
     if (!r) throw new Error(tr("Матеріал не знайдено. Приберіть його з контексту."));
-    return { material: { kind: 'doc', title: c.title, pages: r.imgs.map(x => x.page) }, images: r.imgs.map(x => x.url), labels: r.imgs.map(x => 'с. ' + x.page + (c.sel ? ' (виділений фрагмент сторінки)' : '')) };
+    return materialOf(r, c.title, c.sel);
   }
   const forAI = m => {
     if (m.role !== 'model' || !m.prev) return m.text || '';
@@ -377,7 +378,7 @@ export default function Assistant(props) {
     }
     setPick({ step });
   };
-  const TYPEN = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан', note: 'Нотатка' };
+  const TYPEN = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан', pdf: 'PDF', note: 'Нотатка' };
   const pickMat = async m => {
     if (m.k === 'note') { setCtx({ k: 'note', id: m.id, title: m.title }); closePick(); return; }
     const d = await getDocFull(m.id).catch(() => null); const n = d ? d.pages.length : 1;
@@ -488,7 +489,7 @@ export default function Assistant(props) {
       <div className="a-plusw">
         <button ref={plusRef} className="a-cb" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-haspopup="true" aria-controls="a-menu" aria-label={tr("Додати контекст: матеріал, набір карток або фото")} title={tr("Додати контекст")} disabled={!online}><I n="plus" s={22} /></button>
         {menu && <div className="a-menu" id="a-menu" ref={menuRef} role="group" aria-label={tr("Додати контекст")}>
-          <button onClick={() => openPick('mat')}><I n="doc" s={18} /><span>{tr("Матеріал")}<small>{tr("Нотатка, зошит, дошка або фото з Матеріалів")}</small></span></button>
+          <button onClick={() => openPick('mat')}><I n="doc" s={18} /><span>{tr("Матеріал")}<small>{tr("Нотатка, зошит, дошка, фото чи PDF з Матеріалів")}</small></span></button>
           <button onClick={() => openPick('deck')} disabled={!decks.length}><I n="cards" s={18} /><span>{tr("Набір карток")}<small>{decks.length ? tr("Питання й відповіді набору") : tr("Карток ще немає")}</small></span></button>
           <button onClick={() => { setMenu(false); fileRef.current && fileRef.current.click(); }} disabled={att.length >= 3}><I n="image" s={18} /><span>{tr("Фото з пристрою")}<small>{tr("До 3 зображень")}</small></span></button>
         </div>}
@@ -515,8 +516,8 @@ export default function Assistant(props) {
       : <p className="sub">{tr("У Матеріалах поки нічого немає.")}</p>)}
     {pick.step === 'deck' && decks.map(([d, n], i) => <button key={'d' + d} autoFocus={i === 0} onClick={() => { setCtx({ k: 'deck', id: d, title: deckName(d) }); closePick(); }}>{deckName(d)}<small>{n} {plural(n, "картка", "картки", "карток")}</small></button>)}
     {pick.step === 'pages' && <>
-      <p className="sub" id="a-pg-h">{tr("Оберіть до 4 сторінок. Помічник побачить їх як зображення.")}</p>
-      <div className="a-pgs" role="group" aria-labelledby="a-pg-h">{Array.from({ length: pick.n }, (_, k) => k + 1).map(n => { const on = pick.sel.includes(n); return <button key={n} className="a-pgb" aria-pressed={on} disabled={!on && pick.sel.length >= 4} onClick={() => setPick(p => ({ ...p, sel: on ? p.sel.filter(x => x !== n) : [...p.sel, n] }))} aria-label={tr("Сторінка") + ' ' + n}>{n}</button>; })}</div>
+      <p className="sub" id="a-pg-h">{pick.m.type === 'pdf' ? tr("Оберіть до 10 сторінок. Помічник отримає їхній текст; сторінки без тексту або з вашими позначками — зображеннями.") : tr("Оберіть до 4 сторінок. Помічник побачить їх як зображення.")}</p>
+      <div className="a-pgs" role="group" aria-labelledby="a-pg-h">{Array.from({ length: pick.n }, (_, k) => k + 1).map(n => { const on = pick.sel.includes(n); return <button key={n} className="a-pgb" aria-pressed={on} disabled={!on && pick.sel.length >= (pick.m.type === 'pdf' ? TEXT_PAGES : 4)} onClick={() => setPick(p => ({ ...p, sel: on ? p.sel.filter(x => x !== n) : [...p.sel, n] }))} aria-label={tr("Сторінка") + ' ' + n}>{n}</button>; })}</div>
       <div className="row" style={{ marginTop: 14 }}><button className="btn-a" disabled={!pick.sel.length} onClick={() => { setCtx({ k: 'doc', id: pick.m.id, title: pick.m.title, type: pick.m.type, pages: [...pick.sel].sort((a, b) => a - b) }); closePick(); }}>{tr("Додати")}{pick.sel.length ? ' · ' + tr("с.") + ' ' + pagesStr(pick.sel) : ''}</button>
         <button className="btn2" onClick={() => setPick({ step: 'mat' })}>{tr("Назад")}</button></div>
     </>}
