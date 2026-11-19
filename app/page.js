@@ -1,12 +1,15 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import Materials, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, PALETTE_C, SOLID, colorKey } from './docs';
+import Materials, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, docPageImages, PALETTE_C, SOLID, colorKey } from './docs';
 import { FolderGlyph, FOLDER_COLORS, FICONS, LineIcon, isHex } from './folder-icons';
 import { canMoveFolder, folderPath } from './lib';
 import { syncNow, syncStatus, getSyncMeta, setSyncOn } from './sync';
 import { nsKey, listAccounts, getActiveId, setActiveId, addAccount, activeAccount, deriveAccountId, validateCredentials } from './accounts';
 import { t as tr, loc, setLang, getLang, plural } from './i18n';
 import Assistant, { migrateChats } from './assistant';
+import { occurs, makePlan, isEv, isRep, isExam, openTasks, dayCount } from './plan';
+import { localParse } from './qparse';
+import { buildBackup, downloadBlob, backupName, inspectBackup, applyBackup, getBkMeta, setBkMeta } from './backup';
 import { normCard, needsNorm, preview as srsPreview, queue as srsQueue, nextUp, isLearned, resetCard, newCardFields, ivParts, NEW_PER_DAY } from './srs';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
@@ -45,6 +48,8 @@ const ICONS = {
   flag: <><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>,
   set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>
 };
+// чекбокс задачі: видимий квадрат 22px, зона натискання — label 44×44 (WCAG 2.5.8, HIG 44 pt)
+const Ck = ({ checked, onChange, label }) => <label className="ck"><input type="checkbox" checked={!!checked} onChange={onChange} aria-label={label} /></label>;
 const Icon = ({ n, s = 24 }) => <svg viewBox="0 0 24 24" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[n]}</svg>;
 
 const pad = n => String(n).padStart(2, '0');
@@ -55,49 +60,16 @@ const dm = s => s.slice(8) + '.' + s.slice(5, 7);
 const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
 const isTime = s => /^\d{2}:\d{2}$/.test(s || '');
 const toMin = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
-const isEv = i => i.kind === 'event';
-const isRep = i => !!i.repeat && i.repeat !== 'none';
 // Іспит зберігається як подія з прапорцем exam:true (kind лишається 'event'): старі версії застосунку показують його
 // як звичайну подію в цей день, а не планують як задачу (невідомий kind вони вважали б задачею і виділяли б на нього години).
-const isExam = i => !!i && i.exam === true;
 const daysTo = (d, today) => Math.round((new Date(d + 'T00:00:00') - new Date(today + 'T00:00:00')) / 864e5);
 const normArea = v => (tr(AREA[v]) ? v : 'personal');
 const normRep = v => (REP[v] ? v : 'none');
-const EMPTY = { kind: 'task', t: '', area: 'study', h: '', due: '', time: '', pri: 1, note: '', repeat: 'none', folder: '' };
+// until — останній день повтору (необов'язково, YYYY-MM-DD); у старих записах поля немає = повтор без кінця
+const EMPTY = { kind: 'task', t: '', area: 'study', h: '', due: '', time: '', pri: 1, note: '', repeat: 'none', until: '', folder: '' };
+const normUntil = (v, rep, due) => (rep && rep !== 'none' && isDate(v) && (!due || v >= due) ? v : '');
 
-function occurs(i, d) {
-  if (!i.due) return false;
-  if (!isRep(i)) return i.due === d;
-  if (d < i.due) return false;
-  const wd = new Date(d + 'T00:00:00').getDay();
-  if (i.repeat === 'daily') return true;
-  if (i.repeat === 'weekdays') return wd >= 1 && wd <= 5;
-  if (i.repeat === 'weekly') return wd === new Date(i.due + 'T00:00:00').getDay();
-  return false;
-}
-
-function makePlan(items, cap) {
-  const t0 = new Date(); t0.setHours(0, 0, 0, 0);
-  const days = [];
-  for (let i = 0; i < 60; i++) { const d = new Date(t0); d.setDate(d.getDate() + i); days.push({ d, date: ymd(d), cap: cap[d.getDay()], blocks: [] }); }
-  const tasks = items.filter(x => !isEv(x));
-  for (const it of tasks.filter(isRep)) for (const day of days) if (occurs(it, day.date)) day.blocks.push({ id: it.id, t: it.t, h: it.h, area: it.area, rep: true, done: (it.doneDates || []).includes(day.date) });
-  const open = tasks.filter(x => !isRep(x) && !x.done).map(x => ({ ...x, left: x.h }));
-  open.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (b.pri || 1) - (a.pri || 1) || a.id - b.id);
-  const late = [];
-  for (const it of open) {
-    for (const day of days) {
-      if (it.left <= 0) break;
-      if (it.due && day.date > it.due) break;
-      const free = day.cap - day.blocks.reduce((s, b) => s + b.h, 0);
-      if (free <= 0) continue;
-      const h = Math.min(free, it.left);
-      day.blocks.push({ id: it.id, t: it.t, h, area: it.area }); it.left -= h;
-    }
-    if (it.left > 0.001) late.push({ t: it.t, left: it.left });
-  }
-  return { days, late };
-}
+// occurs / makePlan / лічильники — у plan.js (події віднімаються від ємності дня, повтор «до дати»)
 
 function layoutDay(blocks, evs, startMin) {
   const E = evs.map(e => { const s = toMin(e.time || '09:00'); return { kind: 'event', id: e.id, t: e.t, area: e.area, rep: isRep(e), s, e: s + Math.round((e.h || 1) * 60) }; });
@@ -126,9 +98,11 @@ function applyActions(acts, st) {
     if (!a || typeof a !== 'object') continue;
     const aid = Number(a.id);
     if (a.type === 'add_task' && a.t) {
-      items.push({ id: nid(), kind: 'task', t: String(a.t), area: normArea(a.area), h: Number(a.h) > 0 ? Number(a.h) : 1, due: isDate(a.due) ? a.due : '', time: '', pri: Number(a.pri) === 2 ? 2 : 1, note: '', repeat: normRep(a.repeat), folder: resolveF(a.folder), done: false }); n++;
+      const rep = normRep(a.repeat), due = isDate(a.due) ? a.due : (rep !== 'none' ? today : '');
+      items.push({ id: nid(), kind: 'task', t: String(a.t), area: normArea(a.area), h: Number(a.h) > 0 ? Number(a.h) : 1, due, time: '', pri: Number(a.pri) === 2 ? 2 : 1, note: '', repeat: rep, until: normUntil(a.until, rep, due), folder: resolveF(a.folder), done: false }); n++;
     } else if (a.type === 'add_event' && a.t && isDate(a.date)) {
-      items.push({ id: nid(), kind: 'event', t: String(a.t), area: normArea(a.area), h: Number(a.h) > 0 ? Number(a.h) : 1, due: a.date, time: isTime(a.time) ? a.time : '09:00', pri: 1, note: '', repeat: normRep(a.repeat), folder: resolveF(a.folder), done: false }); n++;
+      const rep = normRep(a.repeat);
+      items.push({ id: nid(), kind: 'event', t: String(a.t), area: normArea(a.area), h: Number(a.h) > 0 ? Number(a.h) : 1, due: a.date, time: isTime(a.time) ? a.time : '09:00', pri: 1, note: '', repeat: rep, until: normUntil(a.until, rep, a.date), folder: resolveF(a.folder), done: false }); n++;
     } else if (a.type === 'update_task') {
       items = items.map(i => {
         if (i.id !== aid) return i; n++;
@@ -141,6 +115,7 @@ function applyActions(acts, st) {
         if (isTime(a.time)) p.time = a.time;
         if (a.pri) p.pri = Number(a.pri) === 2 ? 2 : 1;
         if (a.repeat) p.repeat = normRep(a.repeat);
+        if (a.until !== undefined || p.repeat === 'none') { const r = p.repeat || i.repeat, d = p.due !== undefined ? p.due : i.due; p.until = normUntil(a.until !== undefined ? a.until : i.until, r, d); }
         if (a.folder !== undefined) p.folder = resolveF(a.folder);
         return { ...i, ...p };
       });
@@ -206,10 +181,14 @@ async function callAI(body, signal) {
   let r;
   try {
     r = await fetch('/api/chat', { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'x-pass': localStorage.getItem('helper-pass') || '' }, body: JSON.stringify({ ...body, lang: getLang() }) });
-  } catch (e) { if (e && e.name === 'AbortError') throw e; throw new Error(tr("Немає зв’язку із сервером.")); }
+  } catch (e) { if (e && e.name === 'AbortError') throw e; const err = new Error(tr("Немає зв’язку із сервером.")); err.code = 0; err.detail = String(e && e.message || e); throw err; }
   const d = await r.json().catch(() => ({}));
   if (r.status === 401) { const err = new Error(tr("Введіть пароль у налаштуваннях (шестерня вгорі) і повторіть запит.")); err.code = 401; throw err; }
-  if (!d.text) throw new Error(d.error || tr("Порожня відповідь"));
+  if (!d.text) {
+    // сервер віддає людський текст у error, технічні подробиці — у detail (лише для консолі)
+    if (d.detail) console.warn('[ШІ]', d.detail);
+    const err = new Error(d.error || tr("Порожня відповідь")); err.code = r.status; err.detail = d.detail; throw err;
+  }
   return d.text;
 }
 
@@ -263,7 +242,7 @@ export default function Home() {
   const [qaBusy, setQaBusy] = useState(false);
   const [qaMsg, setQaMsg] = useState('');
   const [preview, setPreview] = useState(null);
-  const [tcfg, setTcfg] = useState({ topic: '', n: 10, kind: 'mix', src: 'topic', mat: '', deck: null, level: 'mixed' });
+  const [tcfg, setTcfg] = useState({ topic: '', n: 10, kind: 'mix', src: 'topic', mat: '', pages: [], deck: null, level: 'mixed' });
   const [deckV, setDeckV] = useState(null);
   const [rev, setRev] = useState(null);
   const [ced, setCed] = useState(null);
@@ -288,6 +267,13 @@ export default function Home() {
   const [docUndo, setDocUndo] = useState([]);
   const [pv, setPv] = useState('day');
   const [more, setMore] = useState(true);
+  // резервна копія: bkm — { last, snooze } з localStorage; bk — стан діалогу відновлення / збереження
+  const [bkm, setBkm] = useState({});
+  const [bk, setBk] = useState(null); // { step: 'pick'|'preview'|'busy'|'done'|'error', info?, mode?, msg? }
+  const [bkBusy, setBkBusy] = useState(false);
+  const [docMeta, setDocMeta] = useState([]); // легкі метадані документів (для банера, тесту із зошита)
+  const [moreAll, setMoreAll] = useState(false); // «Ще на сьогодні» на вузьких екранах: перші 3 або всі
+  const [mvId, setMvId] = useState(null); // «Перенести» відкрито для задачі id
   const [, setTick] = useState(0);
   const taRef = useRef(null);
   const stRef = useRef(null);
@@ -301,7 +287,15 @@ export default function Home() {
       if (s.start) setStart(s.start); if (s.cards) setCards(s.cards); if (s.notes) setNotes(s.notes); if (s.tests) setTests(s.tests); { const sm = getSyncMeta(); setSy(x => ({ ...x, on: !!sm.on, last: sm.last || 0 })); } if (s.folders) setFolders(s.folders.map(f => ({ parent: '', ...f }))); if (s.ui) setUi({ ...UI0, ...s.ui });
     } catch (e) {}
     try { const v = localStorage.getItem(PV_KEY); if (VIEWS.some(([k]) => k === v)) setPv(v); } catch (e) {}
+    setBkm(getBkMeta());
     setReady(true);
+  }, []);
+  // метадані документів: для банера «дані лише на цьому пристрої» і вибору зошита в «Новий тест»
+  useEffect(() => {
+    let live = true;
+    const load = () => listDocs().then(l => { if (live) setDocMeta(l || []); }).catch(() => {});
+    load(); window.addEventListener('docs-changed', load);
+    return () => { live = false; window.removeEventListener('docs-changed', load); };
   }, []);
   // SRS: картки без полів інтервального повторення (старі дані або змінені старою версією) → нормалізувати й зберегти
   useEffect(() => { if (ready && needsNorm(cards)) setCards(cs => cs.map(c => normCard(c))); }, [cards, ready]);
@@ -398,7 +392,7 @@ export default function Home() {
     if (k === tab) { if (k === 'today') setSel(''); if (k === 'folders') setFview(null); if (k === 'cards') setDeckV(null); return; }
     setTab(k);
   };
-  const openEdit = i => { if (!i) return; sheetPrev.current = document.activeElement; setF({ kind: isExam(i) ? 'exam' : i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', folder: i.folder || '' }); setSheet(i.id); };
+  const openEdit = i => { if (!i) return; sheetPrev.current = document.activeElement; setF({ kind: isExam(i) ? 'exam' : i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', until: i.until || '', folder: i.folder || '' }); setSheet(i.id); };
   const saveTask = () => {
     if (!f.t.trim()) return;
     const h = parseFloat(f.h);
@@ -411,7 +405,9 @@ export default function Home() {
     }
     const ev = f.kind === 'event';
     const rep = f.repeat || 'none';
-    const base = { kind: f.kind, t: f.t.trim(), area: f.area, h: h > 0 ? h : 1, due: f.due || (ev || rep !== 'none' || isTime(f.time) ? selDate : ''), time: ev ? (f.time || '09:00') : (isTime(f.time) ? f.time : ''), pri: Number(f.pri) || 1, note: f.note.trim(), repeat: rep, folder: f.folder === '' || f.folder == null ? '' : Number(f.folder), exam: undefined };
+    const due = f.due || (ev || rep !== 'none' || isTime(f.time) ? selDate : '');
+    if (rep !== 'none' && isDate(f.until) && f.until < due) return; // кінець повтору раніше за початок — кнопка вимкнена, підказка під полем
+    const base = { kind: f.kind, t: f.t.trim(), area: f.area, h: h > 0 ? h : 1, due, time: ev ? (f.time || '09:00') : (isTime(f.time) ? f.time : ''), pri: Number(f.pri) || 1, note: f.note.trim(), repeat: rep, until: normUntil(f.until, rep, due), folder: f.folder === '' || f.folder == null ? '' : Number(f.folder), exam: undefined };
     if (sheet === 'new') setItems([...items, { id: Date.now(), ...base, done: false }]);
     else setItems(items.map(i => i.id === sheet ? { ...i, ...base } : i));
     closeSheet();
@@ -442,7 +438,9 @@ export default function Home() {
   const onStudy = (kind, fo) => {
     if (kind === 'cards') { setTab('ai'); setAiPend({ text: tr("Зроби картки за темою: ") + fo.name }); return; }
     const nt = notes.filter(n => n.folder === fo.id && n.text && n.text.trim()).sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
-    setTcfg(c => (nt ? { ...c, src: 'mat', mat: String(nt.id) } : { ...c, src: 'topic', topic: fo.name }));
+    // немає текстової нотатки → останній зошит / дошка папки (сторінка 1), інакше тема = назва папки
+    const dc = nt ? null : docMeta.filter(d => d.folder === fo.id).sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
+    setTcfg(c => (nt ? { ...c, src: 'mat', mat: String(nt.id), pages: [] } : dc ? { ...c, src: 'mat', mat: 'd:' + dc.id, pages: [1] } : { ...c, src: 'topic', topic: fo.name }));
     setDeckV(null); setTab('cards'); goNewTest();
   };
   const folderTasks = fid => { const il = items.filter(i => i.folder === fid); return il.length > 0 && <div className="card mtasks"><div className="sec">{tr("Задачі й події")}</div>{il.map(row)}</div>; };
@@ -452,7 +450,9 @@ export default function Home() {
     const next21days = Array.from({ length: 21 }, (_, k) => { const d = new Date(); d.setDate(d.getDate() + k); return ymd(d) + ' ' + DNF[d.getDay()]; });
     return {
       today, weekday: DNF[now.getDay()], next21days, start: s0.start, capacityByWeekday: s0.cap,
-      tasks: s0.items.filter(i => !isExam(i) && (isEv(i) || isRep(i) || !i.done)).slice(-80).map(({ id, kind, t, area, h, due, time, repeat, pri }) => ({ id, kind: kind || 'task', t, area, h, due, time, repeat: repeat || 'none', pri: pri || 1 })),
+      tasks: s0.items.filter(i => !isExam(i) && (isEv(i) || isRep(i) || !i.done) && !(isRep(i) && isDate(i.until) && i.until < today)).slice(-80).map(({ id, kind, t, area, h, due, time, repeat, pri, until }) => ({ id, kind: kind || 'task', t, area, h, due, time, repeat: repeat || 'none', ...(isRep({ repeat }) && isDate(until) ? { until } : {}), pri: pri || 1 })),
+      // варіант B: години на навчання й справи по днях після віднімання подій (зайнятий час)
+      freeByDate: makePlan(s0.items, s0.cap).days.slice(0, 21).map(d => ({ date: d.date, hours: d.base, busyByEvents: d.busy, free: d.cap })),
       exams: s0.items.filter(i => isExam(i) && i.due >= today).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 10).map(i => {
         const fo = (s0.folders || []).find(x => x.id === i.folder);
         return { id: i.id, subject: i.t, date: i.due, time: i.time || '', daysLeft: daysTo(i.due, today), folder: fo ? fo.name : '', note: i.note || '' };
@@ -510,18 +510,38 @@ export default function Home() {
     rev={{ n: revQ.list.length, decks: [...new Set(revQ.list.map(c => c.deck || ''))] }} exam={nextExam ? { t: nextExam.t, days: daysTo(nextExam.due, today) } : null} onExamPlan={() => nextExam && planExam(nextExam)}
     on401={() => { setAiSide(false); setTab('set'); }} />;
 
+  // Швидкий ввід: спершу ШІ (mode: parse); якщо ШІ недоступний (немає ключа, 401, 502, офлайн, мережа) —
+  // локальний розбір qparse.js і те саме превʼю з позначкою «Розібрано без ШІ — перевірте». Технічні деталі — лише в консоль.
   async function quickAdd() {
     const text = qa.trim();
     if (!text || qaBusy) return;
     setQaBusy(true); setQaMsg(''); setPreview(null);
+    const local = why => {
+      const a = localParse(text, new Date());
+      if (a) setPreview({ actions: [a], reply: '', local: true, why });
+      else setQaMsg(tr("Не вдалося розібрати запис. Відкрийте повну форму й заповніть поля."));
+    };
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { local('offline'); setQaBusy(false); return; }
     try {
       const raw = await callAI({ mode: 'parse', messages: [{ role: 'user', text }], ctx: makeCtx() });
       const { reply, actions } = parseAI(raw);
       if (actions.length) setPreview({ actions, reply });
       else setQaMsg(reply || tr("Не вдалося розібрати. Уточніть дату і час."));
-    } catch (e) { setQaMsg(e.message); }
+    } catch (e) {
+      if (e && e.name === 'AbortError') { setQaBusy(false); return; }
+      console.warn('[quick add] ШІ недоступний, локальний розбір:', e && (e.detail || e.message));
+      local(e && e.code === 401 ? 'pass' : 'ai');
+    }
     setQaBusy(false);
   }
+  // превʼю локального розбору → повна форма з підставленими полями (щоб виправити)
+  const editPreview = a => {
+    if (!a) return;
+    const ev2 = a.type === 'add_event';
+    sheetPrev.current = sheetPrev.current || document.activeElement;
+    setF({ ...EMPTY, kind: ev2 ? 'event' : 'task', t: a.t || '', area: a.area || 'study', h: String(a.h || ''), due: (ev2 ? a.date : a.due) || '', time: ev2 ? a.time || '' : '', repeat: a.repeat || 'none' });
+    setPreview(null); setQa(''); setQaMsg(''); setMore(true); setSheet('new');
+  };
   const confirmPreview = () => {
     const cur = stRef.current; const res = applyActions(preview.actions, cur);
     if (res.n) { setUndo(cur); applySt(res.st); }
@@ -544,17 +564,30 @@ export default function Home() {
   async function createTest() {
     if (tbusy) return;
     const n = Number(tcfg.n) || 10, ctx = { n, kind: tcfg.kind, level: tcfg.level };
-    let text = '', title = '';
-    if (tcfg.src === 'mat') { const nt = notes.find(x => String(x.id) === String(tcfg.mat)); if (!nt || !nt.text.trim()) return; text = nt.text.slice(0, 15000); title = nt.text.trim().split('\n')[0].slice(0, 40); }
+    let text = '', title = '', images = null, labels = null, docSrc = null;
+    if (tcfg.src === 'mat' && selDoc) {
+      // зошит / дошка / фото: обрані сторінки (до 4) ідуть зображеннями, як у Помічнику
+      const pages = (tcfg.pages || []).filter(n => n >= 1 && n <= docPages(selDoc)).slice(0, 4);
+      if (!pages.length) return;
+      setTbusy(true); setTmsg('');
+      const r = await docPageImages(selDoc.id, pages, 1600, 0.7).catch(() => null);
+      if (!r || !r.imgs.length) { setTbusy(false); setTmsg(tr("Не вдалося підготувати сторінки. Відкрийте зошит і спробуйте ще раз.")); return; }
+      images = r.imgs.map(x => x.url); labels = r.imgs.map(x => 'с. ' + x.page);
+      title = String(selDoc.title || tr("Зошит")).slice(0, 40);
+      ctx.material = { kind: 'doc', title, pages: r.imgs.map(x => x.page) };
+      text = tr("Склади тест за цими сторінками") + ': ' + title + ', ' + tr("с.") + ' ' + r.imgs.map(x => x.page).join(', ');
+      docSrc = { k: 'doc', id: selDoc.id, title, pages: r.imgs.map(x => x.page) };
+    }
+    else if (tcfg.src === 'mat') { const nt = notes.find(x => String(x.id) === String(tcfg.mat)); if (!nt || !nt.text.trim()) return; text = nt.text.slice(0, 15000); title = nt.text.trim().split('\n')[0].slice(0, 40); }
     else if (tcfg.src === 'deck') { if (tcfg.deck == null) return; const dc = cards.filter(c => (c.deck || '') === tcfg.deck); if (!dc.length) return; ctx.cards = dc.slice(0, 200).map(({ q, a }) => ({ q, a })); title = tcfg.deck || tr("Без набору"); text = tr("Тест за набором карток: ") + title; }
     else { if (!tcfg.topic.trim()) return; text = tcfg.topic; title = tcfg.topic.trim().slice(0, 40); }
     setTbusy(true); setTmsg('');
     try {
-      const raw = await callAI({ mode: 'quiz', messages: [{ role: 'user', text }], ctx });
+      const raw = await callAI({ mode: 'quiz', messages: [{ role: 'user', text, ...(images ? { images, imageLabels: labels } : {}) }], ctx });
       const q = parseQuiz(raw);
       if (!q) throw new Error(tr("ШІ повернув тест у неправильному форматі. Спробуйте ще раз."));
-      // src — звідки тест (для «Поясни»: той самий матеріал іде в контекст пояснення)
-      const src = tcfg.src === 'mat' ? { k: 'note', id: Number(tcfg.mat) } : tcfg.src === 'deck' ? { k: 'deck', id: tcfg.deck } : { k: 'topic', topic: tcfg.topic.trim().slice(0, 200) };
+      // src — звідки тест (для «Поясни»: той самий матеріал іде в контекст пояснення; для зошита — ті самі сторінки)
+      const src = docSrc || (tcfg.src === 'mat' ? { k: 'note', id: Number(tcfg.mat) } : tcfg.src === 'deck' ? { k: 'deck', id: tcfg.deck } : { k: 'topic', topic: tcfg.topic.trim().slice(0, 200) });
       const t = { id: Date.now(), title: q.title || title, qs: q.questions, ans: {}, grades: {}, done: false, created: Date.now(), src };
       setTests([t, ...tests]); setTview(t.id); setQi(0);
     } catch (e) { setTmsg(e.message); }
@@ -600,8 +633,14 @@ export default function Home() {
     const ctx = { q: q.q, correct: q.type === 'choice' ? q.options[q.answer] : q.answer, user: q.type === 'choice' ? (t.ans[i] != null ? q.options[t.ans[i]] : '') : (t.ans[i] || ''), options: q.type === 'choice' ? q.options : undefined, note: q.explain || '', topic: t.src && t.src.k === 'topic' ? t.src.topic : t.title };
     if (t.src && t.src.k === 'note') { const nt = notes.find(x => String(x.id) === String(t.src.id)); if (nt && nt.text.trim()) ctx.material = { kind: 'note', title: noteTitle(nt), text: nt.text.slice(0, 15000) }; }
     if (t.src && t.src.k === 'deck') { const dc = cards.filter(c => (c.deck || '') === t.src.id).slice(0, 200).map(({ q, a }) => ({ q, a })); if (dc.length) ctx.material = { kind: 'deck', title: deckName(t.src.id), cards: dc }; }
+    let msg = { role: 'user', text: tr("Поясни мою помилку.") };
+    if (t.src && t.src.k === 'doc') {
+      // тест із зошита: ті самі сторінки знову йдуть зображеннями (якщо зошит ще існує)
+      const r = await docPageImages(t.src.id, t.src.pages || [1], 1600, 0.7).catch(() => null);
+      if (r && r.imgs.length) { ctx.material = { kind: 'doc', title: t.src.title || r.title, pages: r.imgs.map(x => x.page) }; msg = { ...msg, images: r.imgs.map(x => x.url), imageLabels: r.imgs.map(x => 'с. ' + x.page) }; }
+    }
     try {
-      const raw = await callAI({ mode: 'explain', messages: [{ role: 'user', text: tr("Поясни мою помилку.") }], ctx });
+      const raw = await callAI({ mode: 'explain', messages: [msg], ctx });
       const text = parseAI(raw).reply.trim();
       if (!text) throw new Error('empty');
       setTests(ts => ts.map(x => (x.id === t.id ? { ...x, expl: { ...(x.expl || {}), [i]: text } } : x)));
@@ -617,18 +656,18 @@ export default function Home() {
     </button>);
   const row = i => isExam(i) ? exRow(i) : (
     <div className={'it' + (i.done ? ' done' : '')} key={i.id}>
-      {isEv(i) ? <span className="evd" /> : <input type="checkbox" aria-label={i.t} checked={isRep(i) ? (i.doneDates || []).includes(today) : !!i.done} onChange={() => tog(i.id, today)} />}
+      {isEv(i) ? <span className="evd" /> : <Ck label={i.t} checked={isRep(i) ? (i.doneDates || []).includes(today) : !!i.done} onChange={() => tog(i.id, today)} />}
       <div className="b" role="button" tabIndex={0} onClick={() => openEdit(i)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(i); } }}><div className="t">{i.t}</div>
         <div className="meta"><span className={'tag ' + i.area}>{tr(AREA[i.area])}</span>
           {isEv(i) ? <span>{i.due && !isRep(i) ? dm(i.due) + ' ' : ''}{i.time}</span> : <span>{i.h} {tr(" год")}</span>}
           {!isEv(i) && !isRep(i) && i.due && <span className={!i.done && i.due < today ? 'late' : ''}>{tr("до ")}{dm(i.due)}</span>}
-          {isRep(i) && <span>{tr(REPS[i.repeat])}</span>}{i.pri === 2 && <span className="late">{tr("Важливо")}</span>}</div>
+          {isRep(i) && <span>{tr(REPS[i.repeat])}{isDate(i.until) ? (i.until < today ? ' · ' + tr("завершено") + ' ' + dm(i.until) : ' ' + tr("до ") + dm(i.until)) : ''}</span>}{i.pri === 2 && <span className="late">{tr("Важливо")}</span>}</div>
         {i.note && <div className="note">{i.note}</div>}</div>
     </div>);
   const section = (title, list) => list.length > 0 && <div className="card"><div className="sec">{title}</div>{list.map(row)}</div>;
 
   const oneOff = items.filter(i => !isEv(i) && !isRep(i));
-  const open = oneOff.filter(i => !i.done);
+  const open = openTasks(items); // відкриті разові задачі — те саме визначення, що й у Помічнику (plan.js)
   const byDue = (a, b) => a.due.localeCompare(b.due);
   const overdue = open.filter(i => i.due && i.due < today).sort(byDue);
   const soon = open.filter(i => i.due && i.due >= today).sort(byDue);
@@ -679,7 +718,13 @@ export default function Home() {
   const textNotes = notes.filter(n => n.text && n.text.trim()).sort((a, b) => (b.upd || 0) - (a.upd || 0));
   const noteTitle = n => n.text.trim().split('\n')[0].slice(0, 50);
   const selNote = textNotes.find(n => String(n.id) === String(tcfg.mat));
-  const srcReady = tcfg.src === 'mat' ? !!selNote : tcfg.src === 'deck' ? tcfg.deck != null && decks.some(d => d.name === tcfg.deck) : !!tcfg.topic.trim();
+  // «З матеріалу»: текстова нотатка (mat = id) або зошит / дошка / фото (mat = 'd:' + id, pages — до 4 сторінок)
+  const pageDocs = [...docMeta].sort((a, b) => (b.upd || 0) - (a.upd || 0));
+  const docPages = d => Math.max(1, Number(d && d.pageCount) || 1);
+  const selDoc = String(tcfg.mat || '').startsWith('d:') ? pageDocs.find(d => 'd:' + d.id === tcfg.mat) || null : null;
+  const selPages = selDoc ? (tcfg.pages || []).filter(n => n >= 1 && n <= docPages(selDoc)) : [];
+  const hasMats = textNotes.length > 0 || pageDocs.length > 0;
+  const srcReady = tcfg.src === 'mat' ? (selDoc ? selPages.length > 0 : !!selNote) :tcfg.src === 'deck' ? tcfg.deck != null && decks.some(d => d.name === tcfg.deck) : !!tcfg.topic.trim();
   const startRev = (deck, mode = 'srs') => { setRev({ deck, mode, i: 0, n: 0 }); setShow(false); };
   const newDeck = () => { setDeckV({ name: '', isNew: true, draft: '' }); setCq(''); setCa(''); setCed(null); setDkDel(false); };
   const openDeck = name => { setDeckV({ name }); setCq(''); setCa(''); setCed(null); setDkDel(false); };
@@ -736,10 +781,17 @@ export default function Home() {
     ...oneOff.filter(i => i.done && i.doneAt === selDate && !timedIds.has(i.id)).map(i => ({ id: i.id, t: i.t, h: i.h, area: i.area, rep: false, done: true, pri: i.pri || 1, due: i.due || '' }))
   ];
   const moreH = moreList.filter(x => !x.done).reduce((s, x) => s + (Number(x.h) || 0), 0);
-  const dayTasks = [...tlItems.filter(b => b.kind === 'task'), ...moreList];
-  const dayDone = dayTasks.filter(x => x.done).length;
+  // «Не вміщується в план» (без прострочених: вони окремо в «Прострочено», щоб задача не стояла двічі)
+  const lateList = isToday ? plan.late.filter(l => !l.overdue).map(l => ({ ...l, it: items.find(x => x.id === l.id) })).filter(l => l.it) : [];
+  // «Виконано X з Y»: усі задачі (не події), показані на екрані дня, — одна функція dayCount (plan.js)
+  const dayTasks = [...tlItems.filter(b => b.kind === 'task'), ...moreList, ...(isToday ? [...overdue, ...lateList.map(l => l.it)] : [])];
+  const { done: dayDone, total: dayTotal } = dayCount(dayTasks);
   const dayExNT = exOn(selDate).filter(e => !isTime(e.time)); // іспити без часу — картка над шкалою
-  const dayEmpty = !tlItems.length && !moreList.length && !dayExNT.length;
+  const dayEmpty = !tlItems.length && !moreList.length && !dayExNT.length && !(isToday && (overdue.length || lateList.length));
+  // варіант B: ємність дня мінус зайнятий подіями час
+  const dayFree = dayPlan ? { base: dayPlan.base, busy: dayPlan.busy, free: dayPlan.cap } : null;
+  const MORE_N = 3; // на телефоні й iPad-портреті «Ще на сьогодні» згорнуто до 3 рядків
+  const moreClip = !moreAll && moreList.length > MORE_N + 1;
   const moreMeta = x => [r1(Number(x.h) || 0) + tr(" год"), x.pri === 2 ? tr("важлива") : '', x.rep && x.repeat ? tr(REPS[x.repeat]) : '', !x.rep && x.due && x.due !== selDate ? tr("до ") + dm(x.due) : ''].filter(Boolean).join(' · ');
 
   // ===== План · Усі: групи за датою =====
@@ -766,13 +818,13 @@ export default function Home() {
       <div className="ph-t">
         {pv === 'day' && <><span className="date"><span className="phone-only">{dayShort}</span><span className="wide-only">{selObj.toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' })}</span></span><h1>{dayTitle}</h1></>}
         {pv === 'month' && <><span className="date">{tr("План")}</span><h1>{monthName}</h1></>}
-        {pv === 'all' && <><span className="date">{tr("Відкритих: ")}{open.length}</span><h1>{tr("Усі задачі")}</h1></>}
+        {pv === 'all' && <><span className="date">{tr("Відкритих задач: ")}{open.length}</span><h1>{tr("Усі задачі")}</h1></>}
       </div>
       <div className="views">
         <div role="group" aria-label={tr("Вид плану")} style={{ display: 'flex', gap: 8 }}>
           {VIEWS.map(([k, n]) => <button key={k} className="pill" aria-pressed={pv === k} onClick={() => setPlanView(k)}>{tr(n)}</button>)}
         </div>
-        {pv === 'day' && dayTasks.length > 0 && <span className="sum phone-only">{tr("Виконано")} {dayDone}{tr(" з ")}{dayTasks.length}</span>}
+        {pv === 'day' && dayTotal > 0 && <span className="sum phone-only">{tr("Виконано")} {dayDone}{tr(" з ")}{dayTotal}</span>}
         {pv === 'day' && <div className="dnav">
           <button className="ibtn" onClick={() => shiftDay(-1)} aria-label={tr("Попередній день")} title={tr("Попередній день")}><Icon n="chevL" s={20} /></button>
           {!isToday && <button className="pill today" onClick={() => setSel('')}>{tr("Сьогодні")}</button>}
@@ -786,16 +838,94 @@ export default function Home() {
       </div>
     </header>);
 
-  // підтвердження розібраного швидкого вводу (наявний парсер) — у рядку на iPad і в sheet на телефоні
+  // local: розібрано без ШІ (qparse.js) — та сама картка з позначкою й кнопкою «Змінити» (повна форма з підставленими полями)
   const previewCard = inSheet => preview && (
-    <div className="card"><div className="sec">{tr("Додати це?")}</div>{preview.actions.map((a, i) => <div className="blk" key={i}><span>{act2text(a)}</span></div>)}{preview.reply && <div className="sub" style={{ marginTop: 8 }}>{preview.reply}</div>}
-      <div className="row"><button className="btn" onClick={() => { confirmPreview(); if (inSheet) closeSheet(); }}>{tr("Додати")}</button><button className="btn alt" onClick={() => setPreview(null)}>{tr("Скасувати")}</button></div></div>);
+    <div className={'card qpv' + (preview.local ? ' local' : '')} role="region" aria-labelledby={'qpv-t' + (inSheet ? 's' : '')}>
+      {preview.local && <p className="qpv-why" role="status">{preview.why === 'pass' ? tr("ШІ недоступний без пароля. Запис розібрано без нього.") : preview.why === 'offline' ? tr("Немає інтернету. Запис розібрано без ШІ.") : tr("ШІ зараз недоступний. Запис розібрано без нього.")}</p>}
+      <div className="sec" id={'qpv-t' + (inSheet ? 's' : '')}>{preview.local ? tr("Розібрано без ШІ — перевірте") : tr("Додати це?")}</div>
+      {preview.actions.map((a, i) => <div className="blk" key={i}><span>{act2text(a)}{preview.local ? ' · ' + tr(AREA[normArea(a.area)]) : ''}</span></div>)}{preview.reply && <div className="sub" style={{ marginTop: 8 }}>{preview.reply}</div>}
+      <div className="row"><button className="btn" onClick={() => { confirmPreview(); if (inSheet) closeSheet(); }}>{tr("Додати")}</button>
+        {preview.local && <button className="btn alt" onClick={() => editPreview(preview.actions[0])}>{tr("Змінити")}</button>}
+        <button className="btn alt" onClick={() => setPreview(null)}>{tr("Скасувати")}</button></div></div>);
   const quickInput = (id, inSheet) => (
-    <div className={'qbar' + (inSheet ? '' : ' wide-only')}>
-      <label className="vh" htmlFor={id}>{tr("Швидко додати")}</label>
-      <input id={id} autoFocus={inSheet && !more} placeholder={tr("Швидко додати: стоматолог у пʼятницю о 13:00")} value={qa} onChange={e => setQa(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); quickAdd(); } }} />
-      <button className="qgo" disabled={qaBusy} onClick={() => { if (qa.trim()) quickAdd(); else if (inSheet) setMore(true); else openNew(true); }}>{qaBusy ? '…' : tr("Додати")}</button>
+    <div className={'qrow' + (inSheet ? '' : ' wide-only')}>
+      <div className="qbar">
+        <label className="vh" htmlFor={id}>{tr("Швидко додати")}</label>
+        <input id={id} autoFocus={inSheet && !more} placeholder={tr("Швидко додати: стоматолог у пʼятницю о 13:00")} value={qa} onChange={e => setQa(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); quickAdd(); } }} />
+        <button className="qgo" disabled={qaBusy} onClick={() => { if (qa.trim()) quickAdd(); else if (inSheet) setMore(true); else openNew(true); }}>{qaBusy ? '…' : tr("Додати")}</button>
+      </div>
+      {/* iPad: видимий шлях до повної форми (задача / подія / іспит) замість прихованого «Додати» при порожньому рядку */}
+      {!inSheet && <button className="btn2 qfull" onClick={() => openNew(true)} title={tr("Нова задача, подія або іспит")} aria-label={tr("Новий запис: задача, подія або іспит")}><Icon n="plus" s={18} />{tr("Запис")}</button>}
     </div>);
+  // «Перенести»: задача з «Прострочено» або «Не вміщується в план» отримує новий термін; тост із «Скасувати»
+  const moveTask = (id, date) => {
+    if (!isDate(date)) return;
+    const prev = items.find(i => i.id === id); if (!prev) return;
+    const old = prev.due || '';
+    setItems(its => its.map(i => (i.id === id ? { ...i, due: date } : i))); setMvId(null);
+    setToast({ text: tr("Перенесено на") + ' ' + dm(date), undo: () => setItems(its => its.map(i => (i.id === id ? { ...i, due: old } : i))) });
+  };
+  const lateRow = (i, left) => {
+    const nextD = !i.due || i.due <= today ? addD(today, 1) : addD(i.due, 1);
+    const op = mvId && mvId.id === i.id, pid = 'mv-' + i.id;
+    return <div className="lr" key={'l' + i.id}>
+      <div className={'it' + (i.done ? ' done' : '')}>
+        <Ck label={i.t} checked={!!i.done} onChange={() => tog(i.id, today)} />
+        <button className="b lr-b" onClick={() => openEdit(i)}><span className="t">{i.t}</span>
+          <span className="meta">{left != null ? <span>{tr("бракує")} ≈ {r1(left)} {tr(" год")}</span> : <span>{i.h} {tr(" год")}</span>}{i.due && <span className={i.due < today ? 'late' : ''}>{tr("до ")}{dm(i.due)}</span>}</span></button>
+        <button className="btn2 sm lr-mv" aria-expanded={!!op} aria-controls={pid} onClick={() => setMvId(op ? null : { id: i.id, d: '' })}>{tr("Перенести")}</button>
+      </div>
+      {op && <div className="mvp" id={pid} role="group" aria-label={tr("Перенести") + ' «' + i.t + '»'}>
+        <button className="btn2 sm" autoFocus onClick={() => moveTask(i.id, nextD)}>{nextD === addD(today, 1) ? tr("На завтра") : tr("На") + ' ' + dm(nextD)}</button>
+        <label className="vh" htmlFor={pid + '-d'}>{tr("Інша дата")}</label>
+        <input id={pid + '-d'} type="date" min={addD(today, 1)} value={mvId.d} onChange={e => setMvId({ ...mvId, d: e.target.value })} />
+        <button className="btn2 sm" disabled={!isDate(mvId.d)} onClick={() => moveTask(i.id, mvId.d)}>{tr("Перенести на дату")}</button>
+      </div>}
+    </div>;
+  };
+
+  // ===== резервна копія =====
+  const bkState = () => ({ items, cap, start, cards, notes, tests, folders, chats: chats.slice(0, 50), chatCur, aiLast: lastMat, ui });
+  const saveBackup = async () => {
+    if (bkBusy) return;
+    setBkBusy(true);
+    try {
+      const r = await buildBackup(bkState());
+      downloadBlob(r.blob, backupName());
+      const m = { last: Date.now(), size: r.size }; setBkMeta(m); setBkm(b => ({ ...b, ...m }));
+      setToast({ text: tr("Копію збережено") + ' · ' + (r.size > 1048576 ? r1(r.size / 1048576) + ' MB' : Math.max(1, Math.round(r.size / 1024)) + ' KB') });
+    } catch (e) { console.error('[backup]', e); setToast({ text: tr("Не вдалося зберегти копію. Спробуйте ще раз.") }); }
+    setBkBusy(false);
+  };
+  const pickBackup = async file => {
+    if (!file) return;
+    if (!sheetPrev.current) sheetPrev.current = document.activeElement;
+    setBk({ step: 'busy' });
+    try {
+      const text = await file.text();
+      const r = inspectBackup(text);
+      if (!r.ok) { setBk({ step: 'error', msg: r.err === 'version' ? tr("Копію створено новішою версією застосунку. Оновіть застосунок і спробуйте ще раз.") : tr("Це не файл резервної копії Помічника.") }); return; }
+      setBk({ step: 'preview', info: r, mode: 'merge', name: file.name });
+    } catch (e) { console.error('[restore]', e); setBk({ step: 'error', msg: tr("Не вдалося прочитати файл.") }); }
+  };
+  const doRestore = async () => {
+    if (!bk || !bk.info) return;
+    const mode = bk.mode; setBk({ ...bk, step: 'busy' });
+    try {
+      const cur = { ...bkState(), chats };
+      const { state: ns, added } = await applyBackup(bk.info.data, mode, cur);
+      setItems(ns.items); setCards(ns.cards); setNotes(ns.notes); setTests(ns.tests); setFolders((ns.folders || []).map(f => ({ parent: '', ...f }))); setChats(ns.chats);
+      if (mode === 'replace') { if (Array.isArray(ns.cap)) setCap(ns.cap); if (ns.start != null) setStart(ns.start); setChatCur(ns.chatCur || null); setLastMat(ns.aiLast || null); if (ns.ui) setUi({ ...UI0, ...ns.ui }); }
+      setUndo(null); setDocUndo([]);
+      setBk({ step: 'done', mode, added });
+    } catch (e) { console.error('[restore]', e); setBk({ step: 'error', msg: tr("Не вдалося відновити дані. Частину даних могло бути змінено — перевірте їх.") }); }
+  };
+  const closeBk = () => { setBk(null); const p = sheetPrev.current; sheetPrev.current = null; if (p && document.contains(p)) setTimeout(() => p.focus(), 30); };
+  const hasData = items.length + notes.length + cards.length + docMeta.length > 0;
+  const BK_EVERY = 7 * 864e5; // банер — якщо копії не було 7 днів; «Пізніше» ховає його на 7 днів
+  const showBk = !sy.on && hasData && (!bkm.last || nowTs - bkm.last > BK_EVERY) && (!bkm.snooze || nowTs > bkm.snooze);
+  const bkLater = () => { const m = { snooze: Date.now() + BK_EVERY }; setBkMeta(m); setBkm(b => ({ ...b, ...m })); };
+  const bkWhen = bkm.last ? new Date(bkm.last).toLocaleString(loc(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
   const syncCls = sy.state === 'error' ? ' err' : sy.on ? ' ok' : '';
   const syncTxt = sy.state === 'error' ? tr("Помилка синхронізації") : sy.on ? tr("Синхронізацію ввімкнено") : tr("Синхронізацію вимкнено");
@@ -814,44 +944,66 @@ export default function Home() {
           <span className="exb-a">{tr("Деталі")}<Icon n="chevR" s={16} /></span>
         </button>}
         {quickInput('qa-main', false)}
-        {!sheet && (qaMsg || preview) && <div className="wide-only">{qaMsg && <div className="sub qmsg">{qaMsg}</div>}{previewCard(false)}</div>}
+        {!sheet && (qaMsg || preview) && <div className="wide-only">{qaMsg && <div className="sub qmsg" role="status">{qaMsg}</div>}{previewCard(false)}</div>}
+        {showBk && <section className="bkb" aria-labelledby="bkb-t">
+          <div className="bkb-b"><h2 className="bkb-t" id="bkb-t">{tr("Дані зберігаються лише на цьому пристрої")}</h2>
+            <p className="bkb-s">{bkm.last ? tr("Остання копія") + ': ' + bkWhen + '. ' : ''}{tr("Збережіть резервну копію — з цього файлу можна все відновити.")}</p></div>
+          <div className="bkb-a"><button className="btn-a sm" onClick={saveBackup} disabled={bkBusy}>{bkBusy ? tr("Зберігаю…") : tr("Зберегти копію")}</button><button className="btn2 sm" onClick={bkLater}>{tr("Пізніше")}</button></div>
+        </section>}
 
         {pv === 'day' && <>
-          {dayTasks.length > 0 && <p className="sum wide-only">{tr("Виконано")} {dayDone}{tr(" з ")}{dayTasks.length}{moreH > 0 ? ' · ' + tr("ще ≈") + ' ' + r1(moreH) + tr(" год") : ''}</p>}
-          <div className={'dayg' + (moreList.length ? ' two' : '')}>
-            <div className="daymain">
-              {dayExNT.map(exRow)}
-              {isToday && overdue.length > 0 && <div className="card warn"><div className="sec">{tr("Прострочено")}</div>{overdue.map(row)}</div>}
-              {dayEmpty
-                ? <div className="emptyday"><p>{selDate < today ? tr("Минулий день.") : tr("На цей день нічого немає.")}</p>
-                  {selDate >= today && <button className="btn2" onClick={() => { setTab('ai'); setAiPend({ text: tr("Що мені краще зробити сьогодні і в якому порядку?"), send: true }); }}>{tr("Скласти план із ШІ")}</button>}</div>
-                : tlItems.length > 0 && <section className="tl" aria-label={tr("Шкала дня")} style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 8px)' }}>
-                  {Array.from({ length: tlH1 - tlH0 + 1 }, (_, k) => <span key={k} className="tl-h" aria-hidden="true" style={{ top: 'calc(var(--hh) * ' + k + ')' }}>{pad((tlH0 + k) % 24 === 0 && k > 0 ? 24 : tlH0 + k)}:00</span>)}
-                  <div className="tl-g" aria-hidden="true" style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 1px)' }} />
-                  {tlItems.map(b => {
-                    const st = { top: hhPos(b.s), height: 'max(44px, calc(var(--hh) * ' + ((b.e - b.s) / 60).toFixed(4) + ' - 4px))', left: 'calc(var(--tlx) + (100% - var(--tlx)) * ' + (b.col / b.n).toFixed(4) + ')', width: 'calc((100% - var(--tlx)) / ' + b.n + (b.n > 1 ? ' - 4px' : '') + ')' };
-                    const when = hm(b.s) + '–' + (b.e >= 1440 ? '24:00' : hm(b.e));
-                    const it = items.find(i => i.id === b.id);
-                    const ar = normArea(b.area);
-                    const short = b.e - b.s < 50;
-                    if (b.kind === 'exam') return <button key={'x' + b.id} className={'tlb ev ex' + (short ? ' short' : '')} style={st} onClick={() => setExV(b.id)}><span className="tlt"><Icon n="flag" s={14} /> {tr("Іспит")}: {b.t}</span><span className="tls">{when}</span></button>;
-                    return b.kind === 'event'
-                      ? <button key={'e' + b.id} className={'tlb ev c-' + ar + (short ? ' short' : '')} style={st} onClick={() => openEdit(it)}><span className="tlt">{b.t}</span><span className="tls">{when} · {tr(AREA[ar])}{b.rep ? tr(", повтор") : ''}</span></button>
-                      : <div key={'t' + b.id} className={'tlb tk c-' + ar + (b.done ? ' done' : '') + (short ? ' short' : '')} style={st}><input type="checkbox" checked={!!b.done} onChange={() => tog(b.id, selDate)} aria-label={b.t} /><button className="tlbtn" onClick={() => openEdit(it)}><span className="tlt">{b.t}</span><span className="tls">{when}</span></button></div>;
-                  })}
-                  {showNow && <div className="now" style={{ top: hhPos(nowMin) }}><span className="vh">{tr("Зараз")} {hm(nowMin)}</span></div>}
+          {dayTotal > 0 && <p className="sum wide-only">{tr("Виконано")} {dayDone}{tr(" з ")}{dayTotal}{moreH > 0 ? ' · ' + tr("ще ≈") + ' ' + r1(moreH) + tr(" год") : ''}</p>}
+          {dayFree && selDate >= today && (dayFree.base > 0 || dayFree.busy > 0) && <p className="capl">
+            <span>{tr("Вільно для навчання")}: <b>≈ {r1(dayFree.free)} {tr(" год")}</b></span>
+            {dayFree.busy > 0 && <span className="capl-s">{r1(dayFree.base)} {tr(" год")} {tr("мінус події")} {r1(dayFree.busy)} {tr(" год")}</span>}
+          </p>}
+          {isToday && revQ.list.length > 0 && <button className="rvb" onClick={() => startRev(null)}>
+            <span className="rvb-i" aria-hidden="true"><Icon n="cards" s={18} /></span>
+            <span className="rvb-t">{tr("Повторити")} <b>{revQ.list.length} {plural(revQ.list.length, "картку", "картки", "карток")}</b></span>
+            <span className="rvb-a">{tr("Почати")}<Icon n="chevR" s={16} /></span>
+          </button>}
+          {dayExNT.map(exRow)}
+          {(() => {
+            const side = moreList.length > 0 || (isToday && overdue.length > 0) || lateList.length > 0;
+            return <div className={'dayg' + (side ? ' two' : '')}>
+              {side && <div className="dside">
+                {moreList.length > 0 && <section className="more-day" aria-labelledby="more-title">
+                  <div className="mh"><h2 className="mh-t" id="more-title">{isToday ? tr("Ще на сьогодні") : tr("Ще на цей день")}</h2>{moreH > 0 && <small>≈ {r1(moreH)} {tr(" год")}</small>}</div>
+                  <div className={'mlist' + (moreClip ? ' clip' : '')} id="more-list">{moreList.map((x, k) => (
+                    <div key={'m' + x.id} className={'mi' + (x.done ? ' done' : '') + (k >= MORE_N ? ' mx' : '')}>
+                      <Ck checked={x.done} onChange={() => tog(x.id, selDate)} label={x.t} />
+                      <button className="mbtn" onClick={() => openEdit(items.find(i => i.id === x.id))}><span className="mt">{x.t}</span><span className={'mm' + (x.pri === 2 && !x.done ? ' imp' : '')}>{moreMeta(x)}</span></button>
+                    </div>))}</div>
+                  {moreList.length > MORE_N + 1 && <button className="lnk mall" aria-expanded={!moreClip} aria-controls="more-list" onClick={() => setMoreAll(!moreAll)}>{moreClip ? tr("Показати всі") + ' (' + moreList.length + ')' : tr("Згорнути")}</button>}
                 </section>}
-              {isToday && plan.late.length > 0 && <div className="card warn"><div className="sec">{tr("Не вміщується в план")}</div>{plan.late.map((l, i) => <div className="blk" key={i}><span>{l.t}</span><span>{r1(l.left)} {tr(" год")}</span></div>)}</div>}
-            </div>
-            {moreList.length > 0 && <aside className="more-day" aria-labelledby="more-title">
-              <div className="mh"><h2 className="mh-t" id="more-title">{isToday ? tr("Ще на сьогодні") : tr("Ще на цей день")}</h2>{moreH > 0 && <small>≈ {r1(moreH)} {tr(" год")}</small>}</div>
-              <div className="mlist">{moreList.map(x => (
-                <div key={'m' + x.id} className={'mi' + (x.done ? ' done' : '')}>
-                  <input type="checkbox" checked={x.done} onChange={() => tog(x.id, selDate)} aria-label={x.t} />
-                  <button className="mbtn" onClick={() => openEdit(items.find(i => i.id === x.id))}><span className="mt">{x.t}</span><span className={'mm' + (x.pri === 2 && !x.done ? ' imp' : '')}>{moreMeta(x)}</span></button>
-                </div>))}</div>
-            </aside>}
-          </div>
+                {isToday && overdue.length > 0 && <section className="card warn" aria-labelledby="ovd-t"><h2 className="sec" id="ovd-t">{tr("Прострочено")}</h2>{overdue.map(i => lateRow(i, null))}</section>}
+                {lateList.length > 0 && <section className="card amber" aria-labelledby="late-t"><h2 className="sec" id="late-t">{tr("Не вміщується в план")}</h2>
+                  <p className="hint late-h">{tr("Годин до терміну не вистачає. Перенесіть термін або позначте виконаним.")}</p>
+                  {lateList.map(l => lateRow(l.it, l.left))}</section>}
+              </div>}
+              <div className="daymain">
+                {dayEmpty
+                  ? <div className="emptyday"><p>{selDate < today ? tr("Минулий день.") : tr("На цей день нічого немає.")}</p>
+                    {selDate >= today && <button className="btn2" onClick={() => { setTab('ai'); setAiPend({ text: tr("Що мені краще зробити сьогодні і в якому порядку?"), send: true }); }}>{tr("Скласти план із ШІ")}</button>}</div>
+                  : tlItems.length > 0 && <section className="tl" aria-label={tr("Шкала дня")} style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 8px)' }}>
+                    {Array.from({ length: tlH1 - tlH0 + 1 }, (_, k) => <span key={k} className="tl-h" aria-hidden="true" style={{ top: 'calc(var(--hh) * ' + k + ')' }}>{pad((tlH0 + k) % 24 === 0 && k > 0 ? 24 : tlH0 + k)}:00</span>)}
+                    <div className="tl-g" aria-hidden="true" style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 1px)' }} />
+                    {tlItems.map(b => {
+                      const st = { top: hhPos(b.s), height: 'max(44px, calc(var(--hh) * ' + ((b.e - b.s) / 60).toFixed(4) + ' - 4px))', left: 'calc(var(--tlx) + (100% - var(--tlx)) * ' + (b.col / b.n).toFixed(4) + ')', width: 'calc((100% - var(--tlx)) / ' + b.n + (b.n > 1 ? ' - 4px' : '') + ')' };
+                      const when = hm(b.s) + '–' + (b.e >= 1440 ? '24:00' : hm(b.e));
+                      const it = items.find(i => i.id === b.id);
+                      const ar = normArea(b.area);
+                      const short = b.e - b.s < 50;
+                      if (b.kind === 'exam') return <button key={'x' + b.id} className={'tlb ev ex' + (short ? ' short' : '')} style={st} onClick={() => setExV(b.id)}><span className="tlt"><Icon n="flag" s={14} /> {tr("Іспит")}: {b.t}</span><span className="tls">{when}</span></button>;
+                      return b.kind === 'event'
+                        ? <button key={'e' + b.id} className={'tlb ev c-' + ar + (short ? ' short' : '')} style={st} onClick={() => openEdit(it)}><span className="tlt">{b.t}</span><span className="tls">{when} · {tr(AREA[ar])}{b.rep ? tr(", повтор") : ''}</span></button>
+                        : <div key={'t' + b.id} className={'tlb tk c-' + ar + (b.done ? ' done' : '') + (short ? ' short' : '')} style={st}><Ck checked={!!b.done} onChange={() => tog(b.id, selDate)} label={b.t} /><button className="tlbtn" onClick={() => openEdit(it)}><span className="tlt">{b.t}</span><span className="tls">{when}</span></button></div>;
+                    })}
+                    {showNow && <div className="now" style={{ top: hhPos(nowMin) }}><span className="vh">{tr("Зараз")} {hm(nowMin)}</span></div>}
+                  </section>}
+              </div>
+            </div>;
+          })()}
         </>}
 
         {pv === 'month' && <div className="monthv">
@@ -894,7 +1046,7 @@ export default function Home() {
         </section>;
         const srcs = [
           ['topic', tr("За темою"), tcfg.topic.trim() ? tcfg.topic.trim().slice(0, 40) : tr("Напишіть тему"), true],
-          ['mat', tr("З матеріалу"), !textNotes.length ? tr("Немає текстових матеріалів") : selNote ? noteTitle(selNote) : tr("Оберіть нотатку"), textNotes.length > 0],
+          ['mat', tr("З матеріалу"), !hasMats ? tr("Матеріалів ще немає") : selDoc ? String(selDoc.title || tr("Зошит")).slice(0, 40) : selNote ? noteTitle(selNote) : tr("Нотатка або зошит"), hasMats],
           ['deck', tr("З набору карток"), !decks.length ? tr("Карток ще немає") : tcfg.deck != null && decks.some(d => d.name === tcfg.deck) ? deckName(tcfg.deck) : tr("Оберіть набір"), decks.length > 0]
         ];
         const n = Number(tcfg.n) || 10;
@@ -937,9 +1089,15 @@ export default function Home() {
                     {srcs.map(([k, nm, s, en]) => <button key={k} className="src" aria-pressed={tcfg.src === k} disabled={!en} onClick={() => setTcfg(c => ({ ...c, src: k }))}><span className="src-n">{nm}</span><span className="src-s">{s}</span></button>)}
                   </div>
                   {tcfg.src === 'topic' && <><label className="vh" htmlFor="tf-topic">{tr("Тема")}</label><textarea id="tf-topic" rows={3} placeholder={tr("Наприклад: Present Perfect, німецькі артиклі, анатомія зуба")} value={tcfg.topic} onChange={e => setTcfg(c => ({ ...c, topic: e.target.value }))} /></>}
-                  {tcfg.src === 'mat' && <><label className="vh" htmlFor="tf-mat">{tr("Нотатка")}</label>
-                    <select id="tf-mat" value={selNote ? String(selNote.id) : ''} onChange={e => setTcfg(c => ({ ...c, mat: e.target.value }))} aria-describedby="tf-mat-h"><option value="">{tr("Оберіть нотатку")}</option>{textNotes.map(x => <option key={x.id} value={String(x.id)}>{noteTitle(x)}</option>)}</select>
-                    <p className="hint" id="tf-mat-h">{tr("Підходять текстові нотатки. Зошити, дошки й фото поки не можна використати: у них немає тексту, який прочитає ШІ.")}</p></>}
+                  {tcfg.src === 'mat' && <><label className="vh" htmlFor="tf-mat">{tr("Матеріал")}</label>
+                    <select id="tf-mat" value={selDoc ? 'd:' + selDoc.id : selNote ? String(selNote.id) : ''} onChange={e => { const v = e.target.value; setTcfg(c => ({ ...c, mat: v, pages: v.startsWith('d:') ? [1] : [] })); }} aria-describedby="tf-mat-h">
+                      <option value="">{tr("Оберіть матеріал")}</option>
+                      {textNotes.length > 0 && <optgroup label={tr("Нотатки")}>{textNotes.map(x => <option key={x.id} value={String(x.id)}>{noteTitle(x)}</option>)}</optgroup>}
+                      {pageDocs.length > 0 && <optgroup label={tr("Зошити, дошки й фото")}>{pageDocs.map(d => <option key={'d' + d.id} value={'d:' + d.id}>{String(d.title || tr("Без назви")).slice(0, 50)} · {docPages(d)} {tr("с.")}</option>)}</optgroup>}
+                    </select>
+                    {selDoc && <><p className="flab" id="tf-pg" style={{ marginTop: 12 }}>{tr("Сторінки (до 4)")}</p>
+                      <div className="a-pgs tf-pgs" role="group" aria-labelledby="tf-pg">{Array.from({ length: docPages(selDoc) }, (_, k) => k + 1).map(n => { const on = selPages.includes(n); return <button key={n} className="a-pgb" aria-pressed={on} disabled={!on && selPages.length >= 4} onClick={() => setTcfg(c => ({ ...c, pages: on ? selPages.filter(x => x !== n) : [...selPages, n].sort((a, b) => a - b) }))} aria-label={tr("Сторінка") + ' ' + n}>{n}</button>; })}</div></>}
+                    <p className="hint" id="tf-mat-h">{selDoc ? tr("Сторінки підуть до ШІ зображеннями. ШІ розпізнає рукопис, можливі помилки — перевіряйте питання.") : tr("Текстова нотатка або сторінки зошита, дошки чи фото.")}</p></>}
                   {tcfg.src === 'deck' && <><label className="vh" htmlFor="tf-deck">{tr("Набір карток")}</label>
                     <select id="tf-deck" value={tcfg.deck == null ? '' : 'd:' + tcfg.deck} onChange={e => setTcfg(c => ({ ...c, deck: e.target.value === '' ? null : e.target.value.slice(2) }))}><option value="">{tr("Оберіть набір")}</option>{decks.map(d => <option key={d.name} value={'d:' + d.name}>{deckName(d.name)} · {nCards(d.all)}</option>)}</select></>}
                 </div>
@@ -1029,12 +1187,24 @@ export default function Home() {
           {sy.msg && <div className="sub" style={{ color: 'var(--wn)', marginBottom: 10 }}>{sy.msg}</div>}
           <button className="btn" onClick={() => { if (sy.on) runSync(); else toggleSync(); }} disabled={sy.state === 'syncing'}>{sy.state === 'syncing' ? tr("Синхронізую…") : tr("Синхронізувати зараз")}</button>
           <button className={'tg' + (sy.on ? ' on' : '')} onClick={toggleSync}><span>{tr("Автосинхронізація")}</span><b>{sy.on ? '✓' : ''}</b></button></div>
+        {/* резервна копія: один JSON-файл (записи, картки, тести, папки, нотатки, розмови, налаштування, документи зі сторінками) */}
+        <section className="card bkc" aria-labelledby="bk-h"><h2 className="sec" id="bk-h">{tr("Дані")}</h2>
+          <p className="sub" style={{ margin: '0 0 4px' }}>{bkm.last ? tr("Остання копія") + ': ' + bkWhen : tr("Резервних копій ще не було.")}</p>
+          <p className="hint" style={{ margin: '0 0 12px' }}>{sy.on ? tr("Синхронізацію ввімкнено, але копія не завадить: файл можна зберегти в iCloud Drive, Google Drive або на комп’ютер.") : tr("Дані зберігаються лише на цьому пристрої. Копія — файл, з якого можна все відновити на цьому або іншому пристрої.")}</p>
+          <div className="bkc-a"><button className="btn-a" onClick={saveBackup} disabled={bkBusy}>{bkBusy ? tr("Зберігаю…") : tr("Зберегти резервну копію")}</button>
+            <button className="btn2" onClick={() => { sheetPrev.current = document.activeElement; const el = document.getElementById('bk-file'); if (el) el.click(); }}>{tr("Відновити з копії")}</button>
+            <input id="bk-file" type="file" accept="application/json,.json" className="hidefile" tabIndex={-1} aria-hidden="true" onChange={e => { pickBackup(e.target.files && e.target.files[0]); e.target.value = ''; }} /></div>
+        </section>
         <div className="card"><div className="sec">{tr("Тема")}</div><div className="seg">{[['dark', tr("Темна")], ['light', tr("Світла")], ['auto', tr("Авто")]].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>
-        <div className="card"><div className="sec">{tr("О котрій годині починаєте займатися")}</div>
-          <input type="number" min="0" max="23" value={start} onChange={e => setStart(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))} /></div>
-        <div className="card"><div className="sec">{tr("Годин на день для задач")}</div>
-          {[1, 2, 3, 4, 5, 6, 0].map(i => <div className="row" style={{ alignItems: 'center' }} key={i}><span style={{ width: 36 }}>{tr(DN[i])}</span>
-            <input type="number" min="0" max="16" step="0.5" value={cap[i]} onChange={e => setCap(cap.map((c, j) => j === i ? Math.max(0, parseFloat(e.target.value) || 0) : c))} /></div>)}</div>
+        {/* варіант B: налаштування говорять про навчання; події з часом віднімаються від цих годин (plan.js) */}
+        <div className="card"><label className="sec" htmlFor="set-start">{tr("О котрій зазвичай починаєте навчання")}</label>
+          <input id="set-start" type="number" min="0" max="23" value={start} aria-describedby="set-start-h" onChange={e => setStart(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))} />
+          <p className="hint" id="set-start-h" style={{ marginTop: 8 }}>{tr("Година від 0 до 23. З неї План розставляє задачі на шкалі дня.")}</p></div>
+        <div className="card"><h2 className="sec" id="set-cap">{tr("Годин на навчання й справи на день")}</h2>
+          <p className="hint" id="set-cap-h" style={{ margin: '0 0 6px' }}>{tr("Події з часом віднімаються від цих годин автоматично.")}</p>
+          <div role="group" aria-labelledby="set-cap" aria-describedby="set-cap-h">
+          {[1, 2, 3, 4, 5, 6, 0].map(i => <div className="row" style={{ alignItems: 'center' }} key={i}><label htmlFor={'cap-' + i} style={{ width: 36 }}>{tr(DN[i])}</label>
+            <input id={'cap-' + i} type="number" min="0" max="16" step="0.5" value={cap[i]} onChange={e => setCap(cap.map((c, j) => j === i ? Math.max(0, parseFloat(e.target.value) || 0) : c))} /></div>)}</div></div>
         <div className="card"><label className="sec" htmlFor="set-new">{tr("Нових карток на день")}</label>
           <input id="set-new" type="number" min="0" max="200" step="1" value={newLim} aria-describedby="set-new-h" onChange={e => setUi({ ...ui, newPerDay: Math.min(200, Math.max(0, parseInt(e.target.value, 10) || 0)) })} />
           <p className="hint" id="set-new-h" style={{ marginTop: 8 }}>{tr("Скільки нових карток додавати до щоденного повторення. Картки, які вже вчите, показуються завжди, коли настає їхній час.")}</p></div>
@@ -1053,7 +1223,7 @@ export default function Home() {
           <button className="ib" onClick={closeSheet} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>
         {sheet === 'new' && <>
           {quickInput('qa-sheet', true)}
-          {qaMsg && <div className="sub qmsg">{qaMsg}</div>}
+          {qaMsg && <div className="sub qmsg" role="status">{qaMsg}</div>}
           {previewCard(true)}
           <button className="more" aria-expanded={more} aria-controls="full-form" onClick={() => setMore(!more)}><span>{tr("Більше параметрів")}</span><Icon n="chevD" s={20} /></button>
         </>}
@@ -1079,9 +1249,14 @@ export default function Home() {
           {ev ? <input type="number" min="0.5" step="0.5" placeholder={tr("Тривалість, год")} value={f.h} onChange={e => setF({ ...f, h: e.target.value })} /> : <select value={f.pri} onChange={e => setF({ ...f, pri: e.target.value })}><option value={1}>{tr("Звичайна")}</option><option value={2}>{tr("Важлива")}</option></select>}</div>
         <div className="row"><select value={f.repeat} onChange={e => setF({ ...f, repeat: e.target.value })}>{Object.entries(REP).map(([k, v]) => <option key={k} value={k}>{tr(v)}</option>)}</select>
           {!ev && <input type="time" aria-label={tr("Час (необов’язково)")} title={tr("Час (необов’язково)")} value={f.time} onChange={e => setF({ ...f, time: e.target.value })} />}</div>
+        {f.repeat !== 'none' && (() => { const d0 = f.due || selDate, bad = isDate(f.until) && f.until < d0; return <div className="untl">
+          <label className="flab" htmlFor="f-until">{tr("До дати (необов’язково)")}</label>
+          <input id="f-until" type="date" min={d0} value={f.until || ''} onChange={e => setF({ ...f, until: e.target.value })} aria-describedby="f-until-h" aria-invalid={bad || undefined} />
+          <p className={'hint' + (bad ? ' err' : '')} id="f-until-h">{bad ? tr("Дата закінчення раніше за початок повтору.") : tr("Після цієї дати запис не показується й не планується.")}</p>
+        </div>; })()}
         {folders.length > 0 && <div className="row"><select value={f.folder} onChange={e => setF({ ...f, folder: e.target.value })}><option value="">{tr("Без папки")}</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{fo.name}</option>)}</select></div>}
         <textarea rows={2} placeholder={tr("Нотатка (необов’язково)")} value={f.note} onChange={e => setF({ ...f, note: e.target.value })} />
-        <div className="row"><button className="btn" onClick={saveTask}>{sheet === 'new' ? tr("Додати") : tr("Зберегти")}</button>
+        <div className="row"><button className="btn" onClick={saveTask} disabled={f.repeat !== 'none' && isDate(f.until) && f.until < (f.due || selDate)}>{sheet === 'new' ? tr("Додати") : tr("Зберегти")}</button>
           {sheet !== 'new' && <button className="btn alt" onClick={() => del(sheet)}>{tr("Видалити")}</button>}</div>
         </>}
         </div>}
@@ -1253,6 +1428,39 @@ export default function Home() {
         </div></div>;
       })()}
 
+      {/* відновлення з резервної копії: превʼю → вибір «Додати до наявних» / «Замінити все» → підтвердження. Скасування нічого не змінює. */}
+      {bk && (() => {
+        const c = bk.info && bk.info.counts, busy = bk.step === 'busy';
+        const when = bk.info && bk.info.created ? new Date(bk.info.created).toLocaleString(loc(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+        const close = () => { if (!busy) closeBk(); };
+        return <div className="ov" onClick={close} onKeyDown={e => { if (e.key === 'Escape') close(); }}><div className="sheet bkd" role="dialog" aria-modal="true" aria-labelledby="bkd-t" aria-busy={busy || undefined} onClick={e => e.stopPropagation()}>
+          <div className="shd"><h2 id="bkd-t">{bk.step === 'done' ? tr("Дані відновлено") : bk.step === 'error' ? tr("Не вдалося відновити") : tr("Відновити з копії")}</h2>
+            <button className="ib" onClick={close} disabled={busy} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>
+          {busy && <p className="sub" role="status">{tr("Зачекайте…")}</p>}
+          {bk.step === 'error' && <><p className="sub" role="alert">{bk.msg}</p><div className="row" style={{ marginTop: 14 }}><button className="btn2" autoFocus onClick={closeBk}>{tr("Закрити")}</button></div></>}
+          {bk.step === 'preview' && c && <>
+            <p className="bkd-f">{bk.name}{when ? ' · ' + tr("створено") + ' ' + when : ''}{bk.info.account ? ' · ' + bk.info.account : ''}</p>
+            <p className="bkd-n" role="status">{tr("Знайдено")} {c.records} {plural(c.records, "запис", "записи", "записів")}, {c.docs} {plural(c.docs, "документ", "документи", "документів")}</p>
+            <ul className="bkd-l">
+              <li>{tr("Задачі, події й іспити")}: {c.items}</li><li>{tr("Нотатки")}: {c.notes}</li><li>{tr("Картки")}: {c.cards}</li>
+              <li>{tr("Тести")}: {c.tests}</li><li>{tr("Папки")}: {c.folders}</li><li>{tr("Розмови з Помічником")}: {c.chats}</li>
+              <li>{tr("Зошити, дошки й фото")}: {c.docs} ({c.pages} {tr("с.")})</li>
+            </ul>
+            <div className="flab" id="bkd-m">{tr("Як відновити")}</div>
+            <div className="bkd-ms" role="radiogroup" aria-labelledby="bkd-m">
+              {[['merge', tr("Додати до наявних"), tr("Поточні дані лишаються. З копії додається те, чого тут ще немає.")], ['replace', tr("Замінити все"), tr("Поточні записи, матеріали й налаштування буде замінено даними з копії.")]].map(([k, n, s]) =>
+                <label key={k} className={'bkd-o' + (bk.mode === k ? ' on' : '')}><input type="radio" name="bkd-mode" checked={bk.mode === k} onChange={() => setBk({ ...bk, mode: k })} /><span><b>{n}</b><small>{s}</small></span></label>)}
+            </div>
+            {bk.mode === 'replace' && <p className="hint err bkd-w">{tr("Те, чого немає в копії, буде видалено. Якщо поточні дані потрібні, спершу збережіть їх.")} <button className="lnk" onClick={saveBackup} disabled={bkBusy}>{tr("Зберегти поточні дані")}</button></p>}
+            <div className="row" style={{ marginTop: 14 }}>
+              <button className={'btn' + (bk.mode === 'replace' ? ' danger' : '')} onClick={doRestore}>{bk.mode === 'replace' ? tr("Замінити все") : tr("Додати дані")}</button>
+              <button className="btn alt" onClick={closeBk}>{tr("Скасувати")}</button></div>
+          </>}
+          {bk.step === 'done' && <><p className="sub" role="status">{bk.mode === 'replace' ? tr("Відновлено з копії") : tr("Додано з копії")}: {bk.added.records} {plural(bk.added.records, "запис", "записи", "записів")}, {bk.added.docs} {plural(bk.added.docs, "документ", "документи", "документів")}.</p>
+            <div className="row" style={{ marginTop: 14 }}><button className="btn" autoFocus onClick={() => { closeBk(); setTab('today'); }}>{tr("Готово")}</button></div></>}
+        </div></div>;
+      })()}
+
       {exV != null && (() => {
         const e = items.find(i => i.id === exV); if (!e) return null;
         const n = daysTo(e.due, today), fo = folders.find(x => x.id === e.folder);
@@ -1274,7 +1482,7 @@ export default function Home() {
 
       {toast && <div className="toast" role="status" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7" /></svg>
-        <span>{toast.text}</span>{toast.undo && <button className="a-tl" onClick={() => { toast.undo(); setToast({ text: tr("Скасовано") }); }}>{tr("Скасувати")}</button>}</div>}
+        <span>{toast.text}</span>{toast.undo && <button className="a-tl" onClick={() => { toast.undo(); setToast({ text: tr("Скасовано") }); }}>{tr("@undo:Скасувати")}</button>}</div>}
 
       <nav className="nav" aria-label={tr("Розділи")}>{TABS.map(([k, n, ic]) => <button key={k} onClick={() => goTab(k)} aria-current={k === tab ? 'page' : undefined}><Icon n={ic} s={24} /><span className="lbl">{tr(n)}</span></button>)}</nav>
     </div>

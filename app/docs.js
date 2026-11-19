@@ -589,7 +589,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
         <div className="edrow2">
           <IB n="check" label={tr("Готово")} onClick={close} />
           <input className="edtitle" value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label={tr("Назва")} />
-          <IB n="undo" label={tr("Скасувати")} onClick={() => swap(hist, redo)} />
+          <IB n="undo" label={tr("@undo:Скасувати")} onClick={() => swap(hist, redo)} />
           <IB n="redo" label={tr("Вперед")} onClick={() => swap(redo, hist)} />
           <IB n="pages" label={tr("Сторінки")} on={strip} onClick={() => setStrip(!strip)} />
           <IB n="share" label={tr("Поділитися")} onClick={share} />

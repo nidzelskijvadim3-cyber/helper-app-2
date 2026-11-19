@@ -1,9 +1,10 @@
 'use client';
-// Помічник (стиль C): розмови з історією, стартові дії з даних, картка-превʼю дій, режим «Навчання»,
+// Помічник (стиль C): розмови з історією, стартові дії з даних, картка-превʼю дій, режим «Репетитор» (mode 'learn'),
 // контекст (матеріал / набір / фото), посилання [с. N], голосовий ввід. Дії застосовує page.js (applyActions) через apply().
 import { useState, useEffect, useRef } from 'react';
 import { t as tr, loc, getLang, plural } from './i18n';
 import { listDocs, getDocFull, docPageImages, shrink } from './docs';
+import { noDateTasks } from './plan';
 
 const P = {
   ai: <path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" />,
@@ -174,7 +175,8 @@ export default function Assistant(props) {
   // «Повторити N карток»: N — черга інтервального повторення з page.js (due ≤ зараз + нові в межах ліміту)
   const revN = rev ? rev.n : 0;
   const leftDecks = rev ? rev.decks : [];
-  const noTime = items.filter(i => i.kind !== 'event' && !(i.repeat && i.repeat !== 'none') && !i.done && !isTime(i.time));
+  // «без дати» — відкриті разові задачі без терміну; те саме визначення, що в Плані (plan.js)
+  const noDate = noDateTasks(items);
   const decks = (() => { const m = new Map(); for (const c of cards) { const k = c.deck || ''; m.set(k, (m.get(k) || 0) + 1); } return [...m.entries()]; })();
   const deckName = d => d || tr("Без набору");
   const lastOk = lastMat && (lastMat.k === 'doc' || notes.some(n => n.id === lastMat.id && n.text && n.text.trim())) ? lastMat : null;
@@ -185,7 +187,7 @@ export default function Assistant(props) {
   const starts = [];
   if (revN) starts.push({ k: 'rev', ic: 'cards', hot: true, t: tr("Повторити") + ' ' + revN + ' ' + plural(revN, "картку", "картки", "карток"), s: leftDecks.length === 1 ? deckName(leftDecks[0]) : leftDecks.length + ' ' + plural(leftDecks.length, "набір", "набори", "наборів"), go: () => onReview() });
   if (exam && onExamPlan) starts.push({ k: 'exam', ic: 'flag', tone: 'health', t: tr("План підготовки до іспиту") + ' ' + exam.t, s: exam.days === 0 ? tr("Іспит сьогодні") : exam.days === 1 ? tr("Іспит завтра") : getLang() === 'de' ? 'in ' + exam.days + ' Tagen' : 'через ' + exam.days + ' ' + plural(exam.days, "день", "дні", "днів"), go: () => onExamPlan() });
-  if (noTime.length) starts.push({ k: 'tom', ic: 'plan', tone: 'home', t: tr("Скласти план на завтра"), s: noTime.length + ' ' + plural(noTime.length, "задача", "задачі", "задач") + ' ' + tr("без дати або часу"), go: () => send(tr("Склади план на завтра з моїх задач без дати або часу. Врахуй години на задачі й події, що вже є."), { mode: 'chat' }) });
+  if (noDate.length) starts.push({ k: 'tom', ic: 'plan', tone: 'home', t: tr("Скласти план на завтра"), s: noDate.length + ' ' + plural(noDate.length, "задача", "задачі", "задач") + ' ' + tr("без дати"), go: () => send(tr("Склади план на завтра з моїх задач без дати. Врахуй вільні години (події вже віднято) і задачі, що вже є."), { mode: 'chat' }) });
   if (lastCtx) starts.push({ k: 'ask', ic: 'doc', tone: 'study', t: tr("Запитати про") + ' «' + lastCtx.title + '»', s: tr("Останній відкритий матеріал"), go: () => { setCtx(lastCtx); taRef.current && taRef.current.focus(); } });
   starts.push({ k: 'now', ic: 'now', tone: 'health', t: tr("Що робити просто зараз?"), s: items.length ? tr("З урахуванням плану на сьогодні") : tr("Підказка, з чого почати"), go: () => send(tr("Що робити просто зараз?")) });
   if (lastCtx && starts.length < 4) starts.push({ k: 'mk', ic: 'cards', tone: 'personal', t: tr("Зроби картки з") + ' «' + lastCtx.title + '»', s: tr("Питання й відповіді з матеріалу"), go: () => send(tr("Зроби картки з цього матеріалу."), { ctx: lastCtx }) });
@@ -420,7 +422,7 @@ export default function Assistant(props) {
       </header>
       : <header className="a-hd a-hd-c">
         <button className="a-ib" ref={histBtn} onClick={() => setView('history')} aria-label={tr("Історія розмов")} title={tr("Історія розмов")}><I n="hist" /></button>
-        <div className="a-hc"><H className="a-hct">{saved.title}</H><span className="a-hcs">{(saved.mode === 'learn' ? tr("Навчання") + ' · ' : '') + whenStr(saved.upd)}</span></div>
+        <div className="a-hc"><H className="a-hct">{saved.title}</H><span className="a-hcs">{(saved.mode === 'learn' ? tr("Репетитор") + ' · ' : '') + whenStr(saved.upd)}</span></div>
         <button className="a-ib" onClick={newChat} aria-label={tr("Нова розмова")} title={tr("Нова розмова")}><I n="newc" /></button>
       </header>;
 
@@ -434,7 +436,7 @@ export default function Assistant(props) {
         </div> : <>
           <button className="a-ho" onClick={() => openChat(c.id)} aria-current={c.id === curId ? 'true' : undefined}>
             <span className="a-hn">{c.title}</span>
-            <span className="a-hm">{whenStr(c.upd)}{c.mode === 'learn' ? ' · ' + tr("Навчання") : ''}{c.ctx ? ' · ' + ctxLabel(c.ctx) : ''}</span>
+            <span className="a-hm">{whenStr(c.upd)}{c.mode === 'learn' ? ' · ' + tr("Репетитор") : ''}{c.ctx ? ' · ' + ctxLabel(c.ctx) : ''}</span>
           </button>
           <button className="a-ib" onClick={() => setDelAsk(c.id)} aria-label={tr("Видалити розмову") + ': ' + c.title} title={tr("Видалити")}><I n="trash" /></button>
         </>}
@@ -470,7 +472,7 @@ export default function Assistant(props) {
 
   const ctx = cur.ctx;
   const composer = <section className="a-comp" aria-label={tr("Поле запиту")}>
-    {toast && toast.id === cur.id && <div className="a-toast" role="status" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}><I n="check" s={18} /><span>{tr("Готово")} · {toast.sum}</span><button className="a-tl" onClick={undoToast}>{tr("Скасувати")}</button></div>}
+    {toast && toast.id === cur.id && <div className="a-toast" role="status" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}><I n="check" s={18} /><span>{tr("Готово")} · {toast.sum}</span><button className="a-tl" onClick={undoToast}>{tr("@undo:Скасувати")}</button></div>}
     {(ctx || att.length > 0) && <div className="a-chips">
       {ctx && <span className="a-chip"><I n={ctx.k === 'deck' ? 'cards' : ctx.k === 'folder' ? 'folder' : 'doc'} s={14} /><span className="a-chipt">{ctxLabel(ctx)}</span><button onClick={() => setCtx(null)} aria-label={tr("Прибрати контекст") + ' ' + ctxLabel(ctx)} title={tr("Прибрати")}>×</button></span>}
       {att.map((u, i) => <span className="a-chip ph" key={i}><span className="a-thumb" style={{ backgroundImage: 'url(' + u + ')' }} aria-hidden="true" /><span className="a-chipt">{tr("Фото")} {i + 1}</span><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label={tr("Прибрати фото") + ' ' + (i + 1)} title={tr("Прибрати")}>×</button></span>)}
@@ -478,9 +480,9 @@ export default function Assistant(props) {
     <div className="a-mode">
       <div className="a-seg" role="group" aria-label={tr("Режим")}>
         <button aria-pressed={!learn} onClick={() => setMode('chat')}>{tr("Звичайний")}</button>
-        <button aria-pressed={learn} onClick={() => setMode('learn')}>{tr("Навчання")}</button>
+        <button aria-pressed={learn} onClick={() => setMode('learn')}>{tr("Репетитор")}</button>
       </div>
-      <span className="a-modec">{tr("Навчання — питає, а не відповідає")}</span>
+      <span className="a-modec">{learn ? tr("Питає, а не відповідає") : tr("Репетитор") + ' — ' + tr("Питає, а не відповідає").toLowerCase()}</span>
     </div>
     <div className={'a-box' + (!online ? ' off' : '')}>
       <div className="a-plusw">
