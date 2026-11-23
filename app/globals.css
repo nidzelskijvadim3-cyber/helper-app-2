@@ -245,6 +245,9 @@ input[type=checkbox]:focus-visible{outline-offset:3px}
 .edtop{display:flex;align-items:center;gap:8px;margin-bottom:10px}.edtop .chip{margin:0}
 .edbox{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:var(--fill);border-radius:12px;overflow:hidden}
 .edbox canvas{background:#fff;touch-action:none;box-shadow:0 2px 12px rgba(0,0,0,.3)}
+/* iPad: без цього Apple Pencil починає виділяти текст/показувати лупу замість малювання */
+.edbox,.edbox *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.edbox input,.edbox textarea{-webkit-user-select:text;user-select:text}
 .edtools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding-top:10px}
 .edtools .chip{margin:0}.edtools .chip.on{background:var(--acs);color:var(--on)}
 .edrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;width:100%}

@@ -279,6 +279,19 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     return () => { off = true; };
   }, [pi, page.img]);
   useEffect(() => { const cv = cvRef.current; if (cv) renderPage(cv.getContext('2d'), page, imgRef.current); }, [d, pi, tick]);
+  // iPad + Apple Pencil: Safari сам перехоплює дотик пера (виділення тексту, лупа, Scribble, прокрутка)
+  // і шле pointercancel — лінія обривається або не з'являється зовсім. touch-action:none цього не зупиняє,
+  // потрібні нативні НЕпасивні touchstart/touchmove з preventDefault (React вішає їх пасивними).
+  // Палець не чіпаємо в режимі «Рука» і коли «лише стилус» (пан/зум робимо самі через pointer-події).
+  useEffect(() => {
+    const cv = cvRef.current; if (!cv) return;
+    // «Текст» не чіпаємо: iOS відкриває клавіатуру лише з «живого» дотику
+    if (tool === 'hand' || tool === 'text') return;
+    const f = e => e.preventDefault();
+    const opt = { passive: false };
+    cv.addEventListener('touchstart', f, opt); cv.addEventListener('touchmove', f, opt);
+    return () => { cv.removeEventListener('touchstart', f, opt); cv.removeEventListener('touchmove', f, opt); };
+  }, [tool]);
   const flush = async extra => {
     const pages = d.pages;
     const dirty = pages.length !== saved.current.length ? 'all' : pages.map((p, i) => p === saved.current[i] ? -1 : i).filter(i => i >= 0);
