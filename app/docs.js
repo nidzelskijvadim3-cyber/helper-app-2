@@ -225,8 +225,8 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   const [tin, setTin] = useState(null);
   const [strip, setStrip] = useState(false);
   const [pop, setPop] = useState(null);
-  const [popTop, setPopTop] = useState(96);
-  const barRef = useRef(null), holdT = useRef(null), stxt = useRef(null);
+  const [popPos, setPopPos] = useState(null);
+  const barRef = useRef(null), holdT = useRef(null), stxt = useRef(null), popSrc = useRef(null), downBtn = useRef(null);
   const [thumbs, setThumbs] = useState([]);
   const [exp, setExp] = useState(false);
   const cvRef = useRef(null), boxRef = useRef(null), imgRef = useRef(null), cur = useRef(null), hist = useRef([]), redo = useRef([]), dRef = useRef(d), piRef = useRef(0), saved = useRef(doc.pages), touches = useRef(new Map()), gest = useRef(null);
@@ -265,9 +265,10 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     const el = boxRef.current; if (!el) return;
     const f = () => {
       const W = el.clientWidth, H = el.clientHeight; if (!W || !H) return;
+      // Лише відображення: документ (page.h, штрихи) звідси не змінюється. Раніше тут подовжувалась page.h — панель
+      // Помічника, поворот і Split View «витягували» сторінку в даних, а PDF виходив зі сторінками різної довжини.
+      // setD сюди не повертати: замикання ResizeObserver тримає стару `page`, і запис у документ звідси вже губив штрихи.
       const r = fitPage(page, W, H);
-      // лише h і через функціональне оновлення: замикання ResizeObserver тримає стару `page`, і { ...page } повертав би старі штрихи (втрата намальованого при повороті iPad / зміні вікна)
-      if (r.pageH !== page.h) { const i0 = piRef.current; setD(o => ({ ...o, pages: o.pages.map((q, i) => (i === i0 ? { ...q, h: r.pageH } : q)) })); }
       setFit({ w: r.cssW, h: r.cssH });
     };
     f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect();
@@ -566,7 +567,27 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     if (d0.mode === 'move') setRuler({ ...d0.r0, x: d0.r0.x + (x - d0.x0), y: d0.r0.y + (y - d0.y0) });
     else setRuler({ ...d0.r0, a: Math.atan2(y - d0.r0.y, x - d0.r0.x), len: Math.max(160, Math.hypot(x - d0.r0.x, y - d0.r0.y)) });
   };
-  function openPop(k) { if (pop === k) { setPop(null); return; } if (barRef.current) setPopTop(Math.round(barRef.current.getBoundingClientRect().bottom + 8)); setPop(k); }
+  // Поповер прив'язаний до кнопки, що його відкрила (а не по центру екрана): під кнопкою, по її центру,
+  // але не ближче 10px до країв редактора. Кнопку беремо з останнього pointerdown на панелі
+  // (iOS не фокусує кнопки при дотику), для клавіатури — з фокуса.
+  function placePop() {
+    const bar = barRef.current, box = bar && bar.parentElement; if (!box) return;
+    const cr = box.getBoundingClientRect(), src = popSrc.current && popSrc.current.isConnected ? popSrc.current : bar;
+    const br = src.getBoundingClientRect(), w = Math.min(400, cr.width - 20);
+    const left = Math.max(10, Math.min(cr.width - w - 10, br.left + br.width / 2 - cr.left - w / 2));
+    setPopPos({ top: Math.round(br.bottom - cr.top + 8), left: Math.round(left), width: Math.round(w) });
+  }
+  function openPop(k) {
+    if (pop === k) { setPop(null); return; }
+    const a = document.activeElement, dn = downBtn.current;
+    popSrc.current = dn && Date.now() - dn.t < 1500 ? dn.el : a && barRef.current && barRef.current.contains(a) ? a : null;
+    downBtn.current = null; placePop(); setPop(k);
+  }
+  const notePopSrc = e => { const b = e.target.closest ? e.target.closest('button') : null; downBtn.current = b ? { el: b, t: Date.now() } : null; };
+  useEffect(() => {
+    if (!pop) return;
+    const r = () => placePop(); window.addEventListener('resize', r); return () => window.removeEventListener('resize', r);
+  }, [pop]);
   const addPage = () => { setD(o => ({ ...o, pages: [...o.pages, { w: page.w, h: page.h, tpl: page.img ? 'blank' : page.tpl, strokes: [] }] })); setPi(d.pages.length); hist.current = []; redo.current = []; };
   const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; redo.current = []; };
   useEffect(() => {
@@ -639,7 +660,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
 
   return (
     <div className={'nv ed' + (aiOn ? ' with-ai' : '')}>
-      <div className="edbar" ref={barRef}>
+      <div className="edbar" ref={barRef} onPointerDownCapture={notePopSrc}>
         <div className="edrow2">
           <IB n="check" label={tr("Готово")} onClick={close} />
           <input className="edtitle" value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label={tr("Назва")} />
@@ -715,7 +736,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
         <IB n="plus" label={tr("Додати сторінку")} onClick={addPage} />
       </div>
       {toast && <div className="edtoast" role="status">{toast}</div>}
-      {pop && <div className="popback" onClick={() => setPop(null)}><div className="pop" role="dialog" aria-label={pop === 'more' ? tr("Ще") : tr("Налаштування інструмента")} style={{ top: popTop, maxHeight: 'calc(100% - ' + (popTop + 12) + 'px)' }} onClick={e => e.stopPropagation()}>
+      {pop && <div className="popback" onClick={() => setPop(null)}><div className="pop" role="dialog" aria-label={pop === 'more' ? tr("Ще") : tr("Налаштування інструмента")} style={popPos ? { top: popPos.top, left: popPos.left, width: popPos.width, right: 'auto', margin: 0, maxHeight: 'calc(100% - ' + (popPos.top + 12) + 'px)' } : { top: 96 }} onClick={e => e.stopPropagation()}>
         {pop === 'style' && (tool === 'eraser' ? <>
           <div className="pop-t">{tr("Гумка")}</div>
           <div className="seg" role="group" aria-label={tr("Режим гумки")}>{[['stroke', 'Штрих повністю'], ['point', 'Точковий']].map(([k, n]) => <button key={k} className={er.mode === k ? 'on' : ''} aria-pressed={er.mode === k} onClick={() => upd('eraser', { mode: k })}>{tr(n)}</button>)}</div>
@@ -999,6 +1020,12 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
     catch (e) { setMsg(tr("Не вдалося зберегти документ: можливо, закінчилося місце.")); }
     setMenu(false); setNb(null);
   };
+  // «Створити» в «Новий зошит» — і кнопкою, і Enter у полі назви (як у «Нова папка»); захист від подвійного створення
+  const nbBusy = useRef(false);
+  const createNb = async () => {
+    if (!nb || nbBusy.current) return; nbBusy.current = true;
+    try { await start(newDoc('notebook', nb.title.trim() || dflt('notebook'), fid, nb.tpl, nb.cover)); } finally { nbBusy.current = false; }
+  };
   // ===== Імпорт PDF: кожна сторінка → сторінка з растровим фоном img (як у скана) + текстовий шар page.text =====
   const fromPdf = async file => {
     if (!file) return;
@@ -1191,12 +1218,13 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
       {nb && <div className="ov" onClick={() => setNb(null)}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="nb-title" onClick={e => e.stopPropagation()}>
         <div className="shd"><h2 id="nb-title">{tr("Новий зошит")}</h2><IB n="close" label={tr("Закрити")} onClick={() => setNb(null)} /></div>
         <label className="flab" htmlFor="nb-name">{tr("Назва (необов’язково)")}</label>
-        <input id="nb-name" style={{ marginTop: 6 }} autoFocus value={nb.title} onChange={e => setNb({ ...nb, title: e.target.value })} />
+        <input id="nb-name" style={{ marginTop: 6 }} autoFocus value={nb.title} onChange={e => setNb({ ...nb, title: e.target.value })} enterKeyHint="done"
+          onKeyDown={e => { if (e.key === 'Enter' && !e.repeat && !e.nativeEvent.isComposing) { e.preventDefault(); createNb(); } }} />
         <div className="flab" id="nb-cov" style={{ marginTop: 14 }}>{tr("Обкладинка")}</div>
         <div className="sw" role="group" aria-labelledby="nb-cov" style={{ marginTop: 8 }}>{PALETTE_C.map(([c, k, n]) => <button key={c} className={'swatch' + (nb.cover === c ? ' on' : '')} style={{ background: SOLID[k] }} onClick={() => setNb({ ...nb, cover: c })} aria-pressed={nb.cover === c} aria-label={tr(n)} />)}</div>
         <div className="flab" id="nb-pap" style={{ marginTop: 14 }}>{tr("Папір")}</div>
         <div className="seg" role="group" aria-labelledby="nb-pap" style={{ marginTop: 8 }}>{[['blank', tr("Чиста")], ['lined', tr("У лінійку")], ['grid', tr("Клітинка")], ['dots', tr("Крапки")]].map(([k, n]) => <button key={k} className={nb.tpl === k ? 'on' : ''} aria-pressed={nb.tpl === k} onClick={() => setNb({ ...nb, tpl: k })}>{n}</button>)}</div>
-        <div className="row" style={{ marginTop: 16 }}><button className="btn" onClick={() => start(newDoc('notebook', nb.title.trim() || dflt('notebook'), fid, nb.tpl, nb.cover))}>{tr("Створити")}</button></div>
+        <div className="row" style={{ marginTop: 16 }}><button className="btn" onClick={createNb}>{tr("Створити")}</button></div>
       </div></div>}
 
       {act && <div className="ov" onClick={closeAct}><div className="sheet menu" role="dialog" aria-modal="true" aria-labelledby="act-title" onClick={e => e.stopPropagation()}>

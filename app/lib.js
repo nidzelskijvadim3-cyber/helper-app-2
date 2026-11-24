@@ -62,12 +62,12 @@ export function newDoc(type, title, folder, tpl, cover) {
   };
 }
 
-// Підгонка сторінки під екран: звичайна сторінка заповнює ширину і за потреби подовжується до висоти екрана
-// (без порожніх смуг); фото/скани вписуються цілком.
+// Підгонка сторінки під екран — лише відображення, розмір сторінки (p.w × p.h) тут не змінюється:
+// звичайна сторінка заповнює ширину (решта вікна — «стіл» за сторінкою), фото/скани вписуються цілком.
+// Формат сторінки — властивість документа; від ширини вікна, повороту чи панелі Помічника він не залежить.
 export function fitPage(p, W, H) {
   const sc = p.img ? Math.min(W / p.w, H / p.h) : W / p.w;
-  const pageH = !p.img && p.h * sc < H - 1 ? Math.ceil(H / sc) : p.h;
-  return { scale: sc, pageH, cssW: Math.round(p.w * sc), cssH: Math.round(pageH * sc) };
+  return { scale: sc, cssW: Math.round(p.w * sc), cssH: Math.round(p.h * sc) };
 }
 
 // Освітлити (amt > 0) або затемнити (amt < 0) колір #rrggbb.
