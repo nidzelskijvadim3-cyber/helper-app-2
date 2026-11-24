@@ -2,7 +2,8 @@
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { listMeta, getDoc, saveDoc, putMeta, putDoc, delDoc, duplicateDoc, reparentDocs, moveDoc } from './store';
 import { Fragment } from 'react';
-import { newDoc, newId, folderPath, fitPage, descendants, breadcrumb } from './lib';
+import { createPortal } from 'react-dom';
+import { newDoc, newId, folderPath, fitMode, defaultZoomMode, descendants, breadcrumb } from './lib';
 import { t as tr, loc, plural } from './i18n';
 import { drawStroke, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, hitStroke, splitStroke, nearlyStraight, isHl, PENS, PRESSURE_NIBS, SHAPES, strokeBox, boxOf, xformStroke, lassoPick } from './draw';
 import { FolderGlyph, FOLDER_COLORS } from './folder-icons';
@@ -10,6 +11,10 @@ import { isPdf, openPdf, renderPdfPages, pageHasText, searchText, searchPage, ex
 
 export { putDoc, delDoc, newDoc, reparentDocs, moveDoc };
 export const listDocs = listMeta;
+// Шар поза .region: область контенту — контейнер container queries (container-type), а контейнер може ставати
+// containing block для position:fixed нащадків. Аркуші (.ov), редактор (.nv) і FAB рендеримо в body, щоб вони
+// лишалися прив'язаними до вікна. Вони відкриваються лише після дії користувача, тож на сервері не рендеряться.
+export function Layer({ children }) { return typeof document === 'undefined' ? null : createPortal(children, document.body); }
 const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан', pdf: 'PDF', note: 'Нотатка' };
 // фільтр типу в папці (етап 2): «Обране» — окремий перемикач, не тип. PDF — окремий фільтр (документ, а не фото);
 // пігулка показується лише тоді, коли в папці є PDF.
@@ -144,6 +149,8 @@ Object.assign(EI, {
   copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
   dup: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2M14 11v6M11 14h6" /></>,
   paste: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V3h6v1M9 11h6M9 15h4" /></>,
+  selall: <><rect x="4" y="4" width="16" height="16" rx="2" strokeDasharray="3 2.4" /><path d="M8.5 12l2.5 2.5 4.5-5" /></>,
+  chevD: <path d="M7 10l5 5 5-5" />,
 });
 // Інструменти тулбара (лінійка — у контекстному ряду, поруч із кольорами й товщиною)
 const TOOLS = ['pen', 'pencil', 'marker', 'hl', 'eraser', 'lasso', 'shape', 'text', 'hand'];
@@ -207,7 +214,8 @@ async function makeThumb(d) {
   return c.toDataURL('image/jpeg', 0.6);
 }
 
-function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
+const isLand = () => typeof window !== 'undefined' && window.innerWidth > window.innerHeight;
+function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump }) {
   const [d, setD] = useState(doc);
   const [pi, setPi] = useState(() => Math.max(0, Math.min(doc.pages.length - 1, (Number(startPage) || 1) - 1)));
   const [tool, setTool] = useState(() => { const t = lsGet('helper-tool'); return TOOLS.includes(t) && t !== 'hand' ? t : 'pen'; });
@@ -219,8 +227,12 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   const [penOnly, setPenOnly] = useState(() => lsGet('helper-penonly') === '1');
   const [pressure, setPressure] = useState(true);
   const [toast, setToast] = useState('');
+  // zoom — множник щипка/кнопок −/+ відносно режиму масштабу (zmode); box — доступна область холста без поля навколо сторінки
   const [zoom, setZoom] = useState(1);
-  const [fit, setFit] = useState({ w: 300, h: 400 });
+  const [box, setBox] = useState(null);
+  const [land, setLand] = useState(isLand);
+  const zKey = 'helper-zm:' + doc.id + ':' + (land ? 'l' : 'p');
+  const [zmode, setZmode] = useState(() => { const v = lsGet(zKey); return v === 'width' || v === 'page' || v === '100' ? v : defaultZoomMode(isLand(), !!(doc.pages[0] && doc.pages[0].img)); });
   const [tick, setTick] = useState(0);
   const [tin, setTin] = useState(null);
   const [strip, setStrip] = useState(false);
@@ -264,15 +276,34 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   useEffect(() => {
     const el = boxRef.current; if (!el) return;
     const f = () => {
-      const W = el.clientWidth, H = el.clientHeight; if (!W || !H) return;
       // Лише відображення: документ (page.h, штрихи) звідси не змінюється. Раніше тут подовжувалась page.h — панель
       // Помічника, поворот і Split View «витягували» сторінку в даних, а PDF виходив зі сторінками різної довжини.
       // setD сюди не повертати: замикання ResizeObserver тримає стару `page`, і запис у документ звідси вже губив штрихи.
-      const r = fitPage(page, W, H);
-      setFit({ w: r.cssW, h: r.cssH });
+      // Тут — лише розмір області (поле навколо сторінки задає CSS: padding .edbox, на телефоні 0).
+      const pad = parseFloat(getComputedStyle(el).paddingLeft) || 0;
+      const W = el.clientWidth - 2 * pad, H = el.clientHeight - 2 * pad; if (W <= 0 || H <= 0) return;
+      const cw = el.clientWidth;
+      setBox(b => (b && b.W === W && b.H === H && b.pad === pad && b.cw === cw ? b : { W, H, pad, cw }));
+      setLand(isLand());
     };
     f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect();
-  }, [page.w, page.h, page.img]);
+  }, []);
+  // поворот: режим масштабу — свій для портрета й альбому (запам'ятовується на документ і орієнтацію)
+  const landRef = useRef(land);
+  useEffect(() => {
+    if (landRef.current === land) return; landRef.current = land;
+    const v = lsGet(zKey); setZmode(v === 'width' || v === 'page' || v === '100' ? v : defaultZoomMode(land, !!page.img)); setZoom(1);
+  }, [land]);
+  const pickZoom = m => { setZmode(m); setZoom(1); lsSet(zKey, m); };
+  const fm = box ? fitMode(page, box.W, box.H, zmode) : { scale: 300 / page.w, pageScale: 300 / page.w, cssW: 300, cssH: Math.round(300 * page.h / page.w) };
+  const fit = { w: fm.cssW, h: fm.cssH };
+  // межі щипка: від «сторінка цілком» (на iPad; на телефоні, як раніше, від режиму) до 5× режиму
+  const zMin = box && box.pad > 0 ? Math.min(1, fm.pageScale / fm.scale) : 1, zMax = 5;
+  const zPct = Math.round(fm.scale * zoom * 100);
+  const ZN = { width: 'По ширині', page: 'Сторінка цілком', '100': '100%' };
+  const zLabel = zoom === 1 ? (zmode === 'page' ? tr("Сторінка") : tr(ZN[zmode])) : zPct + '%';
+  // ширина редактора ≥560 — два ряди з групами; інакше — телефонний ряд (порядок у DOM = порядок на екрані, для фокуса й VoiceOver)
+  const wideBar = box ? box.cw >= 560 : typeof window !== 'undefined' && window.innerWidth >= 560;
   useEffect(() => {
     let off = false;
     if (!page.img) { imgRef.current = null; setTick(t => t + 1); return; }
@@ -496,7 +527,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
         if (g.pan) { el.scrollLeft = g.sl - (e.clientX - g.m0[0]); el.scrollTop = g.st - (e.clientY - g.m0[1]); }
         else if (touches.current.size >= 2) {
           const [a, b] = [...touches.current.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
-          setZoom(Math.max(1, Math.min(5, +(g.z0 * d / g.d0).toFixed(2))));
+          setZoom(Math.max(zMin, Math.min(zMax, +(g.z0 * d / g.d0).toFixed(2))));
           el.scrollLeft = g.sl - ((a[0] + b[0]) / 2 - g.m0[0]); el.scrollTop = g.st - ((a[1] + b[1]) / 2 - g.m0[1]);
         }
         return;
@@ -570,10 +601,10 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
   // Поповер прив'язаний до кнопки, що його відкрила (а не по центру екрана): під кнопкою, по її центру,
   // але не ближче 10px до країв редактора. Кнопку беремо з останнього pointerdown на панелі
   // (iOS не фокусує кнопки при дотику), для клавіатури — з фокуса.
-  function placePop() {
-    const bar = barRef.current, box = bar && bar.parentElement; if (!box) return;
-    const cr = box.getBoundingClientRect(), src = popSrc.current && popSrc.current.isConnected ? popSrc.current : bar;
-    const br = src.getBoundingClientRect(), w = Math.min(400, cr.width - 20);
+  function placePop(k) {
+    const bar = barRef.current, host = bar && bar.parentElement; if (!host) return;
+    const cr = host.getBoundingClientRect(), src = popSrc.current && popSrc.current.isConnected ? popSrc.current : bar;
+    const br = src.getBoundingClientRect(), w = Math.min(k === 'zoom' ? 260 : 400, cr.width - 20);
     const left = Math.max(10, Math.min(cr.width - w - 10, br.left + br.width / 2 - cr.left - w / 2));
     setPopPos({ top: Math.round(br.bottom - cr.top + 8), left: Math.round(left), width: Math.round(w) });
   }
@@ -581,12 +612,15 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     if (pop === k) { setPop(null); return; }
     const a = document.activeElement, dn = downBtn.current;
     popSrc.current = dn && Date.now() - dn.t < 1500 ? dn.el : a && barRef.current && barRef.current.contains(a) ? a : null;
-    downBtn.current = null; placePop(); setPop(k);
+    downBtn.current = null; placePop(k); setPop(k);
   }
   const notePopSrc = e => { const b = e.target.closest ? e.target.closest('button') : null; downBtn.current = b ? { el: b, t: Date.now() } : null; };
   useEffect(() => {
     if (!pop) return;
-    const r = () => placePop(); window.addEventListener('resize', r); return () => window.removeEventListener('resize', r);
+    // resize вікна і зміна ширини редактора (панель Помічника, поворот): кнопка-джерело могла переміститися
+    const r = () => placePop(pop); window.addEventListener('resize', r);
+    const ro = barRef.current ? new ResizeObserver(r) : null; if (ro) ro.observe(barRef.current);
+    return () => { window.removeEventListener('resize', r); if (ro) ro.disconnect(); };
   }, [pop]);
   const addPage = () => { setD(o => ({ ...o, pages: [...o.pages, { w: page.w, h: page.h, tpl: page.img ? 'blank' : page.tpl, strokes: [] }] })); setPi(d.pages.length); hist.current = []; redo.current = []; };
   const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; redo.current = []; };
@@ -633,6 +667,8 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
     if (window.matchMedia('(min-width:1024px)').matches) { flush().catch(() => {}); onAsk(info); return; }
     await close(); onAsk(info);
   };
+  // клас на <html>: панель Помічника в режимі «поверх» (768–1023) починається під панеллю інструментів редактора
+  useEffect(() => { const h = document.documentElement; h.classList.add('ed-open'); return () => h.classList.remove('ed-open'); }, []);
 
   const toolLabel = k => tr(k === 'marker' ? NIBN[pens.marker.nib] : TOOLN[k]);
   const toolIcon = k => (k === 'shape' ? shape : k);
@@ -656,31 +692,52 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
       {er.sizes.map((w, i) => <button key={i} className="wbtn" aria-pressed={er.wi === i} aria-label={tr("Розмір гумки") + ': ' + tr(['Малий', 'Середній', 'Великий'][i])} onClick={() => upd('eraser', { wi: i })}><i className="ring" style={{ width: 6 + i * 6, height: 6 + i * 6 }} /></button>)}
       {tuneBtn}</>
     : <>{favRow}{tool !== 'text' && <><span className="edsep" aria-hidden="true" />{widthRow}<IB n="ruler" label={tr("Лінійка")} on={ruler.on} pressed={ruler.on} onClick={toggleRuler} /></>}{tuneBtn}</>;
+  // Згорнутий стиль (ширина редактора 560–839, I1): «Поточний стиль» (поповер зі стилем) + Лінійка; ряд ніколи не прокручується
+  const curRow = tool === 'hand' ? null
+    : tool === 'lasso' ? <><IB n="selall" label={tr("Виділити все")} onClick={selectAll} />{clipOn && <IB n="paste" label={tr("Вставити")} onClick={() => pasteClip()} />}</>
+    : tool === 'eraser' ? tuneBtn
+    : <><button className="curst" onClick={() => openPop('style')} aria-haspopup="dialog" aria-expanded={pop === 'style'}
+        aria-label={tr("Поточний стиль") + ': ' + colorName(color) + (ctool !== 'text' ? ', ' + tr(WN[wi]).toLowerCase() : '')} title={tr("Поточний стиль")}>
+        <i style={{ background: color }}>{ctool !== 'text' && <b style={{ width: Math.max(4, Math.min(12, dotOf(wd) / 2)), height: Math.max(4, Math.min(12, dotOf(wd) / 2)) }} />}</i></button>
+      {tool !== 'text' && <IB n="ruler" label={tr("Лінійка")} on={ruler.on} pressed={ruler.on} onClick={toggleRuler} />}</>;
   const stylusTg = <button className={'tg' + (penOnly ? ' on' : '')} aria-pressed={penOnly} onClick={togglePenOnly}><span>{tr("Малювати лише стилусом")}<small className="tgsub">{tr("Палець гортає й масштабує сторінку")}</small></span><b>{penOnly ? '✓' : ''}</b></button>;
+
+  // кнопки ряду документа (порядок у DOM задає wideBar)
+  const bCheck = <IB n="check" label={tr("Готово")} onClick={close} />;
+  const bPages = <IB n="pages" label={tr("Сторінки")} on={strip} onClick={() => setStrip(!strip)} />;
+  const bUndo = <IB n="undo" label={tr("@undo:Скасувати")} onClick={() => swap(hist, redo)} />;
+  const bRedo = <IB n="redo" label={tr("Вперед")} onClick={() => swap(redo, hist)} />;
+  const bTitle = <input className="edtitle" value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label={tr("Назва")} />;
+  const bZoom = <button className="edzoom" onClick={() => openPop('zoom')} aria-haspopup="dialog" aria-expanded={pop === 'zoom'} aria-label={tr("Масштаб") + ': ' + (zoom === 1 ? tr(ZN[zmode]) : zPct + '%')} title={tr("Масштаб")}>
+    <span>{zLabel}</span><EIcon n="chevD" size={16} /></button>;
+  const bShare = <IB n="share" label={tr("Поділитися")} onClick={share} />;
+  const bMore = <IB n="more" label={tr("Ще")} on={pop === 'more'} onClick={() => openPop('more')} />;
+  const bAi = onAsk && <button className={'ed-ai' + (aiOn ? ' on' : '')} onClick={() => (aiOn && onAiClose ? onAiClose() : askAI())} aria-pressed={!!aiOn} aria-label={tr("Помічник: запитати про цю сторінку")} title={tr("Помічник: запитати про цю сторінку")}>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" /></svg>
+    <span className="ed-ai-l">{tr("Помічник")}</span></button>;
 
   return (
     <div className={'nv ed' + (aiOn ? ' with-ai' : '')}>
+      {/* Ряд 1 — документ, ряд 2 — інструменти + стиль по центру (≥560 px ширини редактора, ipad-layout-spec 7.2–7.3).
+          На телефоні (<560) — один ряд документа, як було. */}
       <div className="edbar" ref={barRef} onPointerDownCapture={notePopSrc}>
         <div className="edrow2">
-          <IB n="check" label={tr("Готово")} onClick={close} />
-          <input className="edtitle" value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label={tr("Назва")} />
-          <IB n="undo" label={tr("@undo:Скасувати")} onClick={() => swap(hist, redo)} />
-          <IB n="redo" label={tr("Вперед")} onClick={() => swap(redo, hist)} />
-          <IB n="pages" label={tr("Сторінки")} on={strip} onClick={() => setStrip(!strip)} />
-          <IB n="share" label={tr("Поділитися")} onClick={share} />
-          <IB n="more" label={tr("Ще")} on={pop === 'more'} onClick={() => openPop('more')} />
-          {onAsk && <button className={'ed-ai' + (aiOn ? ' on' : '')} onClick={() => askAI()} aria-pressed={!!aiOn} aria-label={tr("Помічник: запитати про цю сторінку")} title={tr("Помічник: запитати про цю сторінку")}>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" /></svg>
-            <span className="ed-ai-l">{tr("Помічник")}</span></button>}
+          {wideBar ? <>
+            <div className="edg edl">{bCheck}{bPages}<span className="edsep edw" aria-hidden="true" />{bUndo}{bRedo}</div>
+            {bTitle}
+            <div className="edg edr">{bZoom}{bShare}{bMore}{bAi}</div>
+          </> : <>{bCheck}{bTitle}{bUndo}{bRedo}{bPages}{bShare}{bMore}{bAi}</>}
         </div>
         <div className="edrow3">
           <div className="edtools" role="group" aria-label={tr("Інструменти")}>
             {TOOLS.map(k => <IB key={k} n={toolIcon(k)} label={toolLabel(k)} on={tool === k} pressed={tool === k} onClick={() => pickTool(k)} />)}
           </div>
+          {tool !== 'hand' && <span className="edsep edw" aria-hidden="true" />}
           <div className="edctx" role="group" aria-label={tr("Колір і товщина")}>{ctxRow}</div>
+          {curRow && <div className="edcur" role="group" aria-label={tr("Колір і товщина")}>{curRow}</div>}
         </div>
       </div>
-      <div className="edbox" ref={boxRef} style={page.img ? { background: 'var(--fill)' } : undefined}>
+      <div className={'edbox' + (page.img ? ' img' : '')} ref={boxRef}>
         <div className="cvwrap" style={{ width: fit.w * zoom, height: fit.h * zoom }}>
           <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: '100%', height: '100%', touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
           {ruler.on && (() => { const sc = (fit.w * zoom) / page.w; return (
@@ -700,7 +757,9 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
             </div>); })()}
           {selOk && !dragging && (() => {
             const r = frameRect(selBox), el = boxRef.current, W = fit.w * zoom, H = fit.h * zoom;
-            const st = el ? el.scrollTop : 0, ch = el ? el.clientHeight : H, sl = el ? el.scrollLeft : 0, cw = el ? el.clientWidth : W;
+            // видима частина холста в координатах сторінки на екрані (сторінка зміщена в .edbox полем і центруванням)
+            const cw0 = cvRef.current && cvRef.current.parentElement, ox = cw0 ? cw0.offsetLeft : 0, oy = cw0 ? cw0.offsetTop : 0;
+            const st = el ? el.scrollTop - oy : 0, ch = el ? el.clientHeight : H, sl = el ? el.scrollLeft - ox : 0, cw = el ? el.clientWidth : W;
             const mh = msz.h || 52, mw = msz.w || 320, maxW = Math.max(160, Math.min(W, cw) - 8);
             let top = r.t - mh - 8;
             if (top < st + 4) top = r.t + r.h + 8 <= Math.min(H, st + ch) - mh ? r.t + r.h + 8 : Math.max(st + 4, r.t + 8);
@@ -731,12 +790,13 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
       {strip && <div className="strip">{thumbs.map((th, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + th + ')' }} aria-label={tr("Сторінка") + ' ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
       <div className="pgnav">
         <IB n="left" label={tr("Попередня сторінка")} onClick={() => goPage(pi - 1)} disabled={pi === 0} />
-        <span>{pi + 1} / {d.pages.length}</span>
+        <span className="pgn">{pi + 1} / {d.pages.length}</span>
         <IB n="right" label={tr("Наступна сторінка")} onClick={() => goPage(pi + 1)} disabled={pi >= d.pages.length - 1} />
         <IB n="plus" label={tr("Додати сторінку")} onClick={addPage} />
+        <span className="pgz edw">{(zoom === 1 ? tr(ZN[zmode]) + ' · ' : '') + zPct + '%'}</span>
       </div>
       {toast && <div className="edtoast" role="status">{toast}</div>}
-      {pop && <div className="popback" onClick={() => setPop(null)}><div className="pop" role="dialog" aria-label={pop === 'more' ? tr("Ще") : tr("Налаштування інструмента")} style={popPos ? { top: popPos.top, left: popPos.left, width: popPos.width, right: 'auto', margin: 0, maxHeight: 'calc(100% - ' + (popPos.top + 12) + 'px)' } : { top: 96 }} onClick={e => e.stopPropagation()}>
+      {pop && <div className="popback" onClick={() => setPop(null)}><div className={'pop' + (pop === 'zoom' ? ' zpop' : '')} role="dialog" aria-label={pop === 'more' ? tr("Ще") : pop === 'zoom' ? tr("Масштаб") : tr("Налаштування інструмента")} style={popPos ? { top: popPos.top, left: popPos.left, width: popPos.width, right: 'auto', margin: 0, maxHeight: 'calc(100% - ' + (popPos.top + 12) + 'px)' } : { top: 96 }} onClick={e => e.stopPropagation()}>
         {pop === 'style' && (tool === 'eraser' ? <>
           <div className="pop-t">{tr("Гумка")}</div>
           <div className="seg" role="group" aria-label={tr("Режим гумки")}>{[['stroke', 'Штрих повністю'], ['point', 'Точковий']].map(([k, n]) => <button key={k} className={er.mode === k ? 'on' : ''} aria-pressed={er.mode === k} onClick={() => upd('eraser', { mode: k })}>{tr(n)}</button>)}</div>
@@ -762,8 +822,16 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, startPage, jump }) {
           {isHlTool && <><button className={'tg' + (tc.straight ? ' on' : '')} aria-pressed={!!tc.straight} onClick={() => upd('hl', { straight: !tc.straight })}><span>{tr("Рівна лінія")}<small className="tgsub">{tr("Без цього: затримайте перо в кінці лінії, і вона вирівняється")}</small></span><b>{tc.straight ? '✓' : ''}</b></button></>}
           {DRAW.includes(ctool) && stylusTg}
         </>)}
+        {pop === 'zoom' && <>
+          <div className="pop-t">{tr("Масштаб")}</div>
+          {['width', 'page', '100'].map(m => <button key={m} className={'tg' + (zmode === m && zoom === 1 ? ' on' : '')} aria-pressed={zmode === m && zoom === 1} onClick={() => { pickZoom(m); setPop(null); }}>
+            <span>{tr(ZN[m])}</span><b>{zmode === m && zoom === 1 ? '✓' : ''}</b></button>)}
+          <div className="prow zrow"><IB n="zout" label={tr("Зменшити")} disabled={zoom <= zMin} onClick={() => setZoom(z => Math.max(zMin, +(z / 1.25).toFixed(3)))} />
+            <span className="zpct" aria-live="polite">{zPct}%</span>
+            <IB n="zin" label={tr("Збільшити")} disabled={zoom >= zMax} onClick={() => setZoom(z => Math.min(zMax, +(z * 1.25).toFixed(3)))} /></div>
+        </>}
         {pop === 'more' && <>
-          <div className="prow"><IB n="zout" label={tr("Масштаб")} onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))} /><span className="sub">{Math.round(zoom * 100)}%</span><IB n="zin" label={tr("Масштаб")} onClick={() => setZoom(Math.min(5, +(zoom + 0.5).toFixed(1)))} /></div>
+          <div className="prow ph-z"><IB n="zout" label={tr("Масштаб")} onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))} /><span className="sub">{Math.round(zoom * 100)}%</span><IB n="zin" label={tr("Масштаб")} onClick={() => setZoom(Math.min(5, +(zoom + 0.5).toFixed(1)))} /></div>
           {d.type === 'notebook' && !page.img && <div className="prow">{[['blank', 'Чиста'], ['lined', 'У лінійку'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} style={{ margin: 0 }} onClick={() => setPage({ ...page, tpl: k })}>{tr(n)}</button>)}</div>}
           {stylusTg}
           <button className={'tg' + (pressure ? ' on' : '')} aria-pressed={pressure} onClick={() => setPressure(!pressure)}><span>{tr("Чутливість до нажиму")}</span><b>{pressure ? '✓' : ''}</b></button>
@@ -932,7 +1000,7 @@ const PDF_ERR = {
   read: "Не вдалося прочитати PDF. Спробуйте інший файл.",
 };
 
-export default function Materials({ folders, notes, fview, setFview, onOpenNote, onNewNote, onFolderForm, onNoteFav, onNoteMove, onNoteDel, onStudy, folderExtra, onAsk, aiSide, openReq, onOpenReqDone, onOpened, onEdClose }) {
+export default function Materials({ folders, notes, fview, setFview, onOpenNote, onNewNote, onFolderForm, onNoteFav, onNoteMove, onNoteDel, onStudy, folderExtra, onAsk, aiOn, onAiClose, aiBtn, openReq, onOpenReqDone, onOpened, onEdClose }) {
   const [docs, setDocs] = useState([]);
   const [edPage, setEdPage] = useState(1);
   const [jump, setJump] = useState(null);
@@ -1137,6 +1205,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
             {fview == null && <button className="ibtn" onClick={() => setSearch(!search)} aria-pressed={search} aria-label={tr("Пошук")} title={tr("Пошук")}><EIcon n="search" size={20} /></button>}
             <button className="btn-a mcreate" onClick={() => { retFocus.current = document.activeElement; setMenu(true); }} aria-haspopup="dialog"><EIcon n="plus" size={18} />{tr("Створити")}</button>
             {fo && <button className="ibtn" onClick={() => { retFocus.current = document.activeElement; setFmenu(true); }} aria-label={tr("Дії з папкою")} title={tr("Дії з папкою")} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>}
+            {aiBtn}
           </div>
         </header>
         {msg && <p className="sub mmsg" role="status">{msg}</p>}
@@ -1193,6 +1262,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
         </>}
       </div>
 
+      <Layer>
       {/* один вхід створення: FAB на телефоні, «Створити» в шапці на iPad — те саме меню */}
       <button className="fab phone-only" onClick={() => { retFocus.current = document.activeElement; setMenu(true); }} aria-label={tr("Створити: зошит, дошку, нотатку, імпорт фото чи PDF або папку")} title={tr("Створити")} aria-haspopup="dialog"><EIcon n="plus" size={26} /></button>
       <input ref={scRef} type="file" accept="image/*" capture="environment" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'scan'); e.target.value = ''; }} />
@@ -1256,7 +1326,8 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
 
       {imp && <ImportSheet imp={imp} setImp={setImp} onRun={(f, t) => { const x = imp; runPdf(x.pdf, f, t, x.total, x.base); }} onClose={closeImp} onRetry={() => { setImp(null); pdfRef.current && pdfRef.current.click(); }} />}
       {expId != null && <ExportSheet load={() => getDoc(expId)} onClose={() => setExpId(null)} />}
-      {ed && <Editor key={ed.id} doc={ed} startPage={edPage} jump={jump} onAsk={onAsk} aiOn={aiSide} onSave={(d, dirty) => saveDoc(d, dirty)} onClose={() => { setEd(null); setJump(null); if (onEdClose) onEdClose(); }} />}
+      {ed && <Editor key={ed.id} doc={ed} startPage={edPage} jump={jump} onAsk={onAsk} aiOn={aiOn} onAiClose={onAiClose} onSave={(d, dirty) => saveDoc(d, dirty)} onClose={() => { setEd(null); setJump(null); if (onEdClose) onEdClose(); }} />}
+      </Layer>
     </div>
   );
 }

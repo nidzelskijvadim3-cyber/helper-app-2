@@ -16,6 +16,16 @@
   --c-home:#9BD46A;--c-home-bg:#22301A;--c-home-sub:#C9E3B5;
   --r-12:12px;--r-14:14px;--r-16:16px;--r-20:20px;
   --shadow-fab:0 10px 28px rgba(0,0,0,.45);
+  /* iPad (outputs/helper-app-2/ui/ipad/ipad-layout-spec.md, розділ 2): шкала відступів 4, типографіка правил ≥768, розміри розкладки */
+  --s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:20px;--s-6:24px;--s-7:28px;--s-8:32px;--s-10:40px;
+  --fs-t1:34px;--fs-t2:26px;--fs-t3:20px;--fs-body:17px;--fs-sm:15px;--fs-cap:13px;
+  --rail-w:88px;--ai-w:380px;--ai-w-min:360px;--ai-w-max:480px;--read-w:720px;--form-w:560px;--session-w:680px;--side-w:220px;
+  --hist-w:300px;--list-w:400px;--agenda-w:380px;--thumbs-w:132px;--bar-h:52px;--hd-h:56px;--sheet-s:420px;--sheet-m:560px;--sheet-l:720px;--pop-w:320px;
+  /* стіл навколо сторінки в редакторі, край сторінки, поповери й панель поверх контенту */
+  --desk:#0E0F11;--shadow-page:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);--shadow-pop:0 12px 40px rgba(0,0,0,.45);
+  /* рух (ipad-interactions.md 6.1): закриття коротше за відкриття */
+  --dur-1:100ms;--dur-2:200ms;--dur-3:300ms;--dur-4:400ms;
+  --ease-standard:cubic-bezier(.2,0,0,1);--ease-enter:cubic-bezier(.05,.7,.1,1);--ease-exit:cubic-bezier(.3,0,.8,.15);
   --font-body:var(--ff-inter),Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
   --font-display:var(--ff-display),"Space Grotesk",var(--ff-inter),Inter,system-ui,sans-serif;
   /* сумісність зі старими назвами змінних, якими користуються інші екрани */
@@ -33,6 +43,7 @@
   --c-personal:#7444C9;--c-personal-bg:#EEE6FC;--c-personal-sub:#553585;
   --c-home:#4A7A1A;--c-home-bg:#E7F3DA;--c-home-sub:#3B5A1E;
   --segon:#FFFFFF;--glass:rgba(236,236,238,.94);--shadow-fab:0 10px 24px rgba(20,21,24,.22);
+  --desk:#D9DADD;--shadow-page:0 1px 2px rgba(20,21,24,.12),0 8px 24px rgba(20,21,24,.12);--shadow-pop:0 12px 32px rgba(20,21,24,.18);
   color-scheme:light}
 @media(prefers-color-scheme:light){:root[data-theme="auto"]{
   --bg:#F4F4F5;--surface:#FFFFFF;--panel:#ECECEE;--bd:#D3D5D9;--bd2:#E2E3E6;--fill:#E9EAEC;
@@ -45,6 +56,7 @@
   --c-personal:#7444C9;--c-personal-bg:#EEE6FC;--c-personal-sub:#553585;
   --c-home:#4A7A1A;--c-home-bg:#E7F3DA;--c-home-sub:#3B5A1E;
   --segon:#FFFFFF;--glass:rgba(236,236,238,.94);--shadow-fab:0 10px 24px rgba(20,21,24,.22);
+  --desk:#D9DADD;--shadow-page:0 1px 2px rgba(20,21,24,.12),0 8px 24px rgba(20,21,24,.12);--shadow-pop:0 12px 32px rgba(20,21,24,.18);
   color-scheme:light}}
 *,*::before,*::after{box-sizing:border-box}
 html{touch-action:manipulation;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;overflow-x:hidden;max-width:100%}
@@ -54,7 +66,13 @@ button,input,select,textarea{font-family:inherit}
 :focus:not(:focus-visible){outline:none}
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,label:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent-tx);outline-offset:2px}
 ::placeholder{color:var(--tx3);opacity:1}
-.wrap{position:relative;max-width:560px;margin:0 auto;padding:24px 20px calc(170px + env(safe-area-inset-bottom))}
+.wrap{position:relative;max-width:560px;margin:0 auto;padding:24px 20px calc(170px + env(safe-area-inset-bottom));--rg-t:24px;--rg-l:20px}
+/* .region — область контенту між рейкою і панеллю Помічника; розкладки екранів — від її ширини (s < 600 · m < 860 · l < 1120 · xl).
+   .reg-in — внутрішній шар із полями: --gutter залежить від класу області, а контейнер не може запитувати сам себе. */
+.region{container:region/inline-size;min-width:0}
+.reg-in{--gutter:20px}
+@container region (min-width:600px){.reg-in{--gutter:28px}}
+@container region (min-width:1120px){.reg-in{--gutter:32px}}
 .date{color:var(--tx2);font-size:13px;font-weight:500}
 h1,h2,.disp{font-family:var(--font-display)}
 h1{font-size:32px;line-height:1.1;margin:2px 0 6px;font-weight:700;letter-spacing:-.5px}
@@ -274,42 +292,48 @@ input[type=checkbox]:focus-visible{outline-offset:3px}
 .dc[draggable=true],.dl[draggable=true]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 .ftile.drop{outline:3px dashed var(--ac);outline-offset:-3px}
 
+/* ≥768 (вікно): рейка, кнопка «Налаштування», аркуші, FAB — прив'язані до вікна; розкладки екранів — у @container region нижче.
+   Обмеження max-width:1100 прибрано (I8): ширини задають колонки екранів. */
 @media (min-width:768px){
-  .wrap{max-width:none;margin:0;padding:26px 28px 60px calc(88px + 28px + env(safe-area-inset-left))}
-  .wrap>*{max-width:1100px}
-  .wrap>.ov{max-width:none}
+  .wrap{max-width:none;margin:0;padding:0 0 0 calc(var(--rail-w) + env(safe-area-inset-left))}
+  .reg-in{padding:26px var(--gutter) 60px;--rg-t:26px;--rg-l:var(--gutter)}
+  .wrap.t-ai{padding-bottom:0}
+  .wrap.t-ai .reg-in{padding-bottom:0}
   h1{font-size:34px}
   /* рейка 88px: іконка + підпис, внизу — Налаштування */
-  .nav{left:0;right:auto;top:0;bottom:0;width:calc(88px + env(safe-area-inset-left));display:flex;flex-direction:column;align-items:center;gap:6px;padding:calc(24px + env(safe-area-inset-top)) 10px calc(84px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));border-top:0;border-right:1px solid var(--bd2)}
+  .nav{left:0;right:auto;top:0;bottom:0;width:calc(var(--rail-w) + env(safe-area-inset-left));display:flex;flex-direction:column;align-items:center;gap:6px;padding:calc(24px + env(safe-area-inset-top)) 10px calc(84px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));border-top:0;border-right:1px solid var(--bd2)}
   .nav button{flex:none;width:68px;height:60px;min-height:0;border-radius:var(--r-16);gap:4px}
   @media (hover:hover){.nav button:hover{background:var(--fill)}}
   .nav button[aria-current="page"]{background:var(--accent-soft)}
   .me{position:fixed;top:auto;right:auto;left:calc(20px + env(safe-area-inset-left));bottom:calc(20px + env(safe-area-inset-bottom));width:48px;height:48px;border-radius:var(--r-16);font-size:15px;z-index:11}
   .me i{border-color:var(--panel)}
   .me.cur{display:block;border-color:var(--accent-tx)}
-  .top,.ph{padding-right:0}
-  .ph{margin-bottom:18px;row-gap:12px}
-  .ph-t{flex-direction:row;align-items:baseline;gap:14px}
-  .ph-t .date{order:2;font-size:15px;font-weight:400;white-space:nowrap}
-  .views{width:auto;margin-top:0;flex-wrap:nowrap}
-  .views>[role=group]{flex:none}
+  .ph{padding-right:0}
   .pill{height:40px;padding:0 18px;border-radius:20px}
   .wide-only{display:revert}.qbar.wide-only{display:flex}
   .phone-only{display:none!important}
-  .tl{--hh:72px;--tlx:60px}
   .tl-h{font-size:13px}
   .tlb .tlt{font-size:16px}.tlb .tls{font-size:14px}
   .fab{right:28px;bottom:28px}
-  .fgrid{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
-  .dgrid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
-  .cal{max-width:680px}
   .ov{align-items:center;justify-content:center}
   .sheet{max-width:620px;border-radius:var(--r-20);border:1px solid var(--bd);max-height:88%}
   .sheet::before{display:none}
   .nv{max-width:none;margin:0}
 }
-/* iPad горизонтально / широкий: «Ще на сьогодні» — права колонка */
-@media (min-width:1024px){
+/* область m+ (раніше — вікно ≥768): шапка Плану в один рядок, сітки ширші */
+@container region (min-width:600px){
+  .ph{margin-bottom:18px;row-gap:12px}
+  .ph-t{flex-direction:row;align-items:baseline;gap:14px}
+  .ph-t .date{order:2;font-size:15px;font-weight:400;white-space:nowrap}
+  .views{width:auto;margin-top:0;flex-wrap:nowrap}
+  .views>[role=group]{flex:none}
+  .tl{--hh:72px;--tlx:60px}
+  .fgrid{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+  .dgrid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+  .cal{max-width:680px}
+}
+/* область l+ (раніше — вікно ≥1024): «Ще на сьогодні» — права колонка */
+@container region (min-width:860px){
   .ph{flex-wrap:nowrap}
   .dayg.two{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:28px;align-items:start}
   .dayg .more-day{position:sticky;top:20px;background:var(--panel);border:1px solid var(--bd2);border-radius:var(--r-20);padding:22px;display:flex;flex-direction:column;gap:12px}
@@ -331,7 +355,7 @@ input[type=checkbox]:focus-visible{outline-offset:3px}
 .pgnav .ib{width:44px;height:44px}
 .nv.ed .strip{position:absolute;left:10px;right:10px;bottom:calc(66px + env(safe-area-inset-bottom));margin:0;padding:8px;border-radius:16px;background:var(--glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:.5px solid var(--glassb);z-index:3}
 .popback{position:absolute;inset:0;z-index:6}
-.pop{position:absolute;left:10px;right:10px;margin:0 auto;max-width:380px;background:var(--card);border-radius:16px;padding:12px 14px;box-shadow:0 12px 40px rgba(0,0,0,.45)}
+.pop{position:absolute;left:10px;right:10px;margin:0 auto;max-width:380px;background:var(--card);border-radius:16px;padding:12px 14px;box-shadow:var(--shadow-pop)}
 .prow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
 .cpick{width:30px;height:30px;padding:0;border:0;border-radius:50%;background:none}
 .tg{display:flex;justify-content:space-between;align-items:center;width:100%;border:0;background:var(--fill);color:var(--tx);font-size:16px;padding:12px 14px;border-radius:12px;margin-top:8px}
@@ -592,11 +616,15 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .rv-done h2{margin:0;font-size:24px}
 
 @media (min-width:420px){.src-n{font-size:15px}.src-s{font-size:13px}}
-@media (min-width:768px){
-  /* Матеріали: колонка папок + основна область */
-  .mat{display:grid;grid-template-columns:220px minmax(0,1fr);column-gap:28px;margin:-26px 0 0 -28px}
+/* кнопка «Налаштування» на ≥768 переїжджає в рейку — шапкам розділів більше не потрібне поле справа під неї */
+/* «Створити» в шапці замінює FAB, а FAB прив'язаний до вікна < 768 — тож і кнопка від вікна, не від області */
+@media (min-width:768px){.mhd{padding-right:0}.btn-a.mcreate{display:inline-flex}}
+/* область m+ (раніше — вікно ≥768) */
+@container region (min-width:600px){
+  /* Матеріали: колонка папок + основна область (сайдбар до краю рейки: від'ємні поля = поля .reg-in) */
+  .mat{display:grid;grid-template-columns:220px minmax(0,1fr);column-gap:28px;margin:calc(-1 * var(--rg-t)) 0 0 calc(-1 * var(--rg-l))}
   .m-side{display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh;overflow-y:auto;padding:26px 12px 26px 14px;border-right:1px solid var(--bd2)}
-  .m-main{padding-top:26px;min-width:0}
+  .m-main{padding-top:var(--rg-t);min-width:0}
   .m-side-t{font-family:var(--font-display);font-size:22px;font-weight:700;padding:0 10px 14px}
   .sb{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 10px;border:0;border-radius:var(--r-12);background:none;color:var(--tx-pill);font-size:15px;text-align:left;cursor:pointer;flex:none}
   @media (hover:hover){.sb:hover{background:var(--fill)}}
@@ -608,9 +636,8 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .sb-c{margin-left:auto;padding-left:8px;font-size:12px;color:var(--tx2);font-weight:500}
   .sb-h{font-size:12px;font-weight:600;color:var(--tx3);letter-spacing:.5px;text-transform:uppercase;padding:16px 10px 6px}
   .sb.add{color:var(--tx2)}
-  .mhd{padding-right:0;align-items:flex-end}
+  .mhd{align-items:flex-end}
   .mhd h1{font-size:30px}
-  .btn-a.mcreate{display:inline-flex}
   .mgrid{grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:22px 18px}
   .mc-t{font-size:14px}
   .mt-types{margin:0;padding:4px 0}
@@ -618,7 +645,6 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .mrow{margin:0;padding:0 0 8px}
   /* Навчання: 2 колонки */
   .lrn{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:28px;align-items:start}
-  .lh{padding-right:0}
   .rv-n{font-size:30px}
   .tf-card{background:none;border:0;padding:0;gap:22px}
   .tf-t{font-family:var(--font-display);font-size:26px;font-weight:700}
@@ -626,7 +652,8 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .tf-go{flex-direction:row;align-items:center;gap:16px}
   .tf-go .btn-a{flex:none}
 }
-@media (min-width:1024px){
+/* область l+ (раніше — вікно ≥1024) */
+@container region (min-width:860px){
   .mat{grid-template-columns:250px minmax(0,1fr)}
   .mgrid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
   .lrn{grid-template-columns:340px minmax(0,1fr);gap:36px}
@@ -670,8 +697,8 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .fico[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-tx);box-shadow:inset 0 0 0 2px var(--accent-tx)}
 .ffe-ph{align-items:center;flex-wrap:wrap}
 /* iPad: 820 → 6 у ряд, 1194 → 8 у ряд */
-@media (min-width:768px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(68px,1fr));gap:14px 4px}}
-@media (min-width:1024px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}}
+@container region (min-width:600px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(68px,1fr));gap:14px 4px}}
+@container region (min-width:860px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}}
 
 /* ===== Редактор: інструменти + контекстний ряд (улюблені кольори, 3 товщини, лінійка, налаштування) ===== */
 .edrow3{display:flex;flex-wrap:wrap;align-items:center;column-gap:8px}
@@ -699,9 +726,51 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .tg>span{text-align:left}
 .tgsub{display:block;font-size:13px;color:var(--tx2);margin-top:2px}
 .edtoast{position:absolute;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));max-width:440px;margin:0 auto;padding:12px 16px;border-radius:var(--r-14);background:var(--surface);color:var(--tx);border:1px solid var(--bd);box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:14px;z-index:5}
-@media (min-width:768px){
-  .edrow3{flex-wrap:nowrap}
-  .edctx{flex-basis:auto;flex:1;padding-left:8px;border-left:1px solid var(--bd)}
+/* ===== Редактор: розкладка панелі від ширини самого редактора (@container editor; ipad-layout-spec 7.1–7.4, I1, I3) =====
+   < 560 — телефон, як було: один ряд документа (порядок кнопок у DOM задає docs.js),
+          інструменти на всю ширину, стиль окремим рядком із прокруткою.
+   ≥ 560 — два постійні ряди по 52: документ (зліва Готово/Сторінки/Скасувати, назва по центру, справа Масштаб/Поділитися/Ще/Помічник)
+          і інструменти + стиль однією групою по центру. 560–839 — стиль згорнуто в «Поточний стиль» + Лінійка;
+          ≥ 840 — розгорнуто. Ряд ніколи не прокручується прихованим скролом (I1). Навколо сторінки — стіл --desk і поле 24. */
+.nv.ed{container:editor/inline-size;max-width:none;margin:0}
+.edw,.edcur{display:none}
+.edzoom{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:2px;height:44px;min-width:64px;padding:0 6px 0 10px;border:0;border-radius:var(--r-12);background:none;color:var(--tx);font:600 var(--fs-cap)/1 var(--font-body);white-space:nowrap;cursor:pointer}
+.edzoom svg{color:var(--tx2)}
+.edzoom[aria-expanded="true"]{background:var(--fill)}
+@media (hover:hover){.edzoom:hover{background:var(--fill)}}
+.curst{position:relative;flex:none;width:44px;height:44px;border:0;border-radius:var(--r-12);background:var(--fill);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
+.curst i{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--tx3)}
+.curst b{display:block;border-radius:50%;background:var(--paper)}
+.curst::after{content:"";position:absolute;right:4px;bottom:4px;border:4px solid transparent;border-top-color:var(--tx2);transform:translateY(2px)}
+.curst[aria-expanded="true"]{box-shadow:inset 0 0 0 1.5px var(--tx3)}
+.zpop .tg{margin-top:var(--s-1)}
+.zpop .zrow{justify-content:space-between;margin:var(--s-3) 0 0}
+.zpct{font-variant-numeric:tabular-nums;font-weight:600;font-size:var(--fs-sm)}
+.pgz{color:var(--tx2);font-size:var(--fs-cap);padding:0 10px 0 8px;margin-left:4px;border-left:1px solid var(--bd);white-space:nowrap;font-variant-numeric:tabular-nums;align-items:center;align-self:stretch}
+@container editor (max-width:559px){
+  .edtools{flex:1 1 100%;justify-content:space-between}.edtools .ib{flex:1 1 0;min-width:0;max-width:44px}
+}
+@container editor (min-width:560px){
+  .edbar{padding:env(safe-area-inset-top) max(var(--s-2),env(safe-area-inset-right)) 0 max(var(--s-2),env(safe-area-inset-left))}
+  .edrow2{height:var(--bar-h);padding:var(--s-1) 0;gap:var(--s-1);overflow:visible}
+  .edg{display:flex;align-items:center;gap:2px;flex:1 1 0;min-width:max-content}
+  .edr{justify-content:flex-end}
+  .edtitle{flex:0 1 auto;width:40cqi;max-width:40cqi;min-width:60px;height:44px;font-size:var(--fs-sm);padding:0 var(--s-2)}
+  .edw{display:inline-flex}
+  .edrow3{flex-wrap:nowrap;justify-content:center;column-gap:0;height:var(--bar-h);padding:var(--s-1) 0}
+  .edtools{flex:none;padding-top:0}
+  .edctx{flex:0 1 auto;min-width:0;overflow:visible;padding-left:0;border-left:0}
+  .edctx .edhint{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .ph-z{display:none}
+  .nv.ed .edbox{background:var(--desk);padding:var(--s-6)}
+  .nv.ed .edbox canvas{box-shadow:var(--shadow-page);border-radius:2px}
+  /* сторінка — від верхнього краю столу (поле 24), як у макеті; по горизонталі — по центру */
+  .nv.ed .cvwrap{margin:0 auto}
+  .pgn{padding:0 4px;font-variant-numeric:tabular-nums}
+}
+@container editor (min-width:560px) and (max-width:839px){
+  .edctx{display:none}
+  .edcur{display:flex;align-items:center;gap:2px;flex:none}
 }
 @media (max-width:420px){.edtools,.edctx{gap:0}.edsep{margin:0 2px}}
 /* 320–360 px: 8 кнопок по 38 px завширшки (висота 44; мінімум WCAG 2.2 — 24) */
@@ -855,18 +924,19 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 /* кнопка «Помічник» у шапці редактора */
 .ed-ai{flex:none;display:inline-flex;align-items:center;gap:6px;height:44px;padding:0 12px;margin-left:4px;border:0;border-radius:var(--r-12);background:var(--accent-soft);color:var(--accent-tx);font-size:14px;font-weight:600;cursor:pointer}
 .ed-ai.on{background:var(--accent);color:var(--on-accent)}
-@media (max-width:520px){.ed-ai{padding:0;width:44px;justify-content:center}.ed-ai-l{display:none}}
+/* підпис «Помічник» — від ширини редактора ≥720, інакше лише іконка (ipad-layout-spec 7.2) */
+@container editor (max-width:719px){.ed-ai{padding:0;width:44px;justify-content:center}.ed-ai-l{display:none}}
 
-/* бічна панель Помічника поруч із документом (iPad ≥1024) */
-.a-side{display:none}
 @media (min-width:768px){
-  .wrap.t-ai{padding-bottom:0}
   .asst.tab{height:calc(100dvh - 26px - env(safe-area-inset-top))}
   .asst.tab .a-hd{padding-right:0}
   .asst.tab .a-comp{padding-bottom:max(16px,env(safe-area-inset-bottom))}
-  .a-starts{display:grid;grid-template-columns:1fr 1fr}
   .a-hd-c{margin:-8px 0 12px}
 }
+@container region (min-width:600px){.a-starts{display:grid;grid-template-columns:1fr 1fr}}
+
+/* бічна панель Помічника поруч із документом (iPad ≥1024) */
+.a-side{display:none}
 @media (min-width:1024px){
   .a-side{display:flex;position:fixed;top:0;right:0;bottom:0;width:400px;z-index:25;background:var(--panel);border-left:1px solid var(--bd2);padding-top:env(safe-area-inset-top)}
   .nv.ed.with-ai{right:400px}
@@ -967,7 +1037,6 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 @media (hover:hover){.edtb:hover{background:var(--fill)}}
 .edctx .edhint{white-space:nowrap}
 /* 9 інструментів (з «Ласо») на телефоні: рівні частки ряду, до 44 px; 375 → ≈ 40 px, 320 → ≈ 34 px (висота 44; мінімум WCAG 2.2 — 24) */
-@media (max-width:767px){.edtools{flex:1 1 100%;justify-content:space-between}.edtools .ib{flex:1 1 0;min-width:0;max-width:44px}}
 /* на вузькому екрані меню переноситься: дві «ШІ»-дії першим рядком, решта — значки з підписами нижче */
 @media (max-width:520px){.selb{padding:0 10px;font-size:13px}}
 
@@ -1045,7 +1114,7 @@ h2.sec{font-family:var(--font-body);line-height:1.3}
   .qrow.wide-only{display:flex;align-items:center;gap:8px}
   .qrow .qbar{flex:1;min-width:0}
 }
-@media (min-width:1024px){
+@container region (min-width:860px){
   .dayg.two .daymain{grid-column:1;grid-row:1}
   .dayg.two .dside{grid-column:2;grid-row:1;position:sticky;top:20px;margin:0}
   .dayg .dside .more-day{position:static}

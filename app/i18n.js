@@ -862,7 +862,12 @@ export const DE = {
  "Нотатка, зошит, дошка, фото чи PDF з Матеріалів": "Notiz, Heft, Board, Foto oder PDF aus Materialien",
  "Поточна сторінка": "Aktuelle Seite",
  "Діапазон сторінок": "Seitenbereich",
- "Зошити, дошки, фото й PDF": "Hefte, Boards, Fotos und PDFs"
+ "Зошити, дошки, фото й PDF": "Hefte, Boards, Fotos und PDFs",
+ "Поточний стиль": "Aktueller Stil",
+ "По ширині": "Seitenbreite",
+ "Сторінка цілком": "Ganze Seite",
+ "Зменшити": "Verkleinern",
+ "Збільшити": "Vergrößern"
 };
 // Множина: українська — 3 форми (1 картка, 2 картки, 5 карток), німецька — 2 (переклад форм f1 і f5).
 export function plural(n, f1, f2, f5) {

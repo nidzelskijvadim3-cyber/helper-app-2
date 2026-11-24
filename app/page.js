@@ -938,6 +938,9 @@ export default function Home() {
     <div className={'wrap' + (tab === 'ai' ? ' t-ai' : '')}>
       <button className={'me' + syncCls + (tab === 'set' ? ' cur' : '')} onClick={() => setTab('set')} aria-label={tr("Налаштування") + '. ' + syncTxt} title={tr("Налаштування") + ' · ' + syncTxt} aria-current={tab === 'set' ? 'page' : undefined}>{meLetter}<i aria-hidden="true" /></button>
 
+      {/* .region — область контенту між рейкою і панеллю Помічника: контейнер @container region (ipad-layout-spec 1.2, 3).
+          Усе position:fixed (аркуші, шари .nv, FAB, тост, рейка) — поза нею. */}
+      <div className="region"><div className="reg-in">
       {tab === 'today' && <>
         {planHead}
         {nextExam && <button className={'exb' + (daysTo(nextExam.due, today) <= 7 ? ' soon' : '')} onClick={() => setExV(nextExam.id)}>
@@ -1032,7 +1035,7 @@ export default function Home() {
         onNoteFav={id => setNotes(notes.map(n => n.id === id ? { ...n, fav: !n.fav } : n))}
         onNoteMove={(id, folder) => setNotes(notes.map(n => n.id === id ? { ...n, folder } : n))}
         onNoteDel={id => setNotes(notes.filter(n => n.id !== id))}
-        onAsk={askFromEditor} aiSide={aiSide} openReq={openReq} onOpenReqDone={() => setOpenReq(null)} onOpened={m => setLastMat(m)} onEdClose={() => setAiSide(false)} />}
+        onAsk={askFromEditor} aiOn={aiSide} openReq={openReq} onOpenReqDone={() => setOpenReq(null)} onOpened={m => setLastMat(m)} onEdClose={() => setAiSide(false)} />}
 
       {tab === 'cards' && !deckV && (() => {
         const testsList = idp => tests.length > 0 && <section className="lsec" aria-labelledby={idp + '-h'}>
@@ -1170,7 +1173,6 @@ export default function Home() {
       })()}
 
       {tab === 'ai' && assistant(false)}
-      {tab === 'folders' && aiSide && <aside className="a-side" aria-label={tr("Помічник")}>{assistant(true)}</aside>}
 
       {tab === 'set' && <>
         <div className="top"><h1>{tr("Налаштування")}</h1></div>
@@ -1215,6 +1217,8 @@ export default function Home() {
           <input type="password" placeholder={tr("Пароль")} aria-labelledby="pass-title" aria-describedby="pass-hint" defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>
         <button className="btn alt" onClick={() => setTab('today')}>{tr("Назад")}</button>
       </>}
+      </div></div>
+      {tab === 'folders' && aiSide && <aside className="a-side" aria-label={tr("Помічник")}>{assistant(true)}</aside>}
 
       {/* один «+» на екран: План — FAB лише на телефоні (на iPad — рядок швидкого вводу); Матеріали — нова папка */}
       {/* один «+» на екран: План — FAB лише на телефоні (на iPad — рядок швидкого вводу); Матеріали — FAB/«Створити» всередині Materials */}

@@ -3,7 +3,7 @@
 // контекст (матеріал / набір / фото), посилання [с. N], голосовий ввід. Дії застосовує page.js (applyActions) через apply().
 import { useState, useEffect, useRef } from 'react';
 import { t as tr, loc, getLang, plural } from './i18n';
-import { listDocs, getDocFull, docMaterial, materialOf, TEXT_PAGES, shrink } from './docs';
+import { listDocs, getDocFull, docMaterial, materialOf, TEXT_PAGES, shrink, Layer } from './docs';
 import { noDateTasks } from './plan';
 
 const P = {
@@ -509,7 +509,7 @@ export default function Assistant(props) {
     {!online && <p className="a-st-l" id="a-off">{tr("Немає інтернету. Помічник запрацює, щойно з’явиться зв’язок; історія розмов доступна.")}</p>}
   </section>;
 
-  const pickSheet = pick && <div className="ov" onClick={closePick}><div className="sheet menu a-pick" role="dialog" aria-modal="true" aria-labelledby="a-pick-t" onClick={e => e.stopPropagation()}>
+  const pickSheet = pick && <Layer><div className="ov" onClick={closePick}><div className="sheet menu a-pick" role="dialog" aria-modal="true" aria-labelledby="a-pick-t" onClick={e => e.stopPropagation()}>
     <div className="shd"><h2 id="a-pick-t">{pick.step === 'deck' ? tr("Набір карток") : pick.step === 'pages' ? pick.m.title : tr("Матеріал")}</h2>
       <button className="ib" onClick={closePick} aria-label={tr("Закрити")} title={tr("Закрити")}><I n="close" s={22} /></button></div>
     {pick.step === 'mat' && (mats.length ? mats.map((m, i) => <button key={m.k + m.id} autoFocus={i === 0} onClick={() => pickMat(m)}>{m.title}<small>{tr(TYPEN[m.type] || 'Зошит')}{m.upd ? ' · ' + whenStr(m.upd) : ''}</small></button>)
@@ -521,7 +521,7 @@ export default function Assistant(props) {
       <div className="row" style={{ marginTop: 14 }}><button className="btn-a" disabled={!pick.sel.length} onClick={() => { setCtx({ k: 'doc', id: pick.m.id, title: pick.m.title, type: pick.m.type, pages: [...pick.sel].sort((a, b) => a - b) }); closePick(); }}>{tr("Додати")}{pick.sel.length ? ' · ' + tr("с.") + ' ' + pagesStr(pick.sel) : ''}</button>
         <button className="btn2" onClick={() => setPick({ step: 'mat' })}>{tr("Назад")}</button></div>
     </>}
-  </div></div>;
+  </div></div></Layer>;
 
   return <div className={'asst ' + (side ? 'side' : 'tab')}>
     {header}

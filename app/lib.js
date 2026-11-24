@@ -62,13 +62,19 @@ export function newDoc(type, title, folder, tpl, cover) {
   };
 }
 
-// Підгонка сторінки під екран — лише відображення, розмір сторінки (p.w × p.h) тут не змінюється:
-// звичайна сторінка заповнює ширину (решта вікна — «стіл» за сторінкою), фото/скани вписуються цілком.
+// Підгонка сторінки під екран — лише відображення, розмір сторінки (p.w × p.h) тут не змінюється.
 // Формат сторінки — властивість документа; від ширини вікна, повороту чи панелі Помічника він не залежить.
-export function fitPage(p, W, H) {
-  const sc = p.img ? Math.min(W / p.w, H / p.h) : W / p.w;
-  return { scale: sc, cssW: Math.round(p.w * sc), cssH: Math.round(p.h * sc) };
+// W × H — доступна область (без поля навколо сторінки). Режими масштабу (I3):
+//   'width' — по ширині, 'page' — сторінка цілком, '100' — 1 px сторінки = 1 CSS px.
+// pageScale — масштаб «сторінка цілком» (нижня межа щипка на iPad).
+export const ZOOM_MODES = ['width', 'page', '100'];
+export function fitMode(p, W, H, mode) {
+  const sw = W / p.w, sp = Math.min(W / p.w, H / p.h);
+  const sc = mode === '100' ? 1 : mode === 'page' ? sp : sw;
+  return { scale: sc, pageScale: sp, cssW: Math.round(p.w * sc), cssH: Math.round(p.h * sc) };
 }
+// Режим за замовчуванням: альбом — «сторінка цілком»; портрет — по ширині, фото/скани — цілком (як раніше).
+export const defaultZoomMode = (landscape, hasImg) => (landscape || hasImg ? 'page' : 'width');
 
 // Освітлити (amt > 0) або затемнити (amt < 0) колір #rrggbb.
 export function shade(hex, amt) {
