@@ -5,7 +5,8 @@ import { Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import { newDoc, newId, folderPath, fitMode, defaultZoomMode, descendants, breadcrumb } from './lib';
 import { t as tr, loc, plural } from './i18n';
-import { drawStroke, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, hitStroke, splitStroke, nearlyStraight, isHl, PENS, PRESSURE_NIBS, SHAPES, strokeBox, boxOf, xformStroke, lassoPick } from './draw';
+import { drawStroke, renderPage, drawSeg, pressureOf, synthPressure, rulerSnap, rulerProject, hitStroke, splitStroke, nearlyStraight, isHl, PENS, PRESSURE_NIBS, SHAPES, strokeBox, boxOf, xformStroke, lassoPick, TEXT_FONT } from './draw';
+import { scFind, inField, composing, oneKeysOn, tapUndoOn, TAP_KEY, withKey, scById, keyLabel } from './shortcuts';
 import { FolderGlyph, FOLDER_COLORS } from './folder-icons';
 import { isPdf, openPdf, renderPdfPages, pageHasText, searchText, searchPage, exportPdf, pdfName, savePdf, canSharePdf, sharePdf, openPdfTab, isIOS, PDF_MAX_PAGES, PDF_MAX_BYTES } from './pdfio';
 
@@ -169,6 +170,7 @@ Object.assign(EI, {
   paste: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V3h6v1M9 11h6M9 15h4" /></>,
   selall: <><rect x="4" y="4" width="16" height="16" rx="2" strokeDasharray="3 2.4" /><path d="M8.5 12l2.5 2.5 4.5-5" /></>,
   chevD: <path d="M7 10l5 5 5-5" />,
+  swap: <><path d="M4 8h13l-3.5-3.5" /><path d="M20 16H7l3.5 3.5" /></>,
 });
 // Інструменти тулбара (лінійка — у контекстному ряду, поруч із кольорами й товщиною)
 const TOOLS = ['pen', 'pencil', 'marker', 'hl', 'eraser', 'lasso', 'shape', 'text', 'hand'];
@@ -213,7 +215,39 @@ const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return 
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 
 function EIcon({ n, size = 22 }) { return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{EI[n]}</svg>; }
-function IB({ n, label, on, onClick, disabled, pressed }) { return <button className={'ib' + (on ? ' on' : '')} onClick={onClick} aria-label={label} title={label} disabled={disabled} aria-pressed={pressed}><EIcon n={n} /></button>; }
+// kbd — підказка клавіші в title («Ручка · P») і aria-keyshortcuts (з реєстру shortcuts.js)
+function IB({ n, label, on, onClick, disabled, pressed, kbd, kbdAria }) { return <button className={'ib' + (on ? ' on' : '')} onClick={onClick} aria-label={label} title={kbd || label} aria-keyshortcuts={kbdAria} disabled={disabled} aria-pressed={pressed}><EIcon n={n} /></button>; }
+// ===== Жести на холсті (ipad-interactions 1.2): пороги в одному місці, щоб підлаштувати після тесту на пристрої =====
+// Значення — у CSS-пікселях екрана і мілісекундах.
+const GESTURE = {
+  TAP_SLOP: 10,          // максимум зсуву кожного пальця для тапу
+  TAP_MAX_MS: 300,       // від першого дотику до відриву останнього пальця (діапазон перевірки 250–350)
+  LAND_WINDOW_MS: 150,   // усі пальці тапу мають торкнутися за цей час від першого
+  PAN_START: 10,         // поріг початку пану одним пальцем
+  PINCH_PX: 8, PINCH_PCT: 0.04, // мертва зона щипка: зміна відстані між пальцями
+  PEN_GUARD_MS: 300,     // пальці (долоня) ігноруються після відриву пера
+  STROKE_YOUNG_MS: 150, STROKE_YOUNG_PX: 10, // штрих пальцем молодший за це — «випадковий початок жесту»
+  EDGE: 20,              // смуга системних жестів iPadOS зверху й знизу екрана
+  ZOOM_SNAP: 0.05,       // на відриві |zoom − 1| < 5 % → рівно режим масштабу
+  RUBBER: 0.3,           // опір щипка за межами масштабу
+  VEL_MS: 80, DECAY: 0.95, V_STOP: 0.05, // інерція пану: швидкість за останні 80 мс, згасання на кадр, зупинка (px/мс)
+};
+const reduceMotion = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const TOOL_SC = { pen: 'pen', pencil: 'pencil', hl: 'hl', eraser: 'eraser', lasso: 'lasso', shape: 'shape', text: 'text' };
+const TEXT_S = 44, TEXT_PAD = 12; // кегль тексту на сторінці (як раніше) і внутрішній відступ поля (Scribble пише трохи ширше за поле)
+// hex → rgba з прозорістю; світлі кольори (жовтий, білий) дають темну обвідку прев'ю, щоб його було видно на білому аркуші
+const hexRgb = c => { const m = /^#?([0-9a-f]{6})$/i.exec(String(c || '')); if (!m) return [28, 28, 30]; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+const rgba = (c, a) => { const [r, g, b] = hexRgb(c); return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')'; };
+const isLight = c => { const [r, g, b] = hexRgb(c); return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.72; };
+const INK_EDGE = 'rgba(28,28,30,.6)';
+// базова лінія першого рядка в <textarea> (line-height 1.25) від верху області вмісту — щоб текст у полі й на canvas збігався
+let baseG = null;
+function textBaseline(fs) {
+  if (!baseG && typeof document !== 'undefined') baseG = document.createElement('canvas').getContext('2d');
+  let A = fs * 0.93, D = fs * 0.24;
+  if (baseG) { baseG.font = fs + 'px ' + TEXT_FONT; const m = baseG.measureText('Hg'); if (m.fontBoundingBoxAscent != null) { A = m.fontBoundingBoxAscent; D = m.fontBoundingBoxDescent; } }
+  return (fs * 1.25 - (A + D)) / 2 + A;
+}
 // Мініатюри стрічки сторінок: кеш за об'єктом сторінки (сторінка незмінна, доки її не змінили), щоб у PDF на 50 сторінок
 // кожен штрих не перемальовував усі мініатюри заново.
 // w — ширина мініатюри в пікселях: 90 для нижньої стрічки телефона, 192 для колонки мініатюр iPad (96 CSS px × 2).
@@ -246,7 +280,8 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   // «Малювати лише стилусом»: null — ще не вирішено (вмикається само, щойно з'явиться стилус)
   const [penOnly, setPenOnly] = useState(() => lsGet('helper-penonly') === '1');
   const [pressure, setPressure] = useState(true);
-  const [toast, setToast] = useState('');
+  // тост: рядок або { text, act: { label, run }, ms, kind, n, hold } — з кнопкою дії (ipad-interactions 1.7)
+  const [toast, setToast] = useState(null);
   // zoom — множник щипка/кнопок −/+ відносно режиму масштабу (zmode); box — доступна область холста без поля навколо сторінки
   const [zoom, setZoom] = useState(1);
   const [box, setBox] = useState(null);
@@ -276,6 +311,19 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   const [exp, setExp] = useState(false);
   const cvRef = useRef(null), boxRef = useRef(null), imgRef = useRef(null), cur = useRef(null), hist = useRef([]), redo = useRef([]), dRef = useRef(d), piRef = useRef(0), saved = useRef(doc.pages), touches = useRef(new Map()), gest = useRef(null);
   dRef.current = d; piRef.current = pi;
+  // жести пальців: tg — поточний «кандидат у тап» { t0, maxN, starts, moved, late, xf, off }; penUntil — до цього моменту дотики = долоня;
+  // ignored — пальці, які не беруть участі (долоня, другий палець під час довгого штриха, смуга системних жестів);
+  // curMeta — хто і коли почав поточний штрих пальцем (для «молодого штриха»); focal — точка сторінки під пальцями при зумі
+  const tg = useRef(null), penUntil = useRef(0), ignored = useRef(new Set()), curMeta = useRef(null), inertia = useRef(0), focal = useRef(null), zchipT = useRef(null);
+  const [zchip, setZchip] = useState(false);
+  const [tapOn, setTapOn] = useState(tapUndoOn);
+  // текст прямо на холсті: tin = { x, y, s, w, edit } (координати сторінки); textarea змонтована постійно
+  const taRef = useRef(null), tinRef = useRef(null), textPress = useRef(null), tdrag = useRef(null);
+  tinRef.current = tin;
+  const [taH, setTaH] = useState(0);
+  // прев'ю кінчика інструмента при hover пера
+  const hovRef = useRef(null), hov = useRef({ raf: 0, x: 0, y: 0, idle: 0, snap: false });
+  const spaceTool = useRef(null), prevDraw = useRef('pen'), gRef = useRef(null);
   const page = d.pages[pi];
   const setPage = np => setD(o => ({ ...o, pages: o.pages.map((q, i) => i === pi ? np : q) }));
 
@@ -294,7 +342,8 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   const setWi = i => upd(ctool, { wi: { ...tc.wi, [nib]: i } });
   const setWv = v => { const s = [...wset]; s[wi] = v; upd(ctool, { w: { ...tc.w, [nib]: s } }); };
   const togglePenOnly = () => { const v = !penOnly; setPenOnly(v); lsSet('helper-penonly', v ? '1' : '0'); };
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 4500); return () => clearTimeout(t); }, [toast]);
+  useEffect(() => { if (!toast || toast.hold) return; const t = setTimeout(() => setToast(null), toast.ms || 4500); return () => clearTimeout(t); }, [toast]);
+  const holdToast = v => setToast(t => (t && typeof t === 'object' ? { ...t, hold: v } : t));
 
   useEffect(() => {
     bridge.info = () => ({ title: dRef.current.title, type: dRef.current.type, page: piRef.current + 1, pages: dRef.current.pages.length });
@@ -343,7 +392,9 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     loadImg(page.img).then(im => { if (!off) { imgRef.current = im; setTick(t => t + 1); } }).catch(() => {});
     return () => { off = true; };
   }, [pi, page.img]);
-  useEffect(() => { const cv = cvRef.current; if (cv) renderPage(cv.getContext('2d'), page, imgRef.current); }, [d, pi, tick]);
+  // текст, який зараз редагується в полі, на canvas не малюємо (інакше він двоїться)
+  const tinEdit = tin && tin.edit;
+  useEffect(() => { const cv = cvRef.current; if (cv) renderPage(cv.getContext('2d'), tinEdit ? { ...page, strokes: page.strokes.filter(s => s !== tinEdit) } : page, imgRef.current); }, [d, pi, tick, tinEdit]);
   // iPad + Apple Pencil: Safari сам перехоплює дотик пера (виділення тексту, лупа, Scribble, прокрутка)
   // і шле pointercancel — лінія обривається або не з'являється зовсім. touch-action:none цього не зупиняє,
   // потрібні нативні НЕпасивні touchstart/touchmove з preventDefault (React вішає їх пасивними).
@@ -357,13 +408,14 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     cv.addEventListener('touchstart', f, opt); cv.addEventListener('touchmove', f, opt);
     return () => { cv.removeEventListener('touchstart', f, opt); cv.removeEventListener('touchmove', f, opt); };
   }, [tool]);
-  const flush = async extra => {
-    const pages = d.pages;
+  // dd — документ, якщо він новіший за стан d (close() після фіксації тексту на холсті, ще до рендера)
+  const flush = async (extra, dd = d) => {
+    const pages = dd.pages;
     const dirty = pages.length !== saved.current.length ? 'all' : pages.map((p, i) => p === saved.current[i] ? -1 : i).filter(i => i >= 0);
     // PDF: текст для пошуку в метаданих оновлюється, коли змінився склад сторінок (видалили / додали сторінку)
     // (у ref, бо стан d зберігає старий текст, а наступні збереження пишуть метадані знову)
-    if (d.type === 'pdf' && dirty === 'all') stxt.current = searchText(pages);
-    await onSave({ ...d, ...(stxt.current != null ? { text: stxt.current } : null), ...extra, upd: Date.now() }, dirty); saved.current = pages;
+    if (dd.type === 'pdf' && dirty === 'all') stxt.current = searchText(pages);
+    await onSave({ ...dd, ...(stxt.current != null ? { text: stxt.current } : null), ...extra, upd: Date.now() }, dirty); saved.current = pages;
   };
   useEffect(() => { const t = setTimeout(() => { flush().catch(() => {}); }, 1500); return () => clearTimeout(t); }, [d]);
   useEffect(() => {
@@ -518,24 +570,194 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   };
   useLayoutEffect(() => { const el = menuRef.current; if (!el) return; const w = el.offsetWidth, h = el.offsetHeight; if (w !== msz.w || h !== msz.h) setMsz({ w, h }); });
   const straighten = s => { const q = s.p; s.p = [q[0], q[1], q[q.length - 2], q[q.length - 1]]; if (s.pr) s.pr = [s.pr[0], s.pr[s.pr.length - 1]]; s.straight = true; };
+  // ===== Скасувати / Повторити з відгуком (тап двома / трьома пальцями, кнопка в тості) =====
+  // Спершу закриваємо верхній шар: поповер, потім виділення ласо; лише тоді — крок історії (ipad-interactions 1.4)
+  const gUndo = dir => {
+    if (pop) { setPop(null); return; }
+    if (dir === 'undo' && (selOk || pasteAt)) { setSel(null); setPasteAt(null); setToast({ text: tr("Виділення знято"), ms: 1500 }); return; }
+    const ok = dir === 'undo' ? swap(hist, redo) : swap(redo, hist);
+    if (!ok) { setToast({ text: dir === 'undo' ? tr("Нема чого скасовувати") : tr("Нема чого повторювати"), ms: 1500 }); return; }
+    setToast(t => {
+      const n = t && t.kind === dir ? (t.n || 1) + 1 : 1;
+      return { kind: dir, n, ms: 4000, hold: !!(t && t.hold), text: (dir === 'undo' ? tr("@undo:Скасовано") : tr("Повторено")) + (n > 1 ? ' (' + n + ')' : ''),
+        act: dir === 'undo' ? { label: tr("Повторити"), run: () => gRef.current('redo') } : { label: tr("@undo:Скасувати"), run: () => gRef.current('undo') } };
+    });
+  };
+  gRef.current = gUndo;
+  const stopInertia = () => { if (inertia.current) { cancelAnimationFrame(inertia.current); inertia.current = 0; } };
+  // Інерція пану пальцем: швидкість за останні 80 мс, згасання 0,95 на кадр; без інерції при «зменшенні руху»
+  const startInertia = (g, tUp) => {
+    const sm = g.smp; if (reduceMotion() || !sm || sm.length < 2) return;
+    const a = sm[0], b = sm[sm.length - 1], dt = b[0] - a[0];
+    if (dt <= 0 || tUp - b[0] > GESTURE.VEL_MS) return; // палець зупинився перед відривом
+    let vx = (b[1] - a[1]) / dt, vy = (b[2] - a[2]) / dt;
+    if (Math.hypot(vx, vy) < GESTURE.V_STOP) return;
+    const el = boxRef.current; let last = performance.now();
+    const step = now => {
+      const ft = Math.min(48, now - last); last = now;
+      el.scrollLeft -= vx * ft; el.scrollTop -= vy * ft;
+      const k = Math.pow(GESTURE.DECAY, ft / 16.67); vx *= k; vy *= k;
+      inertia.current = Math.hypot(vx, vy) < GESTURE.V_STOP ? 0 : requestAnimationFrame(step);
+    };
+    inertia.current = requestAnimationFrame(step);
+  };
+  // Зум тримає точку сторінки під пальцями: fx/fy — частка ширини/висоти сторінки, mx/my — де вона має бути на екрані.
+  // Після кожної зміни zoom (layout effect) прокрутка докручується на різницю — працює і з полем, і з центруванням сторінки.
+  const applyFocal = () => {
+    const f = focal.current, el = boxRef.current, cv = cvRef.current; if (!f || !el || !cv) return;
+    const r = cv.getBoundingClientRect(); if (!r.width) return;
+    el.scrollLeft += r.left + f.fx * r.width - f.mx; el.scrollTop += r.top + f.fy * r.height - f.my;
+  };
+  useLayoutEffect(() => { applyFocal(); if (focal.current && focal.current.once) focal.current = null; }, [zoom]);
+  // кінець щипка: чип масштабу гасне за 700 мс; повернення в межі (200 мс) і снап до режиму масштабу при |zoom − 1| < 5 %
+  const endPinch = g => {
+    clearTimeout(zchipT.current); zchipT.current = setTimeout(() => setZchip(false), 700);
+    const z = g.z != null ? g.z : zoom;
+    const to = z < zMin ? zMin : z > zMax ? zMax : Math.abs(z - 1) < GESTURE.ZOOM_SNAP ? 1 : null;
+    if (to == null || to === z) { focal.current = null; return; }
+    if (reduceMotion()) { focal.current = { ...focal.current, once: true }; setZoom(to); return; }
+    const t0 = performance.now(), done = () => { focal.current = focal.current && { ...focal.current, once: true }; setZoom(to); };
+    const safety = setTimeout(done, 260); // без кадрів (прихована вкладка) — одразу до межі
+    const step = now => { const p = Math.min(1, (now - t0) / 200); if (p >= 1) { clearTimeout(safety); done(); return; } const e = 1 - Math.pow(1 - p, 3); setZoom(+(z + (to - z) * e).toFixed(3)); requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  };
+
+  // ===== Прев'ю кінчика інструмента при hover Apple Pencil (і трекпада) — окремий шар, лише transform =====
+  const hideHover = () => { const h = hov.current; clearTimeout(h.idle); if (h.raf) { cancelAnimationFrame(h.raf); h.raf = 0; } const el = hovRef.current; if (el) el.removeAttribute('data-on'); };
+  const onHover = e => {
+    if (tool === 'hand' || tinRef.current || gest.current || cur.current || touches.current.size) { hideHover(); return; }
+    const cv = cvRef.current; if (!cv) return;
+    const r = cv.getBoundingClientRect(); let x = e.clientX - r.left, y = e.clientY - r.top, snap = false;
+    if (tool === 'shape' && ruler.on && r.width) { const k = r.width / page.w, sn = rulerSnap(ruler, x / k, y / k, 40 * ws0); if (sn) { x = sn.x * k; y = sn.y * k; snap = true; } }
+    const h = hov.current; h.x = x; h.y = y; h.snap = snap;
+    clearTimeout(h.idle); h.idle = setTimeout(hideHover, 1000); // pointerleave іноді не приходить, коли перо піднімають
+    if (!h.raf) h.raf = requestAnimationFrame(() => { h.raf = 0; const el = hovRef.current; if (!el) return; el.setAttribute('data-on', h.snap ? 'snap' : '1'); el.style.transform = 'translate(' + h.x + 'px,' + h.y + 'px)'; });
+  };
+
+  // ===== Текст прямо на холсті (ipad-interactions 2) =====
+  // Стиль поля з координат сторінки: базова лінія першого рядка = точка дотику, як у fillText на canvas
+  const taStyle = (t, sc) => {
+    const fs = t.s * ws0 * sc, P = TEXT_PAD + 1;
+    return { left: (t.x * sc - P) + 'px', top: (t.y * sc - textBaseline(fs) - P) + 'px', width: (t.w * sc + 2 * P) + 'px', fontSize: fs + 'px', color: t.edit ? t.edit.c : color };
+  };
+  const autoSize = ta => { if (!ta) return; ta.style.height = 'auto'; const h = ta.scrollHeight + 2; ta.style.height = h + 'px'; setTaH(h); };
+  // Дотик інструментом «Текст»: поза відкритим полем — лише зафіксувати; по наявному тексту — редагувати; інакше — нове поле.
+  // focus() — синхронно в обробнику pointerup: лише так iOS відкриває екранну клавіатуру.
+  const textTap = tp => {
+    if (tp.open) { commitText(); return; }
+    const ta = taRef.current; if (!ta) return;
+    const sc = scNow, minW = 120 / sc, mg = 24 * ws0;
+    const hit = [...page.strokes].reverse().find(s => { if (s.k !== 'text') return false; const b = strokeBox(s, ws0); return tp.x >= b[0] - 6 * ws0 && tp.x <= b[2] + 6 * ws0 && tp.y >= b[1] && tp.y <= b[3]; });
+    let t;
+    if (hit) {
+      const b = strokeBox(hit, ws0);
+      // старий текст без w: ширина не менша за найдовший рядок — перенос не змінить уже написане
+      t = { x: hit.x, y: hit.y, s: hit.s || TEXT_S, w: hit.w > 0 ? hit.w : Math.max(b[2] - b[0] + 4 * ws0, page.w - mg - hit.x, minW), edit: hit };
+    } else {
+      let x = tp.x, w = page.w - mg - x;
+      if (w < minW) { w = minW; x = Math.max(0, page.w - mg - w); } // біля правого краю поле відкривається вліво
+      t = { x, y: tp.y, s: TEXT_S, w, edit: null };
+    }
+    Object.assign(ta.style, taStyle(t, sc));
+    ta.value = hit ? hit.t : ''; ta.hidden = false; autoSize(ta);
+    ta.focus({ preventScroll: true });
+    tinRef.current = t; setTin(t); hideHover(); setPop(null);
+  };
+  // Зафіксувати текст: порожнє нове поле зникає мовчки; порожній наявний текст — видаляється (один крок історії, ⌘Z повертає).
+  // Повертає документ із зафіксованим текстом (для close(), який зберігає одразу, не чекаючи рендера), або null.
+  const commitText = () => {
+    const t = tinRef.current, ta = taRef.current; if (!t) return null;
+    tinRef.current = null; tdrag.current = null;
+    const v = ta ? ta.value.replace(/^\s*\n|\s+$/g, '') : '';
+    if (ta) { ta.hidden = true; ta.value = ''; if (document.activeElement === ta) ta.blur(); }
+    setTin(null);
+    const r1 = n => Math.round(n * 10) / 10;
+    let strokes = null;
+    if (t.edit) {
+      if (!page.strokes.includes(t.edit)) return null;
+      if (v === t.edit.t && !t.moved && !t.wMoved) return null; // без змін — без запису в історію
+      strokes = v ? page.strokes.map(s => (s === t.edit ? { ...s, t: v, x: r1(t.x), y: r1(t.y), w: r1(t.w) } : s)) : page.strokes.filter(s => s !== t.edit);
+    } else if (v) strokes = [...page.strokes, { k: 'text', c: color, x: r1(t.x), y: r1(t.y), t: v, s: t.s, w: r1(t.w) }];
+    if (!strokes) return null;
+    hist.current.push({ pi, strokes: page.strokes }); if (hist.current.length > 40) hist.current.shift(); redo.current = [];
+    setPage({ ...page, strokes });
+    return { ...d, pages: d.pages.map((q, i) => (i === pi ? { ...page, strokes } : q)) };
+  };
+  const taKey = e => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // Esc — зафіксувати (не скасувати), ⌘Enter — зафіксувати, Tab — зафіксувати й лишитися на холсті
+    if (e.key === 'Escape' || e.key === 'Tab' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) { e.preventDefault(); e.stopPropagation(); commitText(); }
+  };
+  // ручки поля: перенесення (ліворуч угорі) і ширина переносу (праворуч); фокус не втрачаємо (preventDefault)
+  const taDown = (e, mode) => {
+    e.preventDefault(); e.stopPropagation(); const t = tinRef.current; if (!t) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (er) {}
+    tdrag.current = { mode, cx: e.clientX, cy: e.clientY, t0: { ...t } };
+  };
+  const taMove = e => {
+    const g = tdrag.current, t = tinRef.current; if (!g || !t) return;
+    const dx = (e.clientX - g.cx) / scNow, dy = (e.clientY - g.cy) / scNow;
+    const n = g.mode === 'mv' ? { ...t, x: Math.max(0, Math.min(page.w - 20 * ws0, g.t0.x + dx)), y: Math.max(t.s * ws0, Math.min(page.h, g.t0.y + dy)), moved: true }
+      : { ...t, w: Math.max(120 / scNow, Math.min(page.w - t.x, g.t0.w + dx)), wMoved: true };
+    tinRef.current = n; setTin(n);
+  };
+  const taUp = () => { if (!tdrag.current) return; tdrag.current = null; const ta = taRef.current; if (ta && tinRef.current && document.activeElement !== ta) ta.focus({ preventScroll: true }); };
+  // поле росте за вмістом і після зміни ширини/масштабу
+  useLayoutEffect(() => { if (tin) autoSize(taRef.current); }, [tin && tin.w, tin && tin.s, scNow]);
+  // Екранна клавіатура: якщо низ поля під клавіатурою (visualViewport) — прокрутити холст на різницю. Масштаб не змінюємо.
+  useEffect(() => {
+    if (!tin) return; const vv = window.visualViewport; if (!vv) return;
+    const f = () => {
+      const ta = taRef.current, el = boxRef.current; if (!ta || !el || ta.hidden) return;
+      const r = ta.getBoundingClientRect(), lim = vv.offsetTop + vv.height - 16;
+      if (r.bottom > lim) el.scrollBy({ top: Math.min(r.bottom - lim, r.top - el.getBoundingClientRect().top - 8), behavior: reduceMotion() ? 'auto' : 'smooth' });
+    };
+    vv.addEventListener('resize', f); vv.addEventListener('scroll', f); const tm = setTimeout(f, 400);
+    return () => { vv.removeEventListener('resize', f); vv.removeEventListener('scroll', f); clearTimeout(tm); };
+  }, [!!tin]);
+
   const down = e => {
-    if (tool === 'hand') return;
+    stopInertia(); hideHover();
+    if (e.pointerType === 'pen') { penUntil.current = Infinity; tg.current = null; }
+    if (tool === 'hand') {
+      // «Рука» (і тимчасова — пробіл): мишею / трекпадом сторінку тягнемо самі; пальцем — нативна прокрутка
+      if (e.pointerType === 'mouse' && e.button === 0) { const el = boxRef.current; gest.current = { pan: true, mouse: true, active: true, m0: [e.clientX, e.clientY], sl: el.scrollLeft, st: el.scrollTop }; try { cvRef.current.setPointerCapture(e.pointerId); } catch (er) {} }
+      return;
+    }
     if (e.pointerType === 'pen' && lsGet('helper-penonly') == null) {
       // перший дотик стилусом: вмикаємо «лише стилус», палець далі гортає сторінку
       setPenOnly(true); lsSet('helper-penonly', '1'); setToast(tr("Стилус виявлено: пальцем тепер можна гортати й масштабувати. Змінити — у налаштуваннях інструмента."));
     }
+    if (tool === 'text' && !touches.current.size) textPress.current = { id: e.pointerId, open: !!tinRef.current, moved: false, cx: e.clientX, cy: e.clientY, ...(([x, y]) => ({ x, y }))(pos(e)) };
     if (e.pointerType === 'touch') {
+      // долоня під час письма пером і смуга системних жестів біля верхнього/нижнього краю — не жест
+      if (performance.now() < penUntil.current || (!touches.current.size && (e.clientY < GESTURE.EDGE || e.clientY > window.innerHeight - GESTURE.EDGE))) { ignored.current.add(e.pointerId); textPress.current = null; return; }
+      // палець малює вже довше за «молодий штрих» — другий палець ігноруємо, штрих триває (раніше лінія мовчки зникала)
+      const cm = curMeta.current;
+      if (cur.current && cm && cm.pid !== e.pointerId && touches.current.size === 1 && (cm.far || e.timeStamp - cm.t0 >= GESTURE.STROKE_YOUNG_MS)) {
+        ignored.current.add(e.pointerId); if (tg.current) tg.current.moved = true; return;
+      }
+      let T = tg.current;
+      if (!T) T = tg.current = { t0: e.timeStamp, maxN: 0, starts: new Map(), moved: false, late: false, xf: false, off: !!tinRef.current };
+      if (e.timeStamp - T.t0 > GESTURE.LAND_WINDOW_MS) T.late = true; // палець «доклали» пізніше — це не тап
+      T.starts.set(e.pointerId, [e.clientX, e.clientY]);
       touches.current.set(e.pointerId, [e.clientX, e.clientY]);
+      T.maxN = Math.max(T.maxN, touches.current.size);
       const el = boxRef.current;
       if (touches.current.size >= 2) {
-        cur.current = null; clearTimeout(holdT.current); clearLasso(); renderPage(cvRef.current.getContext('2d'), page, imgRef.current);
-        const [a, b] = [...touches.current.values()];
-        gest.current = { d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: zoom, m0: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], sl: el.scrollLeft, st: el.scrollTop };
+        // молодий штрих (< 150 мс і < 10 px) — початок жесту двома пальцями: відкидаємо без запису в історію
+        if (cur.current) { cur.current = null; curMeta.current = null; clearTimeout(holdT.current); clearLasso(); renderPage(cvRef.current.getContext('2d'), page, imgRef.current); }
+        textPress.current = null;
+        const [a, b] = [...touches.current.values()], prev = gest.current;
+        gest.current = { d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: zoom, m0: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], active: !!(prev && !prev.pan && prev.active) };
+        if (gest.current.active) { gest.current.z = prev.z; gest.current.z0 = prev.z != null ? prev.z : zoom; gest.current.fx = prev.fx; }
         return;
       }
-      if (penOnly) { gest.current = { pan: true, m0: [e.clientX, e.clientY], sl: el.scrollLeft, st: el.scrollTop }; return; }
+      if (penOnly) { gest.current = { pan: true, active: false, m0: [e.clientX, e.clientY], sl: el.scrollLeft, st: el.scrollTop, smp: [] }; return; }
     }
+    if (tool === 'text') return; // поле — на pointerup (textTap)
     e.preventDefault(); try { cvRef.current.setPointerCapture(e.pointerId); } catch (er) {}
+    curMeta.current = e.pointerType === 'touch' ? { pid: e.pointerId, t0: e.timeStamp, x: e.clientX, y: e.clientY, far: false } : null;
     let [x, y] = pos(e);
     if (tool === 'lasso') {
       // нова петля: попереднє виділення знімається; довге натискання на місці (0,55 с) — «Вставити», якщо буфер не порожній
@@ -545,7 +767,6 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
       if (CLIP) holdT.current = setTimeout(() => { if (cur.current === st && pathLen(st.lasso) < 12 * ws0) { cur.current = null; clearLasso(); setPasteAt({ x, y }); } }, 550);
       return;
     }
-    if (tool === 'text') { setTin({ x, y, v: '' }); return; }
     if (tool === 'eraser') { cur.current = { erase: true }; eraseAt(x, y); return; }
     const ws = page.w / 1200, snap = ruler.on ? rulerSnap(ruler, x, y, 40 * ws) : null;
     if (snap) { x = snap.x; y = snap.y; }
@@ -565,20 +786,44 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     cur.current = st;
   };
   const move = e => {
-    if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) {
-      touches.current.set(e.pointerId, [e.clientX, e.clientY]);
-      const g = gest.current;
-      if (g) {
-        const el = boxRef.current;
-        if (g.pan) { el.scrollLeft = g.sl - (e.clientX - g.m0[0]); el.scrollTop = g.st - (e.clientY - g.m0[1]); }
-        else if (touches.current.size >= 2) {
-          const [a, b] = [...touches.current.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
-          setZoom(Math.max(zMin, Math.min(zMax, +(g.z0 * d / g.d0).toFixed(2))));
-          el.scrollLeft = g.sl - ((a[0] + b[0]) / 2 - g.m0[0]); el.scrollTop = g.st - ((a[1] + b[1]) / 2 - g.m0[1]);
+    // перо або миша без натиску — hover: лише прев'ю кінчика
+    if ((e.pointerType === 'pen' || e.pointerType === 'mouse') && e.buttons === 0) { onHover(e); return; }
+    if (e.pointerType === 'touch' && ignored.current.has(e.pointerId)) return;
+    const T = tg.current;
+    if (e.pointerType === 'touch' && T && !T.moved) { const s0 = T.starts.get(e.pointerId); if (s0 && Math.hypot(e.clientX - s0[0], e.clientY - s0[1]) > GESTURE.TAP_SLOP) T.moved = true; }
+    const cm = curMeta.current; if (cm && cm.pid === e.pointerId && !cm.far && Math.hypot(e.clientX - cm.x, e.clientY - cm.y) >= GESTURE.STROKE_YOUNG_PX) cm.far = true;
+    const tp = textPress.current; if (tp && tp.id === e.pointerId && !tp.moved && Math.hypot(e.clientX - tp.cx, e.clientY - tp.cy) > GESTURE.TAP_SLOP) tp.moved = true;
+    const g = gest.current;
+    if (g && (g.mouse ? e.pointerType === 'mouse' : e.pointerType === 'touch' && touches.current.has(e.pointerId))) {
+      if (!g.mouse) touches.current.set(e.pointerId, [e.clientX, e.clientY]);
+      const el = boxRef.current;
+      if (g.pan) {
+        // пан одним пальцем — після порогу 10 px (тап не зсуває сторінку); відлік — від точки, де поріг пройдено
+        if (!g.active) { if (Math.hypot(e.clientX - g.m0[0], e.clientY - g.m0[1]) < GESTURE.PAN_START) return; g.active = true; g.m0 = [e.clientX, e.clientY]; g.sl = el.scrollLeft; g.st = el.scrollTop; if (T) T.xf = true; }
+        el.scrollLeft = g.sl - (e.clientX - g.m0[0]); el.scrollTop = g.st - (e.clientY - g.m0[1]);
+        if (g.smp) { g.smp.push([e.timeStamp, e.clientX, e.clientY]); while (g.smp.length > 2 && e.timeStamp - g.smp[0][0] > GESTURE.VEL_MS) g.smp.shift(); }
+      } else if (touches.current.size >= 2) {
+        const [a, b] = [...touches.current.values()], dd = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        if (!g.active) {
+          // мертва зона: зміна відстані між пальцями до max(8 px, 4 %) (і пальці не зрушили) — масштаб не чіпаємо.
+          // Не «8 px або 4 %»: при пальцях за 100 px 5 px — уже 5 %, і тап із легким розходженням пальців давав би мікрозум
+          const dz = Math.abs(dd - g.d0);
+          if (dz <= Math.max(GESTURE.PINCH_PX, GESTURE.PINCH_PCT * g.d0) && !(T && T.moved)) return;
+          g.active = true; if (T) T.xf = true; g.d0 = dd; g.z0 = zoom;
+          const r = cvRef.current.getBoundingClientRect();
+          g.fx = r.width ? [(mid[0] - r.left) / r.width, (mid[1] - r.top) / r.height] : [0, 0];
+          clearTimeout(zchipT.current); setZchip(true);
         }
-        return;
+        let z = g.z0 * dd / g.d0;
+        if (z < zMin) z = zMin - (zMin - z) * GESTURE.RUBBER; else if (z > zMax) z = zMax + (z - zMax) * GESTURE.RUBBER;
+        z = +z.toFixed(3); g.z = z;
+        focal.current = { fx: g.fx[0], fy: g.fx[1], mx: mid[0], my: mid[1] };
+        if (z !== zoom) setZoom(z);
+        applyFocal();
       }
+      return;
     }
+    if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) touches.current.set(e.pointerId, [e.clientX, e.clientY]);
     const s = cur.current; if (!s) return;
     const [x, y] = pos(e);
     if (s.erase) { eraseAt(x, y); return; }
@@ -587,9 +832,9 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
       q.push(x, y); if (lassoRef.current) lassoRef.current.setAttribute('points', q.join(' '));
       return;
     }
-    const g = cvRef.current.getContext('2d'), ws = page.w / 1200, img = imgRef.current;
-    if (s.k) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p[2] = ex; s.p[3] = ey; renderPage(g, page, img, s); return; }
-    if (s.straight) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p = [s.p[0], s.p[1], ex, ey]; renderPage(g, page, img, s); return; }
+    const g2 = cvRef.current.getContext('2d'), ws = page.w / 1200, img = imgRef.current;
+    if (s.k) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p[2] = ex; s.p[3] = ey; renderPage(g2, page, img, s); return; }
+    if (s.straight) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p = [s.p[0], s.p[1], ex, ey]; renderPage(g2, page, img, s); return; }
     const evs = e.pointerType === 'pen' && e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     let added = false;
     for (const ev of evs) {
@@ -600,22 +845,36 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
       qq.push(px, py); added = true;
       if (s.pr) s.pr.push(ev.pointerType === 'pen' && pressure ? pressureOf(ev) : synthPressure(s.pr[s.pr.length - 1], dist, s.lt != null ? ev.timeStamp - s.lt : 8));
       s.lt = ev.timeStamp;
-      if (s.a < 1 || isHl(s)) renderPage(g, page, img, s);
-      else { g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; drawSeg(g, s, ws, qq.length / 2 - 1, true); g.restore(); }
+      if (s.a < 1 || isHl(s)) renderPage(g2, page, img, s);
+      else { g2.save(); g2.lineCap = 'round'; g2.lineJoin = 'round'; drawSeg(g2, s, ws, qq.length / 2 - 1, true); g2.restore(); }
     }
     // виділювач: затримали перо в кінці лінії на 0,5 с — лінія вирівнюється
     if (added && s.u) {
       clearTimeout(holdT.current);
-      holdT.current = setTimeout(() => { if (cur.current !== s || s.straight || s.p.length < 6) return; straighten(s); renderPage(g, page, img, s); }, 500);
+      holdT.current = setTimeout(() => { if (cur.current !== s || s.straight || s.p.length < 6) return; straighten(s); renderPage(g2, page, img, s); }, 500);
     }
   };
   const up = e => {
+    const cancel = !!e && e.type === 'pointercancel';
+    if (e && e.pointerType === 'pen') penUntil.current = performance.now() + GESTURE.PEN_GUARD_MS;
+    if (e && e.pointerType === 'touch' && ignored.current.delete(e.pointerId)) return;
+    if (e && e.pointerType === 'mouse' && gest.current && gest.current.mouse) { gest.current = null; return; }
     if (e && e.pointerType === 'touch') {
       touches.current.delete(e.pointerId);
-      if (touches.current.size === 0 || (gest.current && !gest.current.pan && touches.current.size < 2)) gest.current = null;
+      if (touches.current.size === 0) {
+        const g = gest.current, T = tg.current; gest.current = null; tg.current = null;
+        if (g && g.active) { if (g.pan) { if (!cancel) startInertia(g, e.timeStamp); } else endPinch(g); }
+        // тап двома пальцями — Скасувати, трьома — Повторити: без руху, усі пальці за 150 мс, усе — за 300 мс, без пану/зуму.
+        // pointercancel (системний жест, дзвінок, Split View) — нічого не виконуємо: хибне скасування гірше за пропущене
+        if (T && !cancel && T.maxN >= 2 && T.maxN <= 3 && !T.moved && !T.late && !T.xf && !T.off && e.timeStamp - T.t0 <= GESTURE.TAP_MAX_MS && tapUndoOn()) {
+          textPress.current = null; gUndo(T.maxN === 2 ? 'undo' : 'redo');
+        }
+      } else if (gest.current && !gest.current.pan && touches.current.size < 2) { const g = gest.current; gest.current = null; if (g.active) endPinch(g); }
     }
     clearTimeout(holdT.current);
-    const s = cur.current; cur.current = null; if (!s) return;
+    const tp = textPress.current;
+    if (tp && e && tp.id === e.pointerId) { textPress.current = null; if (!cancel && !tp.moved) textTap(tp); }
+    const s = cur.current; cur.current = null; curMeta.current = null; if (!s) return;
     if (s.lasso) { clearLasso(); finishLasso(s.lasso); return; }
     if (s.erase) { if (s.snap) { hist.current.push({ pi, strokes: s.snap }); redo.current = []; } return; }
     if (s.k && Math.hypot(s.p[2] - s.p[0], s.p[3] - s.p[1]) < 4) { renderPage(cvRef.current.getContext('2d'), page, imgRef.current); return; }
@@ -624,9 +883,9 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     const { lock, lt, straight, ...clean } = s;
     commit(clean);
   };
-  const swap = (from, to) => { const h = from.current.pop(); if (!h) return; to.current.push({ pi: h.pi, strokes: d.pages[h.pi].strokes }); setD(o => ({ ...o, pages: o.pages.map((q, i) => i === h.pi ? { ...q, strokes: h.strokes } : q) })); };
-  const addText = () => { if (tin && tin.v.trim()) commit({ k: 'text', c: color, x: tin.x, y: tin.y, t: tin.v.trim(), s: 44 }); setTin(null); };
-  const goPage = n => { setPi(Math.max(0, Math.min(d.pages.length - 1, n))); hist.current = []; redo.current = []; if (boxRef.current) boxRef.current.scrollTop = 0; };
+  // повертає true, якщо крок виконано (для тосту «Нема чого скасовувати»); сторінки — з dRef, бо swap викликає й кнопка тосту зі старого рендера
+  const swap = (from, to) => { const h = from.current.pop(); if (!h) return false; to.current.push({ pi: h.pi, strokes: dRef.current.pages[h.pi].strokes }); setD(o => ({ ...o, pages: o.pages.map((q, i) => i === h.pi ? { ...q, strokes: h.strokes } : q) })); return true; };
+  const goPage = n => { commitText(); setPi(Math.max(0, Math.min(d.pages.length - 1, n))); hist.current = []; redo.current = []; if (boxRef.current) boxRef.current.scrollTop = 0; };
   const placeRuler = () => {
     const el = boxRef.current, sc = (fit.w * zoom) / page.w;
     return { on: true, x: (el.scrollLeft + el.clientWidth * 0.12) / sc, y: (el.scrollTop + el.clientHeight * 0.4) / sc, a: 0, len: Math.min(page.w * 0.85, (el.clientWidth * 0.76) / sc) };
@@ -635,7 +894,14 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   // повторний дотик до активного інструмента — його налаштування
   const pickTool = k => {
     if (k === tool && k !== 'hand') { openPop('style'); return; }
-    setTool(k); setPop(null);
+    selectTool(k);
+  };
+  // зміна інструмента: спершу зафіксувати текст на холсті
+  const selectTool = k => { commitText(); spaceTool.current = null; setTool(k); setPop(null); };
+  // «Ручка ↔ Гумка» (клавіша X і кнопка; заміна подвійного дотику Apple Pencil, якого у вебі немає)
+  const swapPE = () => {
+    if (tool === 'eraser') { selectTool(TOOLCFG[prevDraw.current] && prevDraw.current !== 'text' ? prevDraw.current : 'pen'); return 'pen'; }
+    prevDraw.current = TOOLCFG[tool] && tool !== 'text' ? tool : lastT !== 'text' ? lastT : 'pen'; selectTool('eraser'); return 'eraser';
   };
   const rulerDown = (e, mode) => { e.stopPropagation(); e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); const [x, y] = pos(e); rdrag.current = { mode, x0: x, y0: y, r0: { ...ruler } }; };
   const rulerMove = e => {
@@ -670,29 +936,60 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   }, [pop]);
   const addPage = () => { setD(o => ({ ...o, pages: [...o.pages, { w: page.w, h: page.h, tpl: page.img ? 'blank' : page.tpl, strokes: [] }] })); setPi(d.pages.length); hist.current = []; redo.current = []; };
   const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; redo.current = []; };
+  // ===== Клавіатура редактора (ipad-interactions 5.2): реєстр shortcuts.js, клавіші — за e.code =====
+  // e.code, а не e.key: на українській розкладці e.key для Z — «я», і ⌘Z / ⌘C / ⌘V раніше не спрацьовували.
+  // У полях введення (назва, текст на сторінці, поповери) скорочення редактора не перехоплюються.
+  const keyHint = label => {
+    // підказка назви інструмента — лише перші 3 рази, далі тільки aria-live
+    let n = 0; try { n = Number(localStorage.getItem('helper-keyhint')) || 0; } catch (er) {}
+    if (n < 3) { lsSet('helper-keyhint', String(n + 1)); setToast({ text: label, ms: 1200 }); }
+    say(label);
+  };
   useEffect(() => {
     const h = e => {
       if (exp) return; // відкрито вікно експорту: клавіші належать йому
-      if (e.key === 'Escape' && pop) { setPop(null); return; }
-      // ласо: Delete — видалити, Esc — зняти, Cmd/Ctrl+C / X / V / D / A
-      const tg = e.target, inField = tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA' || tg.isContentEditable);
-      if (!tin && !inField && !pop) {
-        const mod = e.metaKey || e.ctrlKey, k = e.key.toLowerCase();
-        if (e.key === 'Escape' && (selOk || pasteAt || selPal)) { e.preventDefault(); if (selPal) setSelPal(false); else { setSel(null); setPasteAt(null); } return; }
-        if (selOk && !mod && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); selDelete(); return; }
-        if (mod && !e.shiftKey && !e.altKey) {
-          if (k === 'c' && selOk) { e.preventDefault(); selCopy(); return; }
-          if (k === 'x' && selOk) { e.preventDefault(); selCopy(); selDelete(); return; }
-          if (k === 'd' && selOk) { e.preventDefault(); selDup(); return; }
-          if (k === 'v' && CLIP) { e.preventDefault(); pasteClip(); return; }
-          if (k === 'a' && tool === 'lasso') { e.preventDefault(); selectAll(); return; }
-        }
+      if (composing(e)) return;
+      if (e.code === 'Escape' && pop) { setPop(null); return; }
+      if (tinRef.current || inField(e.target) || pop) return;
+      const sc = scFind(e, ['ed', 'lasso']); if (!sc) return;
+      // однолітерні — лише на iPad (вікно ≥768, там же вимикач у Налаштуваннях, WCAG 2.1.4) і не на кнопці (пробіл натискає кнопку)
+      if (sc.one && (!oneKeysOn() || window.innerWidth < 768 || (sc.id === 'hand' && e.target.closest && e.target.closest('button, a, [role="button"]')))) return;
+      if (e.repeat && !sc.rep) { if (sc.id === 'hand') e.preventDefault(); return; }
+      const run = f => { e.preventDefault(); f(); };
+      switch (sc.id) {
+        case 'unsel': if (selOk || pasteAt || selPal) run(() => { if (selPal) setSelPal(false); else { setSel(null); setPasteAt(null); } }); return;
+        case 'del': if (selOk) run(selDelete); return;
+        case 'copy': if (selOk) run(selCopy); return;
+        case 'cut': if (selOk) run(() => { selCopy(); selDelete(); }); return;
+        case 'dup': if (selOk) run(selDup); return;
+        case 'paste': if (CLIP) run(() => pasteClip()); return;
+        case 'selall': if (tool === 'lasso') run(selectAll); return;
+        case 'undo': run(() => swap(hist, redo)); return;
+        case 'redo': run(() => swap(redo, hist)); return;
+        case 'swapPE': run(() => keyHint(toolLabel(swapPE()))); return;
+        case 'ruler': run(() => { toggleRuler(); say(tr("Лінійка") + ': ' + (ruler.on ? tr("вимкнено") : tr("увімкнено"))); }); return;
+        case 'hand': run(() => { if (tool !== 'hand') { spaceTool.current = tool; commitText(); setTool('hand'); setPop(null); } }); return;
+        case 'thinner': case 'thicker': run(() => {
+          const dir = sc.id === 'thicker' ? 1 : -1;
+          if (tool === 'eraser') { const i = Math.max(0, Math.min(2, er.wi + dir)); upd('eraser', { wi: i }); say(tr("Розмір гумки") + ': ' + tr(['Малий', 'Середній', 'Великий'][i])); }
+          else if (ctool !== 'text') { const i = Math.max(0, Math.min(2, wi + dir)); setWi(i); say(tr("Товщина") + ': ' + tr(WN[i])); }
+        }); return;
+        case 'zin': run(() => setZoom(z => Math.min(zMax, +(z * 1.25).toFixed(3)))); return;
+        case 'zout': run(() => setZoom(z => Math.max(zMin, +(z / 1.25).toFixed(3)))); return;
+        case 'zfit': run(() => { pickZoom('width'); say(tr("По ширині")); }); return;
+        case 'pgprev': case 'pgnext': run(() => { const n = pi + (sc.id === 'pgnext' ? 1 : -1); if (n < 0 || n >= d.pages.length) return; goPage(n); say(tr("Сторінка") + ' ' + (n + 1) + ' ' + tr("з") + ' ' + d.pages.length); }); return;
+        default: if (sc.tool) run(() => { if (tool !== sc.tool) selectTool(sc.tool); keyHint(toolLabel(sc.tool)); });
       }
-      if (tin || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
-      e.preventDefault(); if (e.shiftKey) swap(redo, hist); else swap(hist, redo);
     };
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
   });
+  // пробіл відпустили (або вікно втратило фокус) — повертаємо інструмент, що був до тимчасової «Руки»
+  useEffect(() => {
+    const back = () => { const t = spaceTool.current; if (!t) return; spaceTool.current = null; setTool(t); };
+    const u = e => { if (e.code === 'Space') back(); };
+    window.addEventListener('keyup', u); window.addEventListener('blur', back);
+    return () => { window.removeEventListener('keyup', u); window.removeEventListener('blur', back); };
+  }, []);
   const share = () => {
     const cv = cvRef.current; if (!cv) return;
     cv.toBlob(async b => {
@@ -703,7 +1000,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
       } catch (e) {}
     }, 'image/png');
   };
-  const close = async () => { try { const t = await makeThumb(d); await flush({ thumb: t }); } catch (e) {} onClose(); };
+  const close = async () => { const nd = commitText() || d; try { const t = await makeThumb(nd); await flush({ thumb: t }, nd); } catch (e) {} onClose(); };
   // Помічник: посилання [с. N] у відповіді відкриває цю сторінку (jump = { page, t })
   useEffect(() => { if (jump && jump.page) goPage(jump.page - 1); }, [jump]);
   // «Помічник» у шапці: на iPad (вікно ≥768) — права панель (≥1024 поруч, 768–1023 поверх; документ лишається відкритим, I4),
@@ -752,8 +1049,23 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   // кнопки ряду документа (порядок у DOM задає wideBar)
   const bCheck = <IB n="check" label={tr("Готово")} onClick={close} />;
   const bPages = <IB n="pages" label={tr("Сторінки")} on={thVis} pressed={tmode === 'strip' ? undefined : thVis} onClick={togThumbs} />;
-  const bUndo = <IB n="undo" label={tr("@undo:Скасувати")} onClick={() => swap(hist, redo)} />;
-  const bRedo = <IB n="redo" label={tr("Вперед")} onClick={() => swap(redo, hist)} />;
+  const oneOn = oneKeysOn();
+  const kt = (label, id) => withKey(label, id, oneOn);
+  const ka = id => { const x = scById(id); return x && (!x.one || oneOn) ? x.k[0].replace('Mod', 'Meta').replace(/Key|Digit/, '') : undefined; };
+  const bUndo = <IB n="undo" label={tr("@undo:Скасувати")} kbd={kt(tr("@undo:Скасувати"), 'undo')} kbdAria={ka('undo')} onClick={() => swap(hist, redo)} />;
+  const bRedo = <IB n="redo" label={tr("Вперед")} kbd={kt(tr("Вперед"), 'redo')} kbdAria="Meta+Shift+Z" onClick={() => swap(redo, hist)} />;
+  // «Ручка ↔ Гумка» поруч зі скасуванням — швидкий доступ лівою рукою (заміна подвійного дотику Pencil); лише в ряду ≥560
+  const bSwap = <IB n="swap" label={tr("Ручка ↔ Гумка")} kbd={kt(tr("Ручка ↔ Гумка"), 'swapPE')} kbdAria={ka('swapPE')} on={tool === 'eraser'} pressed={tool === 'eraser'} onClick={() => { swapPE(); }} />;
+  // прев'ю кінчика: форма й розмір — з інструмента, кольору, товщини й масштабу (CSS-змінні), позиція — transform з onHover
+  const hovK = tool === 'eraser' ? 'er' : tool === 'lasso' || tool === 'shape' ? 'x' : tool === 'text' ? 'tx' : tool === 'hl' ? 'hl' : DRAW.includes(tool) ? 'pen' : 'none';
+  const hovSt = (() => {
+    const edge = isLight(color) ? INK_EDGE : rgba(color, 0.8);
+    if (hovK === 'pen') { const dd = Math.max(6, wd * ws0 * scNow); return { '--hw': dd + 'px', '--hh': dd + 'px', '--hf': rgba(color, tool === 'pencil' ? 0.25 : 0.35), '--hb': edge }; }
+    if (hovK === 'hl') { const dd = Math.max(6, wd * ws0 * scNow); return { '--hw': Math.max(6, dd * 0.4) + 'px', '--hh': dd + 'px', '--hf': rgba(color, 0.3), '--hb': edge }; }
+    if (hovK === 'er') { const dd = Math.max(8, 2 * er.sizes[er.wi] * ws0 * scNow); return { '--hw': dd + 'px', '--hh': dd + 'px' }; }
+    if (hovK === 'tx') return { '--hh': Math.max(10, TEXT_S * ws0 * scNow) + 'px', '--hf': color };
+    return undefined;
+  })();
   const bTitle = <input className="edtitle" value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label={tr("Назва")} />;
   const bZoom = <button className="edzoom" onClick={() => openPop('zoom')} aria-haspopup="dialog" aria-expanded={pop === 'zoom'} aria-label={tr("Масштаб") + ': ' + (zoom === 1 ? tr(ZN[zmode]) : zPct + '%')} title={tr("Масштаб")}>
     <span>{zLabel}</span><EIcon n="chevD" size={16} /></button>;
@@ -770,14 +1082,14 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
       <div className="edbar" ref={barRef} onPointerDownCapture={notePopSrc}>
         <div className="edrow2">
           {wideBar ? <>
-            <div className="edg edl">{bCheck}{bPages}<span className="edsep edw" aria-hidden="true" />{bUndo}{bRedo}</div>
+            <div className="edg edl">{bCheck}{bPages}<span className="edsep edw" aria-hidden="true" />{bUndo}{bRedo}{bSwap}</div>
             {bTitle}
             <div className="edg edr">{bZoom}{bShare}{bMore}{bAi}</div>
           </> : <>{bCheck}{bTitle}{bUndo}{bRedo}{bPages}{bShare}{bMore}{bAi}</>}
         </div>
         <div className="edrow3">
           <div className="edtools" role="group" aria-label={tr("Інструменти")}>
-            {TOOLS.map(k => <IB key={k} n={toolIcon(k)} label={toolLabel(k)} on={tool === k} pressed={tool === k} onClick={() => pickTool(k)} />)}
+            {TOOLS.map(k => <IB key={k} n={toolIcon(k)} label={toolLabel(k)} kbd={TOOL_SC[k] ? kt(toolLabel(k), TOOL_SC[k]) : undefined} kbdAria={TOOL_SC[k] ? ka(TOOL_SC[k]) : undefined} on={tool === k} pressed={tool === k} onClick={() => pickTool(k)} />)}
           </div>
           {tool !== 'hand' && <span className="edsep edw" aria-hidden="true" />}
           <div className="edctx" role="group" aria-label={tr("Колір і товщина")}>{ctxRow}</div>
@@ -795,7 +1107,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
       </nav>}
       <div className={'edbox' + (page.img ? ' img' : '')} ref={boxRef} onPointerDownCapture={tmode === 'over' && thOver ? e => { e.stopPropagation(); e.preventDefault(); setThOver(false); } : undefined}>
         <div className="cvwrap" style={{ width: fit.w * zoom, height: fit.h * zoom }}>
-          <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: '100%', height: '100%', touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
+          <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: '100%', height: '100%', touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onPointerLeave={e => { if (e.pointerType !== 'touch') hideHover(); }} />
           {ruler.on && (() => { const sc = (fit.w * zoom) / page.w; return (
             <div className="ruler" style={{ left: ruler.x * sc, top: ruler.y * sc, width: ruler.len * sc, transform: 'rotate(' + ruler.a + 'rad)' }}>
               <div className="rbody" />
@@ -840,6 +1152,16 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
           {pasteAt && <div className="selmenu" style={{ left: Math.max(4, pasteAt.x * scNow - 60), top: Math.max(4, pasteAt.y * scNow - 60) }}>
             <button className="selb pri" autoFocus onClick={() => pasteClip(pasteAt)}><EIcon n="paste" size={18} />{tr("Вставити")}</button>
           </div>}
+          {/* текст прямо на холсті: постійно змонтоване поле (focus() синхронно з дотику), позиція — з координат сторінки */}
+          <textarea ref={taRef} className="cvtext" hidden={!tin} aria-label={tr("Текст на сторінці")} placeholder={tr("Введіть текст")} rows={1} autoCapitalize="sentences"
+            style={tin ? taStyle(tin, scNow) : undefined} onInput={e => autoSize(e.currentTarget)} onKeyDown={taKey} onBlur={() => { if (!tdrag.current) commitText(); }} />
+          {tin && (() => {
+            const st = taStyle(tin, scNow), L = parseFloat(st.left), T0 = parseFloat(st.top), W = parseFloat(st.width), H = taH || 0;
+            return <>
+              <div className="cvt-h mv" style={{ left: L - 22, top: T0 - 22 }} onPointerDown={e => taDown(e, 'mv')} onPointerMove={taMove} onPointerUp={taUp} onPointerCancel={taUp} onMouseDown={e => e.preventDefault()} aria-hidden="true"><i /></div>
+              <div className="cvt-h wd" style={{ left: L + W - 22, top: T0 + H / 2 - 22 }} onPointerDown={e => taDown(e, 'w')} onPointerMove={taMove} onPointerUp={taUp} onPointerCancel={taUp} onMouseDown={e => e.preventDefault()} aria-hidden="true"><i /></div>
+            </>; })()}
+          <div ref={hovRef} className={'hovp k-' + hovK} style={hovSt} aria-hidden="true"><i /></div>
         </div>
       </div>
       </div>
@@ -852,7 +1174,12 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
         <IB n="plus" label={tr("Додати сторінку")} onClick={addPage} />
         <span className="pgz edw">{(zoom === 1 ? tr(ZN[zmode]) + ' · ' : '') + zPct + '%'}</span>
       </div>
-      {toast && <div className="edtoast" role="status">{toast}</div>}
+      {(() => {
+        const T = typeof toast === 'string' ? (toast ? { text: toast } : null) : toast;
+        return T && <div className={'edtoast' + (T.act ? ' act' : '')} role="status">
+          <span>{T.text}</span>{T.act && <button className="edtoast-b" onClick={() => T.act.run()} onPointerEnter={() => holdToast(true)} onPointerLeave={() => holdToast(false)} onFocus={() => holdToast(true)} onBlur={() => holdToast(false)}>{T.act.label}</button>}</div>;
+      })()}
+      <div className={'zchip' + (zchip ? ' on' : '')} style={{ top: (barRef.current ? barRef.current.offsetHeight : 52) + 12 }} aria-hidden="true">{zPct}%</div>
       {pop && <div className="popback" onClick={() => setPop(null)}><div className={'pop' + (pop === 'zoom' ? ' zpop' : '')} role="dialog" aria-label={pop === 'more' ? tr("Ще") : pop === 'zoom' ? tr("Масштаб") : tr("Налаштування інструмента")} style={popPos ? { top: popPos.top, left: popPos.left, width: popPos.width, right: 'auto', margin: 0, maxHeight: 'calc(100% - ' + (popPos.top + 12) + 'px)' } : { top: 96 }} onClick={e => e.stopPropagation()}>
         {pop === 'style' && (tool === 'eraser' ? <>
           <div className="pop-t">{tr("Гумка")}</div>
@@ -891,17 +1218,13 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
           <div className="prow ph-z"><IB n="zout" label={tr("Масштаб")} onClick={() => setZoom(Math.max(1, +(zoom - 0.5).toFixed(1)))} /><span className="sub">{Math.round(zoom * 100)}%</span><IB n="zin" label={tr("Масштаб")} onClick={() => setZoom(Math.min(5, +(zoom + 0.5).toFixed(1)))} /></div>
           {d.type === 'notebook' && !page.img && <div className="prow">{[['blank', 'Чиста'], ['lined', 'У лінійку'], ['grid', 'Клітинка'], ['dots', 'Крапки']].map(([k, n]) => <button key={k} className={'chip' + (page.tpl === k ? ' on' : '')} style={{ margin: 0 }} onClick={() => setPage({ ...page, tpl: k })}>{tr(n)}</button>)}</div>}
           {stylusTg}
+          <button className={'tg' + (tapOn ? ' on' : '')} aria-pressed={tapOn} onClick={() => { const v = !tapOn; setTapOn(v); lsSet(TAP_KEY, v ? '1' : '0'); }}><span>{tr("Дотик двома пальцями — скасувати, трьома — повторити")}</span><b>{tapOn ? '✓' : ''}</b></button>
           <button className={'tg' + (pressure ? ' on' : '')} aria-pressed={pressure} onClick={() => setPressure(!pressure)}><span>{tr("Чутливість до нажиму")}</span><b>{pressure ? '✓' : ''}</b></button>
           <button className="tg" onClick={() => { setPop(null); setExp(true); }} aria-haspopup="dialog"><span>{tr("Експорт у PDF")}<small className="tgsub">{tr("Сторінки разом із позначками")}</small></span><EIcon n="share" size={20} /></button>
           {d.pages.length > 1 && <button className="tg" onClick={() => { delPage(); setPop(null); }}><span>{tr("Видалити сторінку")}</span><EIcon n="trash" size={20} /></button>}
         </>}
       </div></div>}
       {exp && <ExportSheet doc={d} cur={pi + 1} onClose={() => setExp(false)} />}
-      {tin && <div className="ov" onClick={() => setTin(null)}><div className="sheet" onClick={e => e.stopPropagation()}>
-        <b>{tr("Текст на сторінці")}</b>
-        <textarea style={{ marginTop: 12 }} rows={3} autoFocus value={tin.v} onChange={e => setTin({ ...tin, v: e.target.value })} placeholder={tr("Введіть текст")} />
-        <div className="row"><button className="btn" onClick={addText}>{tr("Додати")}</button></div>
-      </div></div>}
     </div>
   );
 }
@@ -1081,6 +1404,15 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
   const scRef = useRef(null), imRef = useRef(null), pdfRef = useRef(null), impAc = useRef(null), impTok = useRef(null), lp = useRef(null), fired = useRef(false), retFocus = useRef(null);
 
   useEffect(() => { try { const v = localStorage.getItem('helper-docview'); if (v === 'list' || v === 'grid') setView(v); } catch (e) {} }, []);
+  // клавіатурні скорочення з page.js (⌘N — «Новий зошит», ⌘K — пошук); під час відкритого редактора — нічого
+  useEffect(() => {
+    const h = e => {
+      if (ed) return;
+      if (e.detail === 'new') { retFocus.current = document.activeElement; setMenu(false); setNb({ title: '', cover: COVERS[0], tpl: 'lined' }); }
+      if (e.detail === 'search') { const el = document.getElementById('mq-h'); if (el) { el.focus(); el.select(); } else setSearch(true); }
+    };
+    window.addEventListener('helper-cmd', h); return () => window.removeEventListener('helper-cmd', h);
+  }, [ed]);
   const pickView = v => { setView(v); try { localStorage.setItem('helper-docview', v); } catch (e) {} };
   useEffect(() => {
     const reload = () => { listMeta().then(setDocs); };

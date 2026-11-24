@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import Materials, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, docMaterial, materialOf, TEXT_PAGES, PALETTE_C, SOLID, colorKey } from './docs';
 import { FolderGlyph, FOLDER_COLORS, FICONS, LineIcon, isHex } from './folder-icons';
 import { canMoveFolder, folderPath } from './lib';
@@ -10,6 +10,7 @@ import Assistant, { migrateChats, AiPanel } from './assistant';
 import { occurs, makePlan, isEv, isRep, isExam, openTasks, dayCount } from './plan';
 import { localParse } from './qparse';
 import { buildBackup, downloadBlob, backupName, inspectBackup, applyBackup, getBkMeta, setBkMeta } from './backup';
+import { SC, SC_GROUPS, scFind, inField, composing, oneKeysOn, setOneKeys, keyLabel } from './shortcuts';
 import { normCard, needsNorm, preview as srsPreview, queue as srsQueue, nextUp, isLearned, resetCard, newCardFields, ivParts, NEW_PER_DAY } from './srs';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
@@ -50,6 +51,7 @@ const ICONS = {
   user: <><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" /></>,
   sync: <><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" /><path d="M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16" /><path d="M20 20v-4h-4" /></>,
   data: <><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></>,
+  kbd: <><rect x="2.5" y="6" width="19" height="12" rx="2" /><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M8 14h8" /></>,
   key: <><circle cx="8" cy="15" r="4" /><path d="M11 12l9-9M17 6l3 3M15 8l2 2" /></>
 };
 // чекбокс задачі: видимий квадрат 22px, зона натискання — label 44×44 (WCAG 2.5.8, HIG 44 pt)
@@ -244,6 +246,13 @@ export default function Home() {
   const [allSel, setAllSel] = useState(null); // «Усі» на iPad: вибраний запис і його форма
   const [af, setAfS] = useState(null);
   const [setSec, setSetSec] = useState('gen'); // Налаштування на iPad: поточний розділ
+  // клавіатура (ipad-interactions 5): шпаргалка ⌘/, вимикач однолітерних скорочень; keyRef — обробник з актуальним станом
+  const [kbOpen, setKbOpen] = useState(false);
+  const [oneKeys, setOneKeysS] = useState(true);
+  const keyRef = useRef(null), kbPrev = useRef(null);
+  // шкала дня: призрак слоту { min, dur, st: 'hover' | 'pressed' | 'opening' }; press — поточне натискання; slotNew — подію створюють зі слоту
+  const [ghost, setGhost] = useState(null);
+  const press = useRef(null), lastScroll = useRef(0), slotNew = useRef(false), tlRef = useRef(null);
   const [show, setShow] = useState(false);
   const [cq, setCq] = useState('');
   const [ca, setCa] = useState('');
@@ -320,6 +329,15 @@ export default function Home() {
     const h = e => revKey.current && revKey.current(e);
     document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h);
   }, [rev != null]);
+  useEffect(() => {
+    setOneKeysS(oneKeysOn());
+    const h = e => keyRef.current && keyRef.current(e);
+    const sc = () => { lastScroll.current = performance.now(); };
+    document.addEventListener('keydown', h); window.addEventListener('scroll', sc, { passive: true, capture: true });
+    return () => { document.removeEventListener('keydown', h); window.removeEventListener('scroll', sc, { capture: true }); };
+  }, []);
+  // вікно «Нова подія» зі слоту закрили (створено або скасовано) — призрак зникає
+  useEffect(() => { if (!sheet) { setGhost(g => (g && g.st === 'opening' ? null : g)); slotNew.current = false; } }, [sheet]);
   useEffect(() => { if (!toast || toast.hold) return; const tm = setTimeout(() => setToast(null), 8000); return () => clearTimeout(tm); }, [toast]);
   // лінія «зараз» на шкалі дня: перемальовувати раз на хвилину
   useEffect(() => { const iv = setInterval(() => setTick(x => x + 1), 60000); return () => clearInterval(iv); }, []);
@@ -435,7 +453,12 @@ export default function Home() {
   };
   const saveTask = () => {
     const base = buildItem(f); if (!base) return;
-    if (sheet === 'new') setItems([...items, { id: Date.now(), ...base, done: false }]);
+    if (sheet === 'new') {
+      const id = Date.now();
+      setItems([...items, { id, ...base, done: false }]);
+      // подія зі слоту шкали: тост із «Скасувати» (блок з'являється на місці призрака)
+      if (slotNew.current) setToast({ text: base.kind === 'event' ? tr("Подію додано") : tr("Додано"), undo: () => setItems(its => its.filter(i => i.id !== id)) });
+    }
     else setItems(items.map(i => i.id === sheet ? { ...i, ...base } : i));
     closeSheet();
   };
@@ -832,7 +855,8 @@ export default function Home() {
   })();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   // для сьогодні шкала містить поточну годину (з 6:00 до 24:00), щоб лінія «зараз» була видна; уночі шкала не розтягується
-  const tlH0 = Math.max(0, Math.min(start, ...(isToday && now.getHours() >= 6 ? [now.getHours()] : []), ...tlItems.map(b => Math.floor(b.s / 60))));
+  // порожня шкала: робочі години 8:00–22:00 (події поза ними розширюють шкалу як і раніше)
+  const tlH0 = Math.max(0, Math.min(tlItems.length ? start : 8, ...(isToday && now.getHours() >= 6 ? [now.getHours()] : []), ...tlItems.map(b => Math.floor(b.s / 60))));
   const tlH1 = Math.min(24, Math.max(22, tlH0 + 1, ...(isToday ? [now.getHours() + 1] : []), ...tlItems.map(b => Math.ceil(b.e / 60))));
   const showNow = isToday && nowMin >= tlH0 * 60 && nowMin <= tlH1 * 60;
   const hhPos = m => 'calc(var(--hh) * ' + ((m - tlH0 * 60) / 60).toFixed(4) + ')';
@@ -898,6 +922,110 @@ export default function Home() {
     <button className="fhd-b" onClick={onCancel}>{tr("Скасувати")}</button>
     <h2 id={id}>{title}</h2>
     <button className="fhd-b pri" onClick={onDone} disabled={!canDone}>{doneLabel}</button></div>;
+
+  // ===== Нова подія з часом (тап по слоту шкали, ⌘N у Плані): початок — min (хв від 00:00), тривалість 1 год, не далі 24:00 =====
+  const openEventAt = (date, min, fromSlot) => {
+    sheetPrev.current = document.activeElement;
+    const dur = Math.min(60, 24 * 60 - min);
+    setF({ ...EMPTY, kind: 'event', due: date, time: hm(min), h: String(dur / 60) });
+    setMore(true); setSheet('new'); slotNew.current = !!fromSlot;
+  };
+  // ⌘N у Плані: найближче наступне півгодини для сьогодні, 9:00 для інших днів
+  const newEventNow = () => openEventAt(selDate, isToday ? Math.min(23 * 60 + 30, Math.ceil((nowMin + 1) / 30) * 30) : 9 * 60, false);
+
+  // ===== Шкала дня: тап по порожньому місцю → «Нова подія» (ipad-interactions 4) =====
+  // Округлення вниз до 30 хв (36 px на iPad — надійне влучання пальцем). Не під час інерційної прокрутки (scroll за 100 мс),
+  // тап — зсув < 10 px і < 500 мс; pointercancel (браузер забрав жест під прокрутку) — без дії. touch-action не чіпаємо.
+  const slotMin = e => {
+    const el = tlRef.current; if (!el) return null;
+    const r = el.getBoundingClientRect(), hh = parseFloat(getComputedStyle(el).getPropertyValue('--hh')) || 64;
+    const m = tlH0 * 60 + Math.floor(((e.clientY - r.top) / hh) * 2) * 30;
+    return Math.max(tlH0 * 60, Math.min(tlH1 * 60 - 30, m));
+  };
+  const onSlotBlock = e => !!(e.target.closest && e.target.closest('.tlb, button, a, input, label'));
+  const tlDown = e => {
+    if (onSlotBlock(e) || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (performance.now() - lastScroll.current < 100) return; // дотик лише зупиняє інерційну прокрутку
+    const min = slotMin(e); if (min == null) return;
+    const p = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, min };
+    p.show = setTimeout(() => { if (press.current === p) setGhost({ min, st: 'pressed' }); }, 100); // без мерехтіння під час прокрутки
+    press.current = p;
+  };
+  const cancelPress = () => { const p = press.current; if (!p) return; clearTimeout(p.show); press.current = null; setGhost(g => (g && g.st === 'pressed' ? null : g)); };
+  const tlMove = e => {
+    const p = press.current;
+    if (p && p.id === e.pointerId) { if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > 10) cancelPress(); return; }
+    // hover трекпадом або пером: призрак 30 хв із підписом «+ 14:30»
+    if ((e.pointerType === 'mouse' || e.pointerType === 'pen') && e.buttons === 0) {
+      if (onSlotBlock(e)) { setGhost(g => (g && g.st === 'hover' ? null : g)); return; }
+      const min = slotMin(e); setGhost(g => (g && g.st !== 'hover' ? g : g && g.min === min ? g : { min, st: 'hover' }));
+    }
+  };
+  const tlUp = e => {
+    const p = press.current; if (!p || p.id !== e.pointerId) return;
+    clearTimeout(p.show); press.current = null;
+    if (e.timeStamp - p.t > 500 || slotMin(e) !== p.min) { setGhost(null); return; }
+    setGhost({ min: p.min, st: 'opening' });
+    openEventAt(selDate, p.min, true);
+  };
+  const tlLeave = e => { if (e.pointerType !== 'touch') setGhost(g => (g && g.st === 'hover' ? null : g)); };
+
+  // ===== Глобальні скорочення й План (реєстр shortcuts.js; клавіші — за e.code) =====
+  // Поверх шару (аркуш .ov, поповер, редактор / нотатка / сесія .nv) загальні скорочення не працюють, крім ⌘J і ⌘/ над .nv:
+  // інакше ⌘1 закрив би редактор разом із незбереженими штрихами.
+  const wideKb = win !== 'c';
+  const openKb = () => { kbPrev.current = document.activeElement; setKbOpen(true); };
+  // список скорочень за групами; у шпаргалці група поточного розділу (План) — першою
+  const kbList = sheetMode => {
+    const gs = sheetMode && tab === 'today' ? [...SC_GROUPS.filter(g => g[0] === 'plan'), ...SC_GROUPS.filter(g => g[0] !== 'plan')] : SC_GROUPS;
+    return <div className={'kbl' + (sheetMode ? ' two' : '')}>{gs.map(([g, n]) => <section key={g} className="kbg" aria-labelledby={'kbg-' + g + (sheetMode ? 's' : '')}>
+      <h3 className="kbg-t" id={'kbg-' + g + (sheetMode ? 's' : '')}>{tr(n)}</h3>
+      <dl>{SC.filter(x => x.g === g).map(x => <div key={x.id} className={'kbr' + (x.one && !oneKeys ? ' off' : '')}><dt>{x.k.map((k, i) => <Fragment key={k}>{i > 0 && <span className="kbor"> {tr("або")} </span>}<kbd>{keyLabel(k, tr("Пробіл"))}</kbd></Fragment>)}</dt><dd>{tr(x.n)}{x.one && !oneKeys ? ' · ' + tr("вимкнено") : ''}</dd></div>)}</dl>
+    </section>)}</div>;
+  };
+  const closeKb = () => { setKbOpen(false); const p = kbPrev.current; kbPrev.current = null; if (p && document.contains(p) && p.focus) setTimeout(() => p.focus(), 0); };
+  keyRef.current = e => {
+    if (e.defaultPrevented || composing(e)) return;
+    if (kbOpen) { if (e.code === 'Escape' || ((e.metaKey || e.ctrlKey) && e.code === 'Slash')) { e.preventDefault(); closeKb(); } return; }
+    const fld = inField(e.target), modal = document.querySelector('.ov, .popback, .mpop'), layer = document.querySelector('.nv');
+    // «?» без модифікатора — теж шпаргалка (за e.key: на різних розкладках це різні клавіші)
+    if (e.key === '?' && !e.metaKey && !e.ctrlKey && !fld && !modal && wideKb && oneKeys) { e.preventDefault(); openKb(); return; }
+    const sc = scFind(e, ['gen', 'plan']); if (!sc) return;
+    if (fld && !sc.field) return;
+    if (e.repeat && !sc.rep) return;
+    if (sc.one && (!oneKeys || !wideKb)) return;
+    const run = f => { e.preventDefault(); f(); };
+    if (sc.id === 'ai') { if (modal || (layer && win === 'c')) return; run(() => { if (win !== 'c') setAiOpen(!aiOpen); else goTab('ai'); }); return; }
+    if (sc.id === 'keys') { if (modal) return; run(openKb); return; }
+    if (modal || layer) return;
+    if (fld) return;
+    switch (sc.id) {
+      case 'tab1': case 'tab2': case 'tab3': case 'tab4': run(() => goTab(TABS[Number(sc.id.slice(3)) - 1][0])); return;
+      case 'settings': run(() => setTab('set')); return;
+      case 'search': run(() => { if (tab !== 'folders') setTab('folders'); setTimeout(() => window.dispatchEvent(new CustomEvent('helper-cmd', { detail: 'search' })), tab !== 'folders' ? 120 : 0); }); return;
+      case 'new':
+        if (tab === 'today') run(newEventNow);
+        else if (tab === 'folders') run(() => window.dispatchEvent(new CustomEvent('helper-cmd', { detail: 'new' })));
+        else if (tab === 'cards') run(() => { if (deckV && !deckV.isNew) { const el = document.getElementById('dk-q'); if (el) el.focus(); } else newDeck(); });
+        return;
+      case 'prev': case 'next': if (tab !== 'today' || pv === 'all') return;
+        run(() => { const n = sc.id === 'next' ? 1 : -1; if (pv === 'month') setCalM(cm + n); else shiftDay(n); }); return;
+      case 'today': if (tab !== 'today' || pv === 'all') return; run(() => { setSel(''); setCalM(null); }); return;
+      default:
+    }
+  };
+  // перший ⌘ на iPad означає, що є клавіатура: одноразова підказка про шпаргалку
+  const kbHintSeen = () => { try { return localStorage.getItem('helper-kbhint') === '1'; } catch (e) { return true; } };
+  if (wideKb && !kbOpen && typeof window !== 'undefined' && !kbHintSeen()) {
+    const prevKey = keyRef.current;
+    keyRef.current = e => {
+      prevKey(e);
+      if ((e.metaKey || e.ctrlKey) && !['MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight'].includes(e.code)) {
+        try { localStorage.setItem('helper-kbhint', '1'); } catch (er) {}
+        setToast({ text: tr("Натисніть ⌘/, щоб побачити скорочення") });
+      }
+    };
+  }
 
   // ===== шапка Плану: заголовок, перемикач видів, навігація датами =====
   const curMonth = now.getFullYear() * 12 + now.getMonth();
@@ -1074,10 +1202,14 @@ export default function Home() {
                   {lateList.map(l => lateRow(l.it, l.left))}</section>}
               </div>}
               <div className="daymain">
-                {dayEmpty
-                  ? <div className="emptyday"><p>{selDate < today ? tr("Минулий день.") : tr("На цей день нічого немає.")}</p>
-                    {selDate >= today && <button className="btn2" onClick={() => toAI({ text: tr("Що мені краще зробити сьогодні і в якому порядку?"), send: true })}>{tr("Скласти план із ШІ")}</button>}</div>
-                  : tlItems.length > 0 && <section className="tl" aria-label={tr("Шкала дня")} style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 8px)' }}>
+                {dayEmpty && <div className="emptyday"><p>{selDate < today ? tr("Минулий день.") : tr("На цей день нічого немає.")}</p>
+                    {selDate >= today && <button className="btn2" onClick={() => toAI({ text: tr("Що мені краще зробити сьогодні і в якому порядку?"), send: true })}>{tr("Скласти план із ШІ")}</button>}</div>}
+                {/* шкала видна й у порожній день (там створення події найпотрібніше); на телефоні — як раніше, крім порожнього дня */}
+                {(tlItems.length > 0 || dayEmpty || win !== 'c') && <section className="tl" ref={tlRef} aria-label={tr("Шкала дня")} style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 8px)' }}
+                    onPointerDown={tlDown} onPointerMove={tlMove} onPointerUp={tlUp} onPointerCancel={cancelPress} onPointerLeave={tlLeave}>
+                    {ghost && <div className={'tl-ghost ' + ghost.st + (selDate < today || (isToday && ghost.min + 30 <= nowMin) ? ' past' : '')} aria-hidden="true"
+                      style={{ top: hhPos(ghost.min), height: 'calc(var(--hh) * ' + (ghost.st === 'hover' ? 0.5 : Math.min(60, 1440 - ghost.min) / 60) + ' - 4px)' }}>
+                      <span>+ {hm(ghost.min)}{ghost.st !== 'hover' ? '–' + (ghost.min + 60 >= 1440 ? '24:00' : hm(ghost.min + 60)) : ''}</span></div>}
                     {Array.from({ length: tlH1 - tlH0 + 1 }, (_, k) => <span key={k} className="tl-h" aria-hidden="true" style={{ top: 'calc(var(--hh) * ' + k + ')' }}>{pad((tlH0 + k) % 24 === 0 && k > 0 ? 24 : tlH0 + k)}:00</span>)}
                     <div className="tl-g" aria-hidden="true" style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 1px)' }} />
                     {tlItems.map(b => {
@@ -1165,7 +1297,7 @@ export default function Home() {
           const cur = allSel != null && af ? items.find(i => i.id === allSel) : null;
           return <div className="allv md">
             <div className="md-l">{lst}</div>
-            <section className="md-d" aria-label={tr("Деталі запису")}>
+            <section className="md-d mdfade" key={'md-' + allSel} aria-label={tr("Деталі запису")}>
               {cur ? <>
                 <h2 className="md-t">{af.kind === 'exam' ? tr("Іспит") : af.kind === 'event' ? tr("Подія") : tr("Задача")}</h2>
                 <p className="md-s">{tr("Зміни зберігаються одразу.")}</p>
@@ -1362,10 +1494,17 @@ export default function Home() {
         const cPass = <div className="card"><div className="sec" id="pass-title">{tr("Пароль доступу до ШІ та синхронізації")}</div>
           <div className="sub" id="pass-hint" style={{ marginBottom: 10 }}>{tr("Потрібен, якщо власник застосунку встановив пароль. Без нього ШІ та синхронізація не працюватимуть.")}</div>
           <input type="password" placeholder={tr("Пароль")} aria-labelledby="pass-title" aria-describedby="pass-hint" defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>;
+        // Клавіатурні скорочення (iPad): вимикач однолітерних (WCAG 2.1.4) і список із того ж реєстру, що й обробники
+        const cKeys = <div className="card kbc">
+          <button className={'tg' + (oneKeys ? ' on' : '')} aria-pressed={oneKeys} onClick={() => { const v = !oneKeys; setOneKeysS(v); setOneKeys(v); }}>
+            <span>{tr("Однолітерні скорочення")}<small className="tgsub">{tr("Клавіші без ⌘ у редакторі й Плані: P — ручка, E — гумка, T — сьогодні. Вимкніть, якщо натискаєте їх випадково.")}</small></span><b>{oneKeys ? '✓' : ''}</b></button>
+          <button className="btn2 kbc-all" onClick={openKb}>{tr("Показати всі скорочення")} · ⌘/</button>
+          {kbList(false)}</div>;
         const back = <button className="btn alt" onClick={() => setTab('today')}>{tr("Назад")}</button>;
         const head = <div className="top"><h1>{tr("Налаштування")}</h1>{aiBtn}</div>;
         // телефон і клас s: як було (картки підряд, «Назад»)
-        if (win === 'c' || rc === 's') return <>{head}{cLang}{cAcc}{cSync}{cData}{cTheme}{cStart}{cCap}{cNew}{cPass}{back}</>;
+        if (win === 'c') return <>{head}{cLang}{cAcc}{cSync}{cData}{cTheme}{cStart}{cCap}{cNew}{cPass}{back}</>;
+        if (rc === 's') return <>{head}{cLang}{cAcc}{cSync}{cData}{cTheme}{cStart}{cCap}{cNew}{cPass}<h2 className="sec kbc-h">{tr("Клавіатурні скорочення")}</h2>{cKeys}{back}</>;
         // iPad: розділи (ipad-layout-spec 9, I7). m — одна колонка 640 з розділами підряд; l/xl — список розділів + деталі ≤560
         const passSet = (() => { try { return !!localStorage.getItem('helper-pass'); } catch (e) { return false; } })();
         const SECS = [
@@ -1374,7 +1513,8 @@ export default function Home() {
           ['sync', tr("Синхронізація"), 'sync', sy.on ? tr("Увімкнено") : tr("Вимкнено"), tr("Обмін даними між пристроями цього акаунта."), cSync],
           ['data', tr("Дані"), 'data', bkm.last ? new Date(bkm.last).toLocaleDateString(loc(), { day: 'numeric', month: 'short' }) : '', tr("Резервна копія у файл і відновлення з неї."), cData],
           ['learn', tr("Навчання"), 'cards', '', tr("Початок навчання, години на день і нові картки."), <>{cStart}{cCap}{cNew}</>],
-          ['ai', tr("Доступ до ШІ"), 'key', passSet ? tr("Пароль задано") : '', tr("Пароль для Помічника й синхронізації."), cPass]
+          ['ai', tr("Доступ до ШІ"), 'key', passSet ? tr("Пароль задано") : '', tr("Пароль для Помічника й синхронізації."), cPass],
+          ['keys', tr("Клавіатурні скорочення"), 'kbd', '⌘/', tr("Для Magic Keyboard або іншої клавіатури. Замість ⌘ працює Ctrl."), cKeys]
         ];
         if (rc === 'm') return <div className="setw one">{head}{SECS.map(([k, n, , , d, body]) => <section key={k} className="setd" aria-labelledby={'sd-' + k}><h2 className="setd-t" id={'sd-' + k}>{n}</h2><p className="setd-s">{d}</p>{body}</section>)}</div>;
         const cur = SECS.find(s => s[0] === setSec) || SECS[0];
@@ -1384,7 +1524,7 @@ export default function Home() {
             {SECS.map(([k, n, ic, v]) => <button key={k} className="setn-i" aria-current={cur[0] === k ? 'true' : undefined} onClick={() => setSetSec(k)}>
               <span className="setn-ic" aria-hidden="true"><Icon n={ic} s={20} /></span><span className="setn-n">{n}</span>{v && <span className="setn-v">{v}</span>}</button>)}
           </nav>
-          <section className="setd" aria-labelledby="sd-cur"><h2 className="setd-t" id="sd-cur">{cur[1]}</h2><p className="setd-s">{cur[4]}</p>{cur[5]}</section>
+          <section className="setd mdfade" key={'sd-' + cur[0]} aria-labelledby="sd-cur"><h2 className="setd-t" id="sd-cur">{cur[1]}</h2><p className="setd-s">{cur[4]}</p>{cur[5]}</section>
         </div>;
       })()}
       </div></div>
@@ -1686,6 +1826,10 @@ export default function Home() {
         </div></div>;
       })()}
 
+      {kbOpen && <div className="ov kbov" onClick={closeKb}><div className="sheet kbs" role="dialog" aria-modal="true" aria-labelledby="kb-title" onClick={e => e.stopPropagation()}>
+        <div className="shd"><h2 id="kb-title">{tr("Клавіатурні скорочення")}</h2><button className="ibtn" autoFocus onClick={closeKb} aria-label={tr("Закрити")} title={tr("Закрити") + ' · Esc'}><Icon n="close" s={20} /></button></div>
+        <p className="hint">{tr("⌘ — Command; на інших клавіатурах — Ctrl.")}</p>
+        {kbList(true)}</div></div>}
       {toast && <div className="toast" role="status" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7" /></svg>
         <span>{toast.text}</span>{toast.undo && <button className="a-tl" onClick={() => { toast.undo(); setToast({ text: tr("Скасовано") }); }}>{tr("@undo:Скасувати")}</button>}</div>}

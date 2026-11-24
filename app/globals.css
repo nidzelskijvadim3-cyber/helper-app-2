@@ -1428,3 +1428,68 @@ h2.sec{font-family:var(--font-body);line-height:1.3}
   .sec,.cw,.applied,.lbl,.tl-h,.mh-t,.mi .mm,.grp summary,.aht small,.sg small,.chg,.mc-m,.ft-c,.src-s,.dk-st,.sb-c,.sb-h,.fk-c,.a-hcs,.a-umc,.a-pg,.a-pvs,.a-pvg,.a-pvnote,.a-modec,.a-menu small,.exd-l dt{font-size:13px}
   .nav .lbl{font-size:12px} /* «Матеріали» 13 px не влазить у 68 (спец. 2.1: тоді 12) */
 }
+
+/* ===== iPad · взаємодії (ipad-interactions 1–6) ===== */
+/* тост редактора з дією: контейнер не перехоплює дотики, лише кнопка; поява — зсув 8 px + прозорість 200 мс */
+.edtoast{display:flex;align-items:center;gap:12px;pointer-events:none;bottom:max(16px,calc(72px + env(safe-area-inset-bottom)));max-width:360px;animation:toast-in var(--dur-2) var(--ease-enter)}
+.edtoast>span{flex:1;min-width:0}
+.edtoast.act{padding:0 4px 0 16px;min-height:48px}
+.edtoast-b{pointer-events:auto;flex:none;min-width:44px;min-height:44px;padding:0 12px;border:0;border-radius:var(--r-12);background:none;color:var(--accent-tx);font:inherit;font-weight:600;cursor:pointer}
+@media (hover:hover){.edtoast-b:hover{background:var(--fill)}}
+.toast{animation:toast-in-x var(--dur-2) var(--ease-enter)}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes toast-in-x{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+/* чип масштабу під час щипка: зверху по центру холста, з'являється 100 мс, гасне 200 мс */
+.zchip{position:absolute;left:50%;transform:translateX(-50%);z-index:5;padding:6px 12px;border-radius:999px;background:var(--glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:.5px solid var(--glassb);color:var(--tx);font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;pointer-events:none;opacity:0;transition:opacity var(--dur-2) linear}
+.zchip.on{opacity:1;transition-duration:var(--dur-1)}
+/* текст на холсті: поле поверх сторінки, шрифт і інтерліньяж як у fillText (line-height 1.25), пунктир --accent */
+.cvtext{position:absolute;z-index:4;box-sizing:border-box;margin:0;padding:12px;min-height:0;border:1px dashed #A65F00;border-radius:4px;background:rgba(255,255,255,.6);font-family:-apple-system,system-ui,sans-serif;line-height:1.25;resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word;caret-color:#A65F00;-webkit-user-select:text;user-select:text;outline:none;box-shadow:none}
+.cvtext[hidden]{display:none}
+.cvtext::placeholder{color:rgba(28,28,30,.5)}
+.cvt-h{position:absolute;z-index:5;width:44px;height:44px;display:flex;align-items:center;justify-content:center;touch-action:none}
+.cvt-h.mv{cursor:move}.cvt-h.wd{cursor:ew-resize}
+.cvt-h i{display:block;background:#A65F00;box-shadow:0 0 0 1.5px #fff}
+.cvt-h.mv i{width:8px;height:8px;border-radius:50%}
+.cvt-h.wd i{width:4px;height:16px;border-radius:2px}
+/* прев'ю кінчика пера (hover): окремий шар, рухається лише transform; без анімації — це інструмент точності */
+.hovp{position:absolute;left:0;top:0;z-index:3;pointer-events:none;display:none;will-change:transform}
+.hovp[data-on]{display:block}
+.hovp i{position:absolute;left:0;top:0;transform:translate(-50%,-50%);box-sizing:border-box}
+.hovp.k-pen i{width:var(--hw);height:var(--hh);border-radius:50%;background:var(--hf);border:1px solid var(--hb)}
+.hovp.k-hl i{width:var(--hw);height:var(--hh);border-radius:3px;background:var(--hf);border:1px solid var(--hb)}
+.hovp.k-er i{width:var(--hw);height:var(--hh);border-radius:50%;border:1.5px solid rgba(28,28,30,.6);box-shadow:0 0 0 1px #fff,inset 0 0 0 1px #fff}
+.hovp.k-x i{width:13px;height:13px;background:linear-gradient(rgba(28,28,30,.85),rgba(28,28,30,.85)) center/1.5px 100% no-repeat,linear-gradient(rgba(28,28,30,.85),rgba(28,28,30,.85)) center/100% 1.5px no-repeat;filter:drop-shadow(0 0 1px #fff)}
+.hovp.k-x[data-on="snap"] i{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 1.5px #fff}
+.hovp.k-tx i{width:2px;height:var(--hh);background:var(--hf);box-shadow:0 0 0 1px rgba(255,255,255,.8)}
+.hovp.k-none{display:none!important}
+/* шкала дня: призрак слоту (hover / pressed / opening); минуле — підпис сірим */
+.tl-ghost{position:absolute;left:var(--tlx);right:0;box-sizing:border-box;border-radius:var(--r-14);background:color-mix(in srgb,var(--accent) 8%,transparent);display:flex;align-items:flex-start;padding:6px 12px;pointer-events:none;z-index:1}
+.tl-ghost span{font-size:13px;line-height:1.25;color:var(--tx2);font-variant-numeric:tabular-nums}
+.tl-ghost.pressed,.tl-ghost.opening{background:color-mix(in srgb,var(--accent) 14%,transparent);border:1px solid var(--accent-tx)}
+.tl-ghost.pressed span,.tl-ghost.opening span{color:var(--tx);font-weight:600}
+.tl-ghost.past span{color:var(--tx3)}
+/* шпаргалка скорочень (⌘/) і розділ у Налаштуваннях */
+.kbs{max-width:640px;width:100%;max-height:min(86vh,760px);overflow:auto}
+.kbs .hint{margin:4px 0 12px}
+.kbl{display:grid;gap:16px}
+.kbl.two{grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px 28px}
+.kbg-t{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--tx2);text-transform:uppercase;letter-spacing:.04em}
+.kbg dl{margin:0}
+.kbr{display:flex;align-items:center;gap:12px;min-height:36px;border-bottom:1px solid var(--bd2)}
+.kbr dt{flex:none;min-width:84px;font-size:14px}
+.kbr dd{margin:0;font-size:15px;color:var(--tx)}
+.kbr.off dd{color:var(--tx3)}
+.kbor{font-size:12px;color:var(--tx3)}
+kbd{display:inline-block;min-width:24px;padding:2px 6px;border-radius:6px;border:1px solid var(--bd);border-bottom-width:2px;background:var(--surface);color:var(--tx);font:600 13px/1.3 var(--font-body,system-ui);text-align:center;font-variant-numeric:tabular-nums}
+.kbc .kbl{margin-top:16px}
+.kbc-all{margin-top:12px}
+.kbc-h{margin:20px 0 8px}
+/* master-detail ≥768: нова деталь проявляється 150 мс без зсуву (ipad-interactions 6.3) */
+.mdfade{animation:fade-in 150ms var(--ease-standard)}
+@media (prefers-reduced-motion:reduce){
+  /* перекриває глобальне обнулення: короткі згасання прозорості без руху лишаються (6.4) */
+  .edtoast,.toast{animation:fade-in 150ms linear!important}
+  .mdfade{animation:fade-in 150ms linear!important}
+  .zchip{transition:opacity 150ms linear!important}
+}
