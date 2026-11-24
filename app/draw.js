@@ -111,10 +111,12 @@ export function drawStroke(g, s, ws) {
       else { g.beginPath(); g.arc(p[0], p[1], w / 2, 0, 7); g.fill(); }
     } else if (alpha < 1 && nib !== 'pencil' && g.canvas && typeof document !== 'undefined') {
       // напівпрозоре перо: малюємо непрозоро на тимчасовому полотні, щоб на стиках не було темних плям
+      // тимчасове полотно — розміру буфера g, з тим самим перетворенням (холст редактора масштабований під DPR і зум)
       const off = document.createElement('canvas'); off.width = g.canvas.width; off.height = g.canvas.height;
       const og = off.getContext('2d'); og.globalAlpha = 1;
+      if (g.getTransform) og.setTransform(g.getTransform());
       for (let i = 1; i < n; i++) drawSeg(og, s, ws, i);
-      g.drawImage(off, 0, 0);
+      g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(off, 0, 0); g.restore();
     } else for (let i = 1; i < n; i++) drawSeg(g, s, ws, i);
   }
   g.restore();

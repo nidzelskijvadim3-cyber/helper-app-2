@@ -977,7 +977,9 @@ export default function Home() {
   const openKb = () => { kbPrev.current = document.activeElement; setKbOpen(true); };
   // список скорочень за групами; у шпаргалці група поточного розділу (План) — першою
   const kbList = sheetMode => {
-    const gs = sheetMode && tab === 'today' ? [...SC_GROUPS.filter(g => g[0] === 'plan'), ...SC_GROUPS.filter(g => g[0] !== 'plan')] : SC_GROUPS;
+    const edOpen = sheetMode && typeof document !== 'undefined' && !!document.querySelector('.nv.ed');
+    const first = !sheetMode ? [] : edOpen ? ['ed', 'lasso'] : rev ? ['learn'] : tab === 'today' ? ['plan'] : tab === 'cards' ? ['learn'] : [];
+    const gs = [...first.map(k => SC_GROUPS.find(g => g[0] === k)).filter(Boolean), ...SC_GROUPS.filter(g => !first.includes(g[0]))];
     return <div className={'kbl' + (sheetMode ? ' two' : '')}>{gs.map(([g, n]) => <section key={g} className="kbg" aria-labelledby={'kbg-' + g + (sheetMode ? 's' : '')}>
       <h3 className="kbg-t" id={'kbg-' + g + (sheetMode ? 's' : '')}>{tr(n)}</h3>
       <dl>{SC.filter(x => x.g === g).map(x => <div key={x.id} className={'kbr' + (x.one && !oneKeys ? ' off' : '')}><dt>{x.k.map((k, i) => <Fragment key={k}>{i > 0 && <span className="kbor"> {tr("або")} </span>}<kbd>{keyLabel(k, tr("Пробіл"))}</kbd></Fragment>)}</dt><dd>{tr(x.n)}{x.one && !oneKeys ? ' · ' + tr("вимкнено") : ''}</dd></div>)}</dl>
@@ -1064,12 +1066,12 @@ export default function Home() {
       <div className="row"><button className="btn" onClick={() => { confirmPreview(); if (inSheet) closeSheet(); }}>{tr("Додати")}</button>
         {preview.local && <button className="btn alt" onClick={() => editPreview(preview.actions[0])}>{tr("Змінити")}</button>}
         <button className="btn alt" onClick={() => setPreview(null)}>{tr("Скасувати")}</button></div></div>);
-  const quickInput = (id, inSheet) => (
+  const quickInput = (id, inSheet, noBtn) => (
     <div className={'qrow' + (inSheet ? '' : ' wide-only')}>
       <div className="qbar">
         <label className="vh" htmlFor={id}>{tr("Швидко додати")}</label>
         <input id={id} autoFocus={inSheet && !more} placeholder={tr("Швидко додати: стоматолог у пʼятницю о 13:00")} value={qa} onChange={e => setQa(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); quickAdd(); } }} />
-        <button className="qgo" disabled={qaBusy} onClick={() => { if (qa.trim()) quickAdd(); else if (inSheet) setMore(true); else openNew(true); }}>{qaBusy ? '…' : tr("Додати")}</button>
+        {!noBtn && <button className="qgo" disabled={qaBusy} onClick={() => { if (qa.trim()) quickAdd(); else if (inSheet) setMore(true); else openNew(true); }}>{qaBusy ? '…' : tr("Додати")}</button>}
       </div>
       {/* iPad: видимий шлях до повної форми (задача / подія / іспит) замість прихованого «Додати» при порожньому рядку */}
       {!inSheet && <button className="btn2 qfull" onClick={() => openNew(true)} title={tr("Нова задача, подія або іспит")} aria-label={tr("Новий запис: задача, подія або іспит")}><Icon n="plus" s={18} />{tr("Запис")}</button>}
@@ -1334,9 +1336,9 @@ export default function Home() {
           ['deck', tr("З набору карток"), !decks.length ? tr("Карток ще немає") : tcfg.deck != null && decks.some(d => d.name === tcfg.deck) ? deckName(tcfg.deck) : tr("Оберіть набір"), decks.length > 0]
         ];
         const n = Number(tcfg.n) || 10;
-        return <div className="lrn">
+        return <><header className="lh lh-top"><h1>{tr("Навчання")}</h1>{aiBtn}</header>
+        <div className="lrn">
           <div className="lrn-l">
-            <header className="lh"><h1>{tr("Навчання")}</h1>{aiBtn}</header>
             <section className="rv" aria-labelledby="rv-h">
               {revQ.list.length ? <>
                 <h2 className="rv-l" id="rv-h">{tr("Сьогодні повторити")}</h2>
@@ -1405,7 +1407,7 @@ export default function Home() {
             </section>
             <div className="phone-only">{testsList('tl-p')}</div>
           </div>
-        </div>;
+        </div></>;
       })()}
 
       {tab === 'cards' && deckV && (() => {
@@ -1518,14 +1520,13 @@ export default function Home() {
         ];
         if (rc === 'm') return <div className="setw one">{head}{SECS.map(([k, n, , , d, body]) => <section key={k} className="setd" aria-labelledby={'sd-' + k}><h2 className="setd-t" id={'sd-' + k}>{n}</h2><p className="setd-s">{d}</p>{body}</section>)}</div>;
         const cur = SECS.find(s => s[0] === setSec) || SECS[0];
-        return <div className="setw two">
+        return <>{head}<div className="setw two">
           <nav className="setn" aria-label={tr("Розділи налаштувань")}>
-            {head}
             {SECS.map(([k, n, ic, v]) => <button key={k} className="setn-i" aria-current={cur[0] === k ? 'true' : undefined} onClick={() => setSetSec(k)}>
               <span className="setn-ic" aria-hidden="true"><Icon n={ic} s={20} /></span><span className="setn-n">{n}</span>{v && <span className="setn-v">{v}</span>}</button>)}
           </nav>
           <section className="setd mdfade" key={'sd-' + cur[0]} aria-labelledby="sd-cur"><h2 className="setd-t" id="sd-cur">{cur[1]}</h2><p className="setd-s">{cur[4]}</p>{cur[5]}</section>
-        </div>;
+        </div></>;
       })()}
       </div></div>
 
@@ -1538,10 +1539,13 @@ export default function Home() {
       {sheet && win !== 'c' && (() => {
         const ttl = sheet === 'new' ? (!more ? tr("Новий запис") : exm ? tr("Новий іспит") : ev ? tr("Нова подія") : tr("Нова задача")) : (exm ? tr("Змінити іспит") : ev ? tr("Змінити подію") : tr("Змінити задачу"));
         return <div className="ov ovt" onClick={closeSheet}><div className="sheet fsh wide" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onClick={e => e.stopPropagation()}>
-          {formHead('sheet-title', ttl, closeSheet, sheet === 'new' ? tr("Додати") : tr("Готово"), saveTask, !!buildItem(f))}
+          {/* D10: одна основна кнопка в шапці. Швидкий ввід (повна форма згорнута) — «Розпізнати» (розбір рядка), повна форма — «Додати».
+              Рядок швидкого вводу без власної кнопки й ховається, коли відкрито «Більше параметрів». */}
+          {sheet === 'new' && !more ? formHead('sheet-title', ttl, closeSheet, qaBusy ? tr("Розпізнаю…") : tr("Розпізнати"), quickAdd, !!qa.trim() && !qaBusy)
+            : formHead('sheet-title', ttl, closeSheet, sheet === 'new' ? tr("Додати") : tr("Готово"), saveTask, !!buildItem(f))}
           <div className="fbody">
             {sheet === 'new' && <>
-              {quickInput('qa-sheet', true)}
+              {!more && quickInput('qa-sheet', true, true)}
               {qaMsg && <div className="sub qmsg" role="status">{qaMsg}</div>}
               {previewCard(true)}
               <button className="more" aria-expanded={more} aria-controls="full-form" onClick={() => setMore(!more)}><span>{tr("Більше параметрів")}</span><Icon n="chevD" s={20} /></button>

@@ -522,7 +522,7 @@ export default function Assistant(props) {
       {att.map((u, i) => <span className="a-chip ph" key={i}><span className="a-thumb" style={{ backgroundImage: 'url(' + u + ')' }} aria-hidden="true" /><span className="a-chipt">{tr("Фото")} {i + 1}</span><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label={tr("Прибрати фото") + ' ' + (i + 1)} title={tr("Прибрати")}>×</button></span>)}
     </div>}
     {!side && !wide && <div className="a-mode">
-      {modeSeg(tr("Звичайний"))}
+      {modeSeg(tr("Чат"))}
       <span className="a-modec">{learn ? tr("Питає, а не відповідає") : tr("Репетитор") + ' — ' + tr("Питає, а не відповідає").toLowerCase()}</span>
     </div>}
     <div className={'a-box' + (!online ? ' off' : '')}>

@@ -21,10 +21,16 @@ export function useWide() {
   useEffect(() => { const m = window.matchMedia('(min-width:768px)'); const f = () => setW(m.matches); f(); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
   return w;
 }
-// позиція поповера 320 під кнопкою-джерелом: правий край — по кнопці, не ближче 10 px до країв вікна
+// Лівий край панелі Помічника в режимі «поверх» (вікно 768–1023, клас ai-ov на <html>), інакше Infinity.
+// Поповери, тости й .pgnav не заходять під неї (D2, D4). offsetWidth, а не rect: під час появи панель зсунута transform.
+export function aiEdge() {
+  if (typeof document === 'undefined' || !document.documentElement.classList.contains('ai-ov')) return Infinity;
+  const a = document.querySelector('.aip.over'); return a ? window.innerWidth - a.offsetWidth : Infinity;
+}
+// позиція поповера 320 під кнопкою-джерелом: правий край — по кнопці, не ближче 10 px до країв вікна і панелі Помічника поверх
 export function popAt(el, w = 320) {
   if (!el || !el.getBoundingClientRect) return null;
-  const r = el.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+  const r = el.getBoundingClientRect(), vw = Math.min(window.innerWidth, aiEdge()), vh = window.innerHeight;
   const left = Math.max(10, Math.min(r.right - w, vw - w - 10)), top = r.bottom + 8;
   return { left, top, width: w, maxHeight: Math.max(200, vh - top - 12) };
 }
@@ -382,6 +388,27 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   // межі щипка: від «сторінка цілком» (на iPad; на телефоні, як раніше, від режиму) до 5× режиму
   const zMin = box && box.pad > 0 ? Math.min(1, fm.pageScale / fm.scale) : 1, zMax = 5;
   const zPct = Math.round(fm.scale * zoom * 100);
+  // ===== Резкість холста (D3): буфер canvas = розмір відображення × devicePixelRatio =====
+  // Координати штрихів лишаються в одиницях сторінки (page.w × page.h): малюємо через setTransform(kx, ky), pos() ділить на page.w.
+  // Стеля — 4096 px по стороні й ≈16 Мп (пам'ять iPad); не менше 1× сторінки (як було). Крок 0,25 і дебаунс 180 мс:
+  // під час щипка буфер не перевиділяється покадрово, лише після зупинки (і не посеред штриха чи перетягування ласо).
+  const [bufK, setBufK] = useState(1);
+  const [dpr, setDpr] = useState(() => (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1));
+  useEffect(() => { const f = () => setDpr(window.devicePixelRatio || 1); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
+  const cssW = fit.w * zoom;
+  useEffect(() => {
+    const cap = Math.min(4096 / page.w, 4096 / page.h, Math.sqrt(16e6 / (page.w * page.h)));
+    const want = Math.max(1, Math.min(cap, Math.ceil((cssW * dpr / page.w) * 4) / 4));
+    let t = 0;
+    const run = () => { if (cur.current || sdrag.current || tdrag.current) { t = setTimeout(run, 300); return; } setBufK(want); };
+    t = setTimeout(run, 180);
+    return () => clearTimeout(t);
+  }, [cssW, dpr, page.w, page.h]);
+  const bufW = Math.round(page.w * bufK), bufH = Math.round(page.h * bufK);
+  const kRef = useRef({ x: 1, y: 1 });
+  kRef.current = { x: bufW / page.w, y: bufH / page.h };
+  // контекст холста з перетворенням «сторінка → буфер» (після зміни width/height стан контексту скидається, тож ставимо щоразу)
+  const g2d = () => { const g = cvRef.current.getContext('2d'); g.setTransform(kRef.current.x, 0, 0, kRef.current.y, 0, 0); return g; };
   const ZN = { width: 'По ширині', page: 'Сторінка цілком', '100': '100%' };
   const zLabel = zoom === 1 ? (zmode === 'page' ? tr("Сторінка") : tr(ZN[zmode])) : zPct + '%';
   // ширина редактора ≥560 — два ряди з групами; інакше — телефонний ряд (порядок у DOM = порядок на екрані, для фокуса й VoiceOver)
@@ -394,7 +421,8 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   }, [pi, page.img]);
   // текст, який зараз редагується в полі, на canvas не малюємо (інакше він двоїться)
   const tinEdit = tin && tin.edit;
-  useEffect(() => { const cv = cvRef.current; if (cv) renderPage(cv.getContext('2d'), tinEdit ? { ...page, strokes: page.strokes.filter(s => s !== tinEdit) } : page, imgRef.current); }, [d, pi, tick, tinEdit]);
+  // useLayoutEffect: після зміни розміру буфера (D3) холст очищується — перемальовуємо до кадру, без білого блимання
+  useLayoutEffect(() => { const cv = cvRef.current; if (cv) renderPage(g2d(), tinEdit ? { ...page, strokes: page.strokes.filter(s => s !== tinEdit) } : page, imgRef.current); }, [d, pi, tick, tinEdit, bufW, bufH]);
   // iPad + Apple Pencil: Safari сам перехоплює дотик пера (виділення тексту, лупа, Scribble, прокрутка)
   // і шле pointercancel — лінія обривається або не з'являється зовсім. touch-action:none цього не зупиняє,
   // потрібні нативні НЕпасивні touchstart/touchmove з preventDefault (React вішає їх пасивними).
@@ -441,7 +469,8 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     if (r.top < cr.top || r.bottom > cr.bottom) c.scrollTop += r.top - cr.top - (cr.height - r.height) / 2;
   }, [pi, thVis, tmode]);
 
-  const pos = e => { const cv = cvRef.current, r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
+  // координати сторінки (не буфера: буфер canvas більший за сторінку на DPR × зум, D3)
+  const pos = e => { const cv = cvRef.current, r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * page.w / r.width, (e.clientY - r.top) * page.h / r.height]; };
   const commit = s => { hist.current.push({ pi, strokes: page.strokes }); if (hist.current.length > 40) hist.current.shift(); redo.current = []; setPage({ ...page, strokes: [...page.strokes, s] }); };
   // Гумка: «Штрих повністю» прибирає штрих, «Точковий» вирізає шматок; «Лише виділювач» не чіпає чорнило.
   // Поточний стан штрихів тримаємо в cur.current.strokes, щоб швидкі рухи між рендерами не губили стирання.
@@ -530,9 +559,11 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     if (!selOk) return;
     e.stopPropagation(); e.preventDefault(); try { e.currentTarget.setPointerCapture(e.pointerId); } catch (er) {}
     const [x, y] = pos(e), b = selBox, st = new Set(sel.items);
-    const base = document.createElement('canvas'); base.width = page.w; base.height = page.h;
-    renderPage(base.getContext('2d'), { ...page, strokes: page.strokes.filter(s => !st.has(s)) }, imgRef.current);
-    const lay = document.createElement('canvas'); lay.width = page.w; lay.height = page.h; const lg = lay.getContext('2d');
+    // шари — розміру буфера холста, з тим самим перетворенням (D3), щоб під час перетягування не втрачати різкість
+    const cvb = cvRef.current, kx = kRef.current.x, ky = kRef.current.y;
+    const base = document.createElement('canvas'); base.width = cvb.width; base.height = cvb.height; const bg = base.getContext('2d'); bg.setTransform(kx, 0, 0, ky, 0, 0);
+    renderPage(bg, { ...page, strokes: page.strokes.filter(s => !st.has(s)) }, imgRef.current);
+    const lay = document.createElement('canvas'); lay.width = cvb.width; lay.height = cvb.height; const lg = lay.getContext('2d'); lg.setTransform(kx, 0, 0, ky, 0, 0);
     for (const s of sel.items) if (s.u) drawStroke(lg, s, ws0);
     for (const s of sel.items) if (!s.u) drawStroke(lg, s, ws0);
     const C = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], c0 = mode === 'scale' ? C[corner] : null, an = mode === 'scale' ? C[(corner + 2) % 4] : null;
@@ -540,8 +571,8 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     setDragging(true); setSelPal(false);
   };
   const paintDrag = s => {
-    const cv = cvRef.current; if (!cv) return; const g = cv.getContext('2d'), f = s.f;
-    g.drawImage(s.base, 0, 0); g.save(); g.translate(f.ox + f.dx, f.oy + f.dy); g.scale(f.k, f.k); g.translate(-f.ox, -f.oy); g.drawImage(s.lay, 0, 0); g.restore();
+    const cv = cvRef.current; if (!cv) return; const g = g2d(), f = s.f;
+    g.drawImage(s.base, 0, 0, page.w, page.h); g.save(); g.translate(f.ox + f.dx, f.oy + f.dy); g.scale(f.k, f.k); g.translate(-f.ox, -f.oy); g.drawImage(s.lay, 0, 0, page.w, page.h); g.restore();
     const b = s.b, nb = [f.ox + (b[0] - f.ox) * f.k + f.dx, f.oy + (b[1] - f.oy) * f.k + f.dy, f.ox + (b[2] - f.ox) * f.k + f.dx, f.oy + (b[3] - f.oy) * f.k + f.dy];
     const el = frameRef.current; if (el) { const r = frameRect([Math.min(nb[0], nb[2]), Math.min(nb[1], nb[3]), Math.max(nb[0], nb[2]), Math.max(nb[1], nb[3])]); el.style.left = r.l + 'px'; el.style.top = r.t + 'px'; el.style.width = r.w + 'px'; el.style.height = r.h + 'px'; }
   };
@@ -561,7 +592,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   const sUp = () => {
     const s = sdrag.current; if (!s) return; sdrag.current = null; if (s.raf) cancelAnimationFrame(s.raf); setDragging(false);
     if (s.moved && (s.f.dx || s.f.dy || s.f.k !== 1)) { const f = s.f; replaceSel(st => xformStroke(st, f)); say(s.mode === 'move' ? tr("Переміщено") : tr("Розмір змінено")); }
-    else { const cv = cvRef.current; if (cv) renderPage(cv.getContext('2d'), page, imgRef.current); }
+    else { const cv = cvRef.current; if (cv) renderPage(g2d(), page, imgRef.current); }
   };
   // «Запитати Помічника» / «Зробити картки» по виділеному: область рамки + відступ, номер сторінки
   const askSel = text => {
@@ -746,7 +777,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
       const el = boxRef.current;
       if (touches.current.size >= 2) {
         // молодий штрих (< 150 мс і < 10 px) — початок жесту двома пальцями: відкидаємо без запису в історію
-        if (cur.current) { cur.current = null; curMeta.current = null; clearTimeout(holdT.current); clearLasso(); renderPage(cvRef.current.getContext('2d'), page, imgRef.current); }
+        if (cur.current) { cur.current = null; curMeta.current = null; clearTimeout(holdT.current); clearLasso(); renderPage(g2d(), page, imgRef.current); }
         textPress.current = null;
         const [a, b] = [...touches.current.values()], prev = gest.current;
         gest.current = { d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, z0: zoom, m0: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], active: !!(prev && !prev.pan && prev.active) };
@@ -832,7 +863,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
       q.push(x, y); if (lassoRef.current) lassoRef.current.setAttribute('points', q.join(' '));
       return;
     }
-    const g2 = cvRef.current.getContext('2d'), ws = page.w / 1200, img = imgRef.current;
+    const g2 = g2d(), ws = page.w / 1200, img = imgRef.current;
     if (s.k) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p[2] = ex; s.p[3] = ey; renderPage(g2, page, img, s); return; }
     if (s.straight) { let ex = x, ey = y; if (s.lock) { const q = rulerProject(ruler, x, y); ex = q.x; ey = q.y; } s.p = [s.p[0], s.p[1], ex, ey]; renderPage(g2, page, img, s); return; }
     const evs = e.pointerType === 'pen' && e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
@@ -877,7 +908,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     const s = cur.current; cur.current = null; curMeta.current = null; if (!s) return;
     if (s.lasso) { clearLasso(); finishLasso(s.lasso); return; }
     if (s.erase) { if (s.snap) { hist.current.push({ pi, strokes: s.snap }); redo.current = []; } return; }
-    if (s.k && Math.hypot(s.p[2] - s.p[0], s.p[3] - s.p[1]) < 4) { renderPage(cvRef.current.getContext('2d'), page, imgRef.current); return; }
+    if (s.k && Math.hypot(s.p[2] - s.p[0], s.p[3] - s.p[1]) < 4) { renderPage(g2d(), page, imgRef.current); return; }
     // виділювач: майже пряму лінію вирівнюємо автоматично
     if (s.u && !s.straight && nearlyStraight(s.p, page.w / 1200)) straighten(s);
     const { lock, lt, straight, ...clean } = s;
@@ -916,8 +947,10 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   function placePop(k) {
     const bar = barRef.current, host = bar && bar.parentElement; if (!host) return;
     const cr = host.getBoundingClientRect(), src = popSrc.current && popSrc.current.isConnected ? popSrc.current : bar;
-    const br = src.getBoundingClientRect(), w = Math.min(k === 'zoom' ? 260 : 400, cr.width - 20);
-    const left = Math.max(10, Math.min(cr.width - w - 10, br.left + br.width / 2 - cr.left - w / 2));
+    // права межа — край редактора або лівий край панелі Помічника поверх (768–1023), D2
+    const lim = Math.min(cr.right, aiEdge()) - cr.left;
+    const br = src.getBoundingClientRect(), w = Math.max(200, Math.min(k === 'zoom' ? 260 : 400, lim - 20));
+    const left = Math.max(10, Math.min(lim - w - 10, br.left + br.width / 2 - cr.left - w / 2));
     setPopPos({ top: Math.round(br.bottom - cr.top + 8), left: Math.round(left), width: Math.round(w) });
   }
   function openPop(k) {
@@ -932,7 +965,9 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     // resize вікна і зміна ширини редактора (панель Помічника, поворот): кнопка-джерело могла переміститися
     const r = () => placePop(pop); window.addEventListener('resize', r);
     const ro = barRef.current ? new ResizeObserver(r) : null; if (ro) ro.observe(barRef.current);
-    return () => { window.removeEventListener('resize', r); if (ro) ro.disconnect(); };
+    // панель Помічника поверх відкрилась або закрилась (клас ai-ov на <html>) — межа поповера змінилась
+    const mo = new MutationObserver(r); mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => { window.removeEventListener('resize', r); if (ro) ro.disconnect(); mo.disconnect(); };
   }, [pop]);
   const addPage = () => { setD(o => ({ ...o, pages: [...o.pages, { w: page.w, h: page.h, tpl: page.img ? 'blank' : page.tpl, strokes: [] }] })); setPi(d.pages.length); hist.current = []; redo.current = []; };
   const delPage = () => { if (d.pages.length < 2) return; setD(o => ({ ...o, pages: o.pages.filter((_, i) => i !== pi) })); setPi(Math.max(0, pi - 1)); hist.current = []; redo.current = []; };
@@ -1107,7 +1142,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
       </nav>}
       <div className={'edbox' + (page.img ? ' img' : '')} ref={boxRef} onPointerDownCapture={tmode === 'over' && thOver ? e => { e.stopPropagation(); e.preventDefault(); setThOver(false); } : undefined}>
         <div className="cvwrap" style={{ width: fit.w * zoom, height: fit.h * zoom }}>
-          <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: '100%', height: '100%', touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onPointerLeave={e => { if (e.pointerType !== 'touch') hideHover(); }} />
+          <canvas ref={cvRef} width={bufW} height={bufH} style={{ width: '100%', height: '100%', touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onPointerLeave={e => { if (e.pointerType !== 'touch') hideHover(); }} />
           {ruler.on && (() => { const sc = (fit.w * zoom) / page.w; return (
             <div className="ruler" style={{ left: ruler.x * sc, top: ruler.y * sc, width: ruler.len * sc, transform: 'rotate(' + ruler.a + 'rad)' }}>
               <div className="rbody" />
@@ -1127,7 +1162,9 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
             const r = frameRect(selBox), el = boxRef.current, W = fit.w * zoom, H = fit.h * zoom;
             // видима частина холста в координатах сторінки на екрані (сторінка зміщена в .edbox полем і центруванням)
             const cw0 = cvRef.current && cvRef.current.parentElement, ox = cw0 ? cw0.offsetLeft : 0, oy = cw0 ? cw0.offsetTop : 0;
-            const st = el ? el.scrollTop - oy : 0, ch = el ? el.clientHeight : H, sl = el ? el.scrollLeft - ox : 0, cw = el ? el.clientWidth : W;
+            // частина холста під панеллю Помічника поверх (768–1023) — меню туди не ставимо (D2)
+            const ovr = el ? Math.max(0, el.getBoundingClientRect().right - aiEdge()) : 0;
+            const st = el ? el.scrollTop - oy : 0, ch = el ? el.clientHeight : H, sl = el ? el.scrollLeft - ox : 0, cw = el ? Math.max(160, el.clientWidth - ovr) : W;
             const mh = msz.h || 52, mw = msz.w || 320, maxW = Math.max(160, Math.min(W, cw) - 8);
             let top = r.t - mh - 8;
             if (top < st + 4) top = r.t + r.h + 8 <= Math.min(H, st + ch) - mh ? r.t + r.h + 8 : Math.max(st + 4, r.t + 8);
@@ -1594,17 +1631,18 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
         <header className="mhd">
           <div className="mhd-t">
             {title != null && <nav className="crumbs" aria-label={tr("Шлях")}><button onClick={() => setFview(null)} {...drop('')}>{tr("Матеріали")}</button>{crumbs.map(c => <Fragment key={c.id}><span aria-hidden="true">›</span><button onClick={() => setFview(c.id)} {...drop(c.id)}>{c.name}</button></Fragment>)}<span aria-hidden="true">›</span></nav>}
-            <h1>{title != null ? title : <><span className="phone-only">{tr("Матеріали")}</span><span className="wide-only">{tr("Нещодавні")}</span></>}</h1>
+            <h1 title={title != null ? title : undefined}>{title != null ? title : <><span className="phone-only">{tr("Матеріали")}</span><span className="wide-only">{tr("Нещодавні")}</span></>}</h1>
           </div>
           <div className="mhd-a">
             {fview == null && <button className="ibtn mq-ic" onClick={() => setSearch(!search)} aria-pressed={search} aria-label={tr("Пошук")} title={tr("Пошук")}><EIcon n="search" size={20} /></button>}
-            {wide && <div className="mq" role="search"><EIcon n="search" size={20} /><label className="vh" htmlFor="mq-h">{tr("Пошук у матеріалах")}</label>
-              <input id="mq-h" type="search" placeholder={tr("Пошук у матеріалах")} value={q} onChange={e => { setQ(e.target.value); setSearch(true); }} onKeyDown={e => { if (e.key === 'Escape') { setQ(''); setSearch(false); } }} />
-              {q && <button className="mq-x" onClick={() => { setQ(''); setSearch(false); }} aria-label={tr("Очистити пошук")}><EIcon n="close" size={18} /></button>}</div>}
             <button className="btn-a mcreate" onClick={e => { retFocus.current = document.activeElement; setMenuAt(wide ? popAt(e.currentTarget) : null); setMenu(true); }} aria-haspopup="dialog"><EIcon n="plus" size={18} />{tr("Створити")}</button>
             {fo && <button className="ibtn" onClick={e => { retFocus.current = document.activeElement; setFmAt(wide ? popAt(e.currentTarget) : null); setFmenu(true); }} aria-label={tr("Дії з папкою")} title={tr("Дії з папкою")} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>}
             {aiBtn}
           </div>
+          {/* поле пошуку — окремий елемент шапки: у xl — у першому рядку між назвою й діями, у m/l — другим рядком (spec 3.1, 6; D1) */}
+          {wide && <div className="mq" role="search"><EIcon n="search" size={20} /><label className="vh" htmlFor="mq-h">{tr("Пошук у матеріалах")}</label>
+            <input id="mq-h" type="search" placeholder={tr("Пошук у матеріалах")} value={q} onChange={e => { setQ(e.target.value); setSearch(true); }} onKeyDown={e => { if (e.key === 'Escape') { setQ(''); setSearch(false); } }} />
+            {q && <button className="mq-x" onClick={() => { setQ(''); setSearch(false); }} aria-label={tr("Очистити пошук")}><EIcon n="close" size={18} /></button>}</div>}
         </header>
         {msg && <p className="sub mmsg" role="status">{msg}</p>}
 
@@ -1620,7 +1658,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
           {recents.length > 0 && <section className="msec" aria-labelledby="m-rec">
             <div className="msh phone-only"><h2 className="msh-t" id="m-rec">{tr("Нещодавні")}</h2><button className="lnk" onClick={() => setFview('all')}>{tr("Усі")}</button></div>
             <div className="mrow phone-only">{recents.map(card)}</div>
-            <div className="wide-only"><div className="msh"><span className="flex1" /><button className="lnk" onClick={() => setFview('all')}>{tr("Усі матеріали")}</button></div>{listing(recents12)}</div>
+            <div className="wide-only"><div className="msh m-reclnk"><span className="flex1" /><button className="lnk" onClick={() => setFview('all')}>{tr("Усі матеріали")}</button></div>{listing(recents12)}</div>
           </section>}
           {folders.length > 0 && <section className="msec m-fold" aria-labelledby="m-fold">
             <div className="msh"><h2 className="msh-t" id="m-fold">{tr("Папки")}</h2></div>
@@ -1652,7 +1690,8 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
           </div>}
           {list.length ? listing(list, eView)
             : <div className="mempty"><p>{base.length ? tr("Нічого не знайдено.") : fview === 'fav' ? tr("Тут поки нічого немає.") : tr("У цій папці поки нічого немає.")}</p>
-              <p className="sub">{base.length ? '' : fview === 'fav' ? tr("Позначте матеріал зірочкою в меню «⋯», і він з’явиться тут.") : tr("Створіть зошит, нотатку або імпортуйте фото.")}</p></div>}
+              <p className="sub">{base.length ? '' : fview === 'fav' ? tr("Позначте матеріал зірочкою в меню «⋯», і він з’явиться тут.") : tr("Створіть зошит, нотатку або імпортуйте фото.")}</p>
+              {fo && !base.length && <button className="btn2" onClick={e => { retFocus.current = document.activeElement; setMenuAt(wide ? popAt(e.currentTarget) : null); setMenu(true); }} aria-haspopup="dialog"><EIcon n="plus" size={18} />{tr("Створити тут")}</button>}</div>}
           {fo && folderExtra && folderExtra(fo.id)}
           {fo && base.length > 0 && <div className="mhint">
             <p>{tr("З матеріалів цієї папки можна зробити картки або тест")}</p>

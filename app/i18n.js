@@ -951,7 +951,10 @@ export const DE = {
  "Для Magic Keyboard або іншої клавіатури. Замість ⌘ працює Ctrl.": "Für das Magic Keyboard oder eine andere Tastatur. Statt ⌘ funktioniert Strg.",
  "або": "oder",
  "Пробіл": "Leertaste",
- "⌘ — Command; на інших клавіатурах — Ctrl.": "⌘ – Command; auf anderen Tastaturen – Strg."
+ "⌘ — Command; на інших клавіатурах — Ctrl.": "⌘ – Command; auf anderen Tastaturen – Strg.",
+ "Розпізнати": "Erkennen",
+ "Розпізнаю…": "Erkenne…",
+ "Створити тут": "Hier erstellen"
 };
 // Множина: українська — 3 форми (1 картка, 2 картки, 5 карток), німецька — 2 (переклад форм f1 і f5).
 export function plural(n, f1, f2, f5) {
