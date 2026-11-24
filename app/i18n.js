@@ -867,7 +867,26 @@ export const DE = {
  "По ширині": "Seitenbreite",
  "Сторінка цілком": "Ganze Seite",
  "Зменшити": "Verkleinern",
- "Збільшити": "Vergrößern"
+ "Збільшити": "Vergrößern",
+ "Пошук розмов": "Unterhaltungen durchsuchen",
+ "Нічого не знайдено": "Nichts gefunden",
+ "Чат": "Chat",
+ "Ширина панелі Помічника": "Breite des Assistenten-Bereichs",
+ "Поясни цю сторінку": "Erkläre diese Seite",
+ "Поясни цю сторінку простими словами.": "Erkläre diese Seite in einfachen Worten.",
+ "Зроби картки з цієї сторінки": "Erstelle Karten aus dieser Seite",
+ "Зроби картки з цієї сторінки.": "Erstelle Karten aus dieser Seite.",
+ "Перевір мій конспект": "Prüfe meine Notizen",
+ "Помилки й пропуски": "Fehler und Lücken",
+ "Перевір мій конспект: чи є помилки або важливі пропуски?": "Prüfe meine Notizen: Gibt es Fehler oder wichtige Lücken?",
+ "Підсумуй папку": "Fasse den Ordner zusammen",
+ "Підсумуй матеріали цієї папки.": "Fasse die Materialien dieses Ordners zusammen.",
+ "Зроби картки з папки": "Erstelle Karten aus dem Ordner",
+ "Зроби картки з матеріалів цієї папки.": "Erstelle Karten aus den Materialien dieses Ordners.",
+ "Поясни складні картки": "Erkläre schwierige Karten",
+ "Поясни найскладніші картки з цього набору простими словами.": "Erkläre die schwierigsten Karten dieses Stapels in einfachen Worten.",
+ "Перевір мене за набором": "Frag mich zum Stapel ab",
+ "Перевір мене за цим набором: став питання по одному.": "Frag mich zu diesem Stapel ab: Stelle die Fragen einzeln."
 };
 // Множина: українська — 3 форми (1 картка, 2 картки, 5 карток), німецька — 2 (переклад форм f1 і f5).
 export function plural(n, f1, f2, f5) {

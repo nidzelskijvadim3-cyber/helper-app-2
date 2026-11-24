@@ -660,11 +660,12 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   const close = async () => { try { const t = await makeThumb(d); await flush({ thumb: t }); } catch (e) {} onClose(); };
   // Помічник: посилання [с. N] у відповіді відкриває цю сторінку (jump = { page, t })
   useEffect(() => { if (jump && jump.page) goPage(jump.page - 1); }, [jump]);
-  // «Помічник» у шапці: на iPad ≥1024 — панель поруч (документ лишається), інакше — зберегти, закрити й перейти у вкладку
+  // «Помічник» у шапці: на iPad (вікно ≥768) — права панель (≥1024 поруч, 768–1023 поверх; документ лишається відкритим, I4),
+  // на телефоні — зберегти, закрити й перейти у вкладку. Повторне натискання при відкритій панелі — закрити її.
   // extra: { sel: { x, y, w, h } — область ласо, text — заготовка запиту (без автонадсилання) }
   const askAI = async extra => {
     const info = { id: d.id, title: d.title, type: d.type, page: pi + 1, pages: d.pages.length, ...(extra && extra.sel ? extra : {}) };
-    if (window.matchMedia('(min-width:1024px)').matches) { flush().catch(() => {}); onAsk(info); return; }
+    if (window.matchMedia('(min-width:768px)').matches) { flush().catch(() => {}); onAsk(info); return; }
     await close(); onAsk(info);
   };
   // клас на <html>: панель Помічника в режимі «поверх» (768–1023) починається під панеллю інструментів редактора
@@ -717,7 +718,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     <span className="ed-ai-l">{tr("Помічник")}</span></button>;
 
   return (
-    <div className={'nv ed' + (aiOn ? ' with-ai' : '')}>
+    <div className="nv ed">
       {/* Ряд 1 — документ, ряд 2 — інструменти + стиль по центру (≥560 px ширини редактора, ipad-layout-spec 7.2–7.3).
           На телефоні (<560) — один ряд документа, як було. */}
       <div className="edbar" ref={barRef} onPointerDownCapture={notePopSrc}>

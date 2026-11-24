@@ -6,7 +6,7 @@ import { canMoveFolder, folderPath } from './lib';
 import { syncNow, syncStatus, getSyncMeta, setSyncOn } from './sync';
 import { nsKey, listAccounts, getActiveId, setActiveId, addAccount, activeAccount, deriveAccountId, validateCredentials } from './accounts';
 import { t as tr, loc, setLang, getLang, plural } from './i18n';
-import Assistant, { migrateChats } from './assistant';
+import Assistant, { migrateChats, AiPanel } from './assistant';
 import { occurs, makePlan, isEv, isRep, isExam, openTasks, dayCount } from './plan';
 import { localParse } from './qparse';
 import { buildBackup, downloadBlob, backupName, inspectBackup, applyBackup, getBkMeta, setBkMeta } from './backup';
@@ -218,11 +218,19 @@ export default function Home() {
   const [cards, setCards] = useState([]);
   const [notes, setNotes] = useState([]);
   const [tests, setTests] = useState([]);
-  // Помічник: розмови (замість одного msgs), поточна розмова, останній відкритий матеріал, бічна панель у редакторі (iPad ≥1024)
+  // Помічник: розмови (замість одного msgs), поточна розмова, останній відкритий матеріал.
+  // aiOpen — права панель Помічника, одна на весь застосунок (вікно ≥768; ipad-layout-spec 4.1), запам'ятовується.
   const [chats, setChats] = useState([]);
   const [chatCur, setChatCur] = useState(null);
   const [lastMat, setLastMat] = useState(null);
-  const [aiSide, setAiSide] = useState(false);
+  const [aiOpen, setAiOpenS] = useState(false);
+  const setAiOpen = v => { setAiOpenS(v); try { localStorage.setItem('helper-ai-open', v ? '1' : '0'); } catch (e) {} };
+  // клас вікна (навігація і режим панелі): c < 768 (вкладка) · m 768–1023 (панель поверх) · e 1024–1279 (поруч, 380) · l ≥ 1280 (поруч, 360–480)
+  const [win, setWin] = useState('c');
+  // клас області контенту (.region, без рейки й панелі): s < 600 · m < 860 · l < 1120 · xl — для поведінки (CSS — через @container region)
+  const [rc, setRc] = useState('s');
+  const regRef = useRef(null);
+  const [edDoc, setEdDoc] = useState(null); // відкритий у редакторі документ — контекст панелі за замовчуванням
   const [aiPend, setAiPend] = useState(null);
   const [openReq, setOpenReq] = useState(null);
   const [undo, setUndo] = useState(null);
@@ -371,6 +379,16 @@ export default function Home() {
       ? p.map(n => n.id === nview && n.text !== ntext ? { ...n, text: ntext, upd: Date.now() } : n)
       : [{ id: nview, text: ntext, upd: Date.now(), folder: nfold }, ...p]);
   }, [ntext]);
+  useEffect(() => {
+    try { if (localStorage.getItem('helper-ai-open') === '1') setAiOpenS(true); } catch (e) {}
+    const f = () => { const w = window.innerWidth; setWin(w < 768 ? 'c' : w < 1024 ? 'm' : w < 1280 ? 'e' : 'l'); };
+    f(); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f);
+  }, []);
+  useEffect(() => {
+    const el = regRef.current; if (!el) return;
+    const f = () => { const w = el.clientWidth; setRc(w < 600 ? 's' : w < 860 ? 'm' : w < 1120 ? 'l' : 'xl'); };
+    f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect();
+  }, [ready]);
   if (!ready) return null;
 
   const now = new Date();
@@ -436,7 +454,7 @@ export default function Home() {
   // «Скласти тест» — форму тесту: джерело = текстова нотатка з папки, якщо є, інакше тема = назва папки
   const goNewTest = () => { setTimeout(() => { const el = document.getElementById('new-test'); if (el) { el.scrollIntoView({ block: 'start' }); el.focus({ preventScroll: true }); } }, 60); };
   const onStudy = (kind, fo) => {
-    if (kind === 'cards') { setTab('ai'); setAiPend({ text: tr("Зроби картки за темою: ") + fo.name }); return; }
+    if (kind === 'cards') { toAI({ text: tr("Зроби картки за темою: ") + fo.name }); return; }
     const nt = notes.filter(n => n.folder === fo.id && n.text && n.text.trim()).sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
     // немає текстової нотатки → останній зошит / дошка папки (сторінка 1), інакше тема = назва папки
     const dc = nt ? null : docMeta.filter(d => d.folder === fo.id).sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
@@ -496,19 +514,34 @@ export default function Home() {
     if (!ref) return;
     if (ref.k === 'note') { if (notes.some(n => n.id === ref.id)) openNote(ref.id); return; }
     setOpenReq({ id: ref.id, page: page || 1, t: Date.now() });
-    if (!aiSide) setTab('folders');
+    setTab('folders');
   };
   const askFromEditor = info => {
     setLastMat({ k: 'doc', id: info.id, title: info.title, type: info.type, page: info.page });
     // ласо: info.sel — область виділення (рендериться лише вона), info.text — заготовка запиту без автонадсилання
     setAiPend({ ctx: { k: 'doc', id: info.id, title: info.title, type: info.type, pages: [info.page], ...(info.sel ? { sel: info.sel } : {}) }, ...(info.text ? { text: info.text } : {}) });
-    if (window.matchMedia('(min-width:1024px)').matches) setAiSide(true); else { setAiSide(false); setTab('ai'); }
+    if (window.matchMedia('(min-width:768px)').matches) setAiOpen(true); else setTab('ai');
   };
-  const assistant = side => <Assistant side={side} onClose={() => setAiSide(false)} chats={chats} setChats={setChats} curId={chatCur} setCurId={setChatCur}
+  // запит до Помічника з будь-якого розділу: на iPad — права панель (розділ лишається на місці), на телефоні — вкладка
+  const toAI = pend => {
+    if (pend) setAiPend(pend);
+    if (tab !== 'ai' && window.matchMedia('(min-width:768px)').matches) setAiOpen(true); else setTab('ai');
+  };
+  // контекст розділу для панелі: відкрита папка, вибраний набір (План і Налаштування — без контексту)
+  const secCtx = (() => {
+    if (tab === 'folders' && edDoc) return { k: 'doc', id: edDoc.id, title: edDoc.title, type: edDoc.type, pages: [edDoc.page || 1] };
+    if (tab === 'folders' && typeof fview === 'number') { const fo = folders.find(x => x.id === fview); return fo ? { k: 'folder', id: fo.id, title: fo.name } : null; }
+    if (tab === 'cards' && deckV && !deckV.isNew) return { k: 'deck', id: deckV.name || '', title: deckV.name || tr("Без набору") };
+    return null;
+  })();
+  const assistant = side => <Assistant side={side} wide={!side && (rc === 'l' || rc === 'xl')} secCtx={side ? secCtx : null} onClose={() => setAiOpen(false)} chats={chats} setChats={setChats} curId={chatCur} setCurId={setChatCur}
     call={callAI} buildState={buildState} apply={applyAI} undo={doUndo} items={items} notes={notes} cards={cards} folders={folders} lastMat={lastMat}
     pending={aiPend} clearPending={() => setAiPend(null)} onReview={() => { setTab('cards'); setDeckV(null); startRev(null); }} onOpenRef={openRef}
     rev={{ n: revQ.list.length, decks: [...new Set(revQ.list.map(c => c.deck || ''))] }} exam={nextExam ? { t: nextExam.t, days: daysTo(nextExam.due, today) } : null} onExamPlan={() => nextExam && planExam(nextExam)}
-    on401={() => { setAiSide(false); setTab('set'); }} />;
+    on401={() => { setAiOpen(false); setTab('set'); }} />;
+  // кнопка «Помічник» у шапці розділу (лише вікно ≥768; на телефоні Помічник — вкладка)
+  const aiBtn = <button className={'hd-ai' + (aiOpen ? ' on' : '')} onClick={() => setAiOpen(!aiOpen)} aria-pressed={aiOpen} aria-label={tr("Помічник")} title={tr("Помічник")}>
+    <Icon n="ai1" s={20} /><span className="hd-ai-l">{tr("Помічник")}</span></button>;
 
   // Швидкий ввід: спершу ШІ (mode: parse); якщо ШІ недоступний (немає ключа, 401, 502, офлайн, мережа) —
   // локальний розбір qparse.js і те саме превʼю з позначкою «Розібрано без ШІ — перевірте». Технічні деталі — лише в консоль.
@@ -712,7 +745,7 @@ export default function Home() {
   const planExam = e => {
     const n = daysTo(e.due, today), fo = folders.find(x => x.id === e.folder);
     const text = tr("Склади план підготовки до іспиту") + ' «' + e.t + '» (' + dm(e.due) + (e.time ? ' ' + e.time : '') + ', ' + exWhen(e) + '). ' + tr("Розподіли підготовку по днях до іспиту з урахуванням моїх годин на день і вже запланованих задач; останній день перед іспитом — повторення.");
-    setExV(null); setTab('ai'); setAiPend({ text, send: true, ctx: fo ? { k: 'folder', id: fo.id, title: fo.name } : null });
+    setExV(null); toAI({ text, send: true, ctx: fo ? { k: 'folder', id: fo.id, title: fo.name } : null });
   };
   const nCards = n => n + ' ' + plural(n, "картка", "картки", "карток");
   const nQs = n => n + ' ' + plural(n, "питання", "питання", "питань");
@@ -838,6 +871,7 @@ export default function Home() {
           <button className="ibtn" onClick={() => setCalM(cm + 1)} aria-label={tr("Наступний місяць")} title={tr("Наступний місяць")}><Icon n="chevR" s={20} /></button>
         </div>}
       </div>
+      {aiBtn}
     </header>);
 
   // local: розібрано без ШІ (qparse.js) — та сама картка з позначкою й кнопкою «Змінити» (повна форма з підставленими полями)
@@ -940,7 +974,7 @@ export default function Home() {
 
       {/* .region — область контенту між рейкою і панеллю Помічника: контейнер @container region (ipad-layout-spec 1.2, 3).
           Усе position:fixed (аркуші, шари .nv, FAB, тост, рейка) — поза нею. */}
-      <div className="region"><div className="reg-in">
+      <div className="region" ref={regRef}><div className="reg-in">
       {tab === 'today' && <>
         {planHead}
         {nextExam && <button className={'exb' + (daysTo(nextExam.due, today) <= 7 ? ' soon' : '')} onClick={() => setExV(nextExam.id)}>
@@ -989,7 +1023,7 @@ export default function Home() {
               <div className="daymain">
                 {dayEmpty
                   ? <div className="emptyday"><p>{selDate < today ? tr("Минулий день.") : tr("На цей день нічого немає.")}</p>
-                    {selDate >= today && <button className="btn2" onClick={() => { setTab('ai'); setAiPend({ text: tr("Що мені краще зробити сьогодні і в якому порядку?"), send: true }); }}>{tr("Скласти план із ШІ")}</button>}</div>
+                    {selDate >= today && <button className="btn2" onClick={() => toAI({ text: tr("Що мені краще зробити сьогодні і в якому порядку?"), send: true })}>{tr("Скласти план із ШІ")}</button>}</div>
                   : tlItems.length > 0 && <section className="tl" aria-label={tr("Шкала дня")} style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 8px)' }}>
                     {Array.from({ length: tlH1 - tlH0 + 1 }, (_, k) => <span key={k} className="tl-h" aria-hidden="true" style={{ top: 'calc(var(--hh) * ' + k + ')' }}>{pad((tlH0 + k) % 24 === 0 && k > 0 ? 24 : tlH0 + k)}:00</span>)}
                     <div className="tl-g" aria-hidden="true" style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 1px)' }} />
@@ -1035,7 +1069,7 @@ export default function Home() {
         onNoteFav={id => setNotes(notes.map(n => n.id === id ? { ...n, fav: !n.fav } : n))}
         onNoteMove={(id, folder) => setNotes(notes.map(n => n.id === id ? { ...n, folder } : n))}
         onNoteDel={id => setNotes(notes.filter(n => n.id !== id))}
-        onAsk={askFromEditor} aiOn={aiSide} openReq={openReq} onOpenReqDone={() => setOpenReq(null)} onOpened={m => setLastMat(m)} onEdClose={() => setAiSide(false)} />}
+        onAsk={askFromEditor} aiOn={aiOpen && win !== 'c'} onAiClose={() => setAiOpen(false)} aiBtn={aiBtn} openReq={openReq} onOpenReqDone={() => setOpenReq(null)} onOpened={m => { setLastMat(m); setEdDoc(m); }} onEdClose={() => setEdDoc(null)} />}
 
       {tab === 'cards' && !deckV && (() => {
         const testsList = idp => tests.length > 0 && <section className="lsec" aria-labelledby={idp + '-h'}>
@@ -1057,7 +1091,7 @@ export default function Home() {
         const n = Number(tcfg.n) || 10;
         return <div className="lrn">
           <div className="lrn-l">
-            <header className="lh"><h1>{tr("Навчання")}</h1></header>
+            <header className="lh"><h1>{tr("Навчання")}</h1>{aiBtn}</header>
             <section className="rv" aria-labelledby="rv-h">
               {revQ.list.length ? <>
                 <h2 className="rv-l" id="rv-h">{tr("Сьогодні повторити")}</h2>
@@ -1138,6 +1172,7 @@ export default function Home() {
         const add = () => { if (deckV.isNew && !dn) return; if (addCard(dn) && deckV.isNew) setDeckV({ name: dn }); };
         return <div className="dkv">
           <header className="lh">
+            {aiBtn}
             <nav className="crumbs" aria-label={tr("Шлях")}><button onClick={() => setDeckV(null)}>{tr("Навчання")}</button><span aria-hidden="true">›</span></nav>
             {deckV.isNew ? <><h1 className="vh">{tr("Новий набір")}</h1><label className="vh" htmlFor="dk-name">{tr("Назва набору")}</label><input id="dk-name" className="dk-name" autoFocus placeholder={tr("Назва набору")} value={deckV.draft} onChange={e => setDeckV({ ...deckV, draft: e.target.value })} /></>
               : <h1>{deckName(dn)}</h1>}
@@ -1175,7 +1210,7 @@ export default function Home() {
       {tab === 'ai' && assistant(false)}
 
       {tab === 'set' && <>
-        <div className="top"><h1>{tr("Налаштування")}</h1></div>
+        <div className="top"><h1>{tr("Налаштування")}</h1>{aiBtn}</div>
         <div className="card"><div className="sec">Мова / Sprache</div><div className="seg">{[['uk', 'Українська'], ['de', 'Deutsch']].map(([k, n]) => <button key={k} className={ui.lang === k ? 'on' : ''} onClick={() => setUi({ ...ui, lang: k })}>{n}</button>)}</div></div>
         <div className="card"><div className="sec">{tr("Акаунт")}</div>
           <div className="sub" style={{ marginBottom: 10 }}>{activeAccount() ? tr("Вхід виконано як") + ': ' + activeAccount().name : tr("Локальний профіль (без акаунта)")}</div>
@@ -1218,7 +1253,8 @@ export default function Home() {
         <button className="btn alt" onClick={() => setTab('today')}>{tr("Назад")}</button>
       </>}
       </div></div>
-      {tab === 'folders' && aiSide && <aside className="a-side" aria-label={tr("Помічник")}>{assistant(true)}</aside>}
+
+      {win !== 'c' && tab !== 'ai' && <AiPanel open={aiOpen} mode={win === 'm' ? 'over' : 'dock'} large={win === 'l'} onClose={() => setAiOpen(false)}>{assistant(true)}</AiPanel>}
 
       {/* один «+» на екран: План — FAB лише на телефоні (на iPad — рядок швидкого вводу); Матеріали — нова папка */}
       {/* один «+» на екран: План — FAB лише на телефоні (на iPad — рядок швидкого вводу); Матеріали — FAB/«Створити» всередині Materials */}

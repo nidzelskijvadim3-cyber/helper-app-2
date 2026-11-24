@@ -935,21 +935,84 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 }
 @container region (min-width:600px){.a-starts{display:grid;grid-template-columns:1fr 1fr}}
 
-/* бічна панель Помічника поруч із документом (iPad ≥1024) */
-.a-side{display:none}
-@media (min-width:1024px){
-  .a-side{display:flex;position:fixed;top:0;right:0;bottom:0;width:400px;z-index:25;background:var(--panel);border-left:1px solid var(--bd2);padding-top:env(safe-area-inset-top)}
-  .nv.ed.with-ai{right:400px}
-  .asst.side{flex:1;height:100%;min-height:0}
-  .asst.side .a-hd{height:60px;margin:0;padding:0 8px 0 18px;border-bottom:1px solid var(--bd2)}
-  .asst.side .a-ht{font-size:18px}
-  .asst.side .a-ib.bd{border:0;background:transparent;color:var(--tx-pill)}
-  .asst.side .a-body{overflow-y:auto;padding:12px 16px;min-height:0}
-  .asst.side .a-starts{display:flex}
-  .asst.side .a-hello{font-size:22px}
-  .asst.side .a-comp{padding:10px 12px max(14px,env(safe-area-inset-bottom));border-top:1px solid var(--bd2)}
+/* ===== Кнопка «Помічник» у шапці розділу (вікно ≥768; ipad-layout-spec 3.1): s/m — іконка 44, l/xl — іконка + підпис ===== */
+.hd-ai{display:none}
+@media (min-width:768px){
+  .hd-ai{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;width:44px;height:44px;padding:0;border:0;border-radius:var(--r-12);background:var(--accent-soft);color:var(--accent-tx);font:600 var(--fs-sm)/1 var(--font-body);cursor:pointer}
+  .hd-ai.on{background:var(--accent);color:var(--on-accent)}
+  .hd-ai-l{display:none}
+  .ph>.hd-ai{order:1}.ph>.views{order:2}
+  .lh,.top{position:relative}
+  .lh>.hd-ai,.top>.hd-ai{position:absolute;right:0;top:0}
 }
+@container region (min-width:600px){.ph>.hd-ai{order:3}}
+@container region (min-width:860px){.hd-ai{width:auto;padding:0 14px}.hd-ai-l{display:inline}}
+
+/* ===== Права панель Помічника, одна на весь застосунок (ipad-layout-spec 4; ipad-interactions 6.2) =====
+   768–1023 — поверх контенту справа, без затемнення (360 / 400 від 900); ≥1024 — поруч (380), ≥1280 — 400, край тягнеться 360–480.
+   Поруч: .region і шари .nv (редактор, нотатка, сесія) звужуються на --ai-w — клас ai-dock на <html> ставить AiPanel. */
+@media (min-width:768px){:root{--ai-w:360px}}
+@media (min-width:900px){:root{--ai-w:400px}}
+@media (min-width:1024px){:root{--ai-w:380px}}
+@media (min-width:1280px){:root{--ai-w:400px}}
+html.ai-dock .region{margin-right:var(--ai-w)}
+html.ai-dock .nv{right:var(--ai-w)}
+html.ai-dock .toast{left:calc(50% - var(--ai-w) / 2)}
+.aip{position:fixed;top:0;right:0;bottom:0;width:var(--ai-w);z-index:25;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--bd2);padding-top:env(safe-area-inset-top);overscroll-behavior:contain;transition:transform var(--dur-3) var(--ease-enter)}
+.aip.over{box-shadow:var(--shadow-pop)}
+/* поверх редактора — під його панеллю інструментів, щоб інструменти й «Помічник» лишалися досяжними */
+html.ed-open .aip.over{top:calc(2 * var(--bar-h) + env(safe-area-inset-top));padding-top:0}
+.aip[data-st="enter"]{transform:translateX(100%);transition:none}
+.aip[data-st="exit"]{transform:translateX(100%);transition:transform var(--dur-2) var(--ease-exit)}
+.aip-grip{position:absolute;left:-12px;top:0;bottom:0;width:24px;z-index:2;display:flex;align-items:center;justify-content:center;cursor:col-resize;touch-action:none}
+.aip-grip i{display:block;width:4px;height:32px;border-radius:2px;background:var(--bd)}
+.aip.drag .aip-grip i{background:var(--accent-tx)}
+.aip-grip:focus-visible{outline:2px solid var(--accent-tx);outline-offset:-2px}
+.aip.drag{-webkit-user-select:none;user-select:none}
+.asst.side{flex:1;min-height:0;display:flex;flex-direction:column}
+.asst.side .a-hd{flex:none;height:var(--hd-h);margin:0;padding:0 var(--s-2);gap:2px;border-bottom:1px solid var(--bd2)}
+.asst.side .a-ht{margin-left:var(--s-1);font-size:var(--fs-t3);font-weight:600;letter-spacing:0}
+.asst.side .a-ctx{flex:none;min-height:52px;display:flex;align-items:center;justify-content:flex-end;gap:var(--s-2);padding:var(--s-2) var(--s-4);border-bottom:1px solid var(--bd2)}
+.a-cx{flex:1;min-width:0;height:36px;min-height:36px;padding-left:10px;background:var(--fill);font-size:var(--fs-sm)}
+.a-cx svg{color:var(--tx2)}
+.a-cx button{position:relative;height:36px;width:40px}
+.a-cx button::after{content:"";position:absolute;left:0;right:0;top:-4px;bottom:-4px}
+.a-seg.sm{flex:none;background:var(--fill);border:0;border-radius:10px;padding:2px}
+.a-seg.sm button{height:32px;min-width:44px;padding:0 10px;border-radius:8px;font-size:var(--fs-cap);font-weight:600}
+.a-seg.sm button::after{top:-6px;bottom:-6px}
+.a-seg.sm button[aria-pressed="true"]:not(:last-child){background:var(--segon);color:var(--tx)}
+.asst.side .a-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:var(--s-4)}
+.asst.side .a-start{padding-top:var(--s-2)}
+.asst.side .a-starts{display:flex}
+.asst.side .a-hello{font-size:var(--fs-t3)}
+.asst.side .a-comp{flex:none;padding:var(--s-3) var(--s-3) max(var(--s-4),env(safe-area-inset-bottom));border-top:1px solid var(--bd2)}
+.a-hs{margin:0 0 var(--s-3)}
+.a-hs input{height:44px;padding:0 14px;font-size:var(--fs-sm)}
+.asst.side .a-ho,.a-hcol .a-ho{min-height:64px}
+.asst.side .a-hi.is-cur,.a-hcol .a-hi.is-cur{background:var(--fill);border-radius:var(--r-12)}
+.asst.side .a-hi.is-cur .a-ho,.a-hcol .a-hi.is-cur .a-ho{padding-left:var(--s-2)}
 .a-ta::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (prefers-reduced-motion:reduce){
+  /* замість зсуву — коротке згасання 150 мс (ipad-interactions 6.4); перекриває глобальне обнулення переходів */
+  .aip,.aip[data-st]{transform:none!important;transition:opacity 150ms linear!important}
+  .aip[data-st="enter"],.aip[data-st="exit"]{opacity:0}
+}
+
+/* ===== Вкладка «Помічник» на області l/xl: колонка розмов 300 + чат у колонці ≤720 (ipad-layout-spec 4.5, I12, I13) ===== */
+.asst.tab.wide{width:auto;max-width:none;margin:calc(-1 * var(--rg-t)) calc(-1 * var(--gutter)) 0;height:calc(100dvh - env(safe-area-inset-top));display:grid;grid-template-columns:var(--hist-w) minmax(0,1fr)}
+.a-hcol{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--bd2)}
+.a-hch{flex:none;height:var(--hd-h);display:flex;align-items:center;gap:var(--s-2);padding:0 var(--s-2) 0 var(--s-4);border-bottom:1px solid var(--bd2)}
+.a-hct2{flex:1;min-width:0;margin:0;font:600 var(--fs-t3)/1.25 var(--font-display)}
+.a-hcol .a-hs{flex:none;margin:0;padding:var(--s-3) var(--s-4)}
+.a-hcl{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 var(--s-2) var(--s-4) var(--s-4)}
+.a-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.asst.tab .a-whd{flex:none;height:var(--hd-h);min-height:0;margin:0;padding:0 var(--gutter);gap:var(--s-3);border-bottom:1px solid var(--bd2)}
+.a-wt{flex:1;min-width:0;margin:0;font:600 var(--fs-sm)/1.3 var(--font-body);letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.asst.tab.wide .a-body{flex:1;min-height:0;margin:0;padding:var(--s-4) var(--gutter) 0;display:flex;flex-direction:column}
+.a-col{width:100%;max-width:var(--read-w);margin:0 auto}
+.asst.tab.wide .a-body.is-start>.a-col{margin:auto}
+.a-main>.a-col{width:calc(100% - 2 * var(--gutter))}
+.asst.tab.wide .a-starts{display:grid;grid-template-columns:1fr 1fr}
 
 /* ===== Навчання: інтервальне повторення, «Поясни», картки з помилок; План: іспити ===== */
 .rvs-a{display:flex;margin:0 0 8px}
