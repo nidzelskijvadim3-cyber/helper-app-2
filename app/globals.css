@@ -16,6 +16,16 @@
   --c-home:#9BD46A;--c-home-bg:#22301A;--c-home-sub:#C9E3B5;
   --r-12:12px;--r-14:14px;--r-16:16px;--r-20:20px;
   --shadow-fab:0 10px 28px rgba(0,0,0,.45);
+  /* iPad (outputs/helper-app-2/ui/ipad/ipad-layout-spec.md, розділ 2): шкала відступів 4, типографіка правил ≥768, розміри розкладки */
+  --s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:20px;--s-6:24px;--s-7:28px;--s-8:32px;--s-10:40px;
+  --fs-t1:34px;--fs-t2:26px;--fs-t3:20px;--fs-body:17px;--fs-sm:15px;--fs-cap:13px;
+  --rail-w:88px;--ai-w:380px;--ai-w-min:360px;--ai-w-max:480px;--read-w:720px;--form-w:560px;--session-w:680px;--side-w:220px;
+  --hist-w:300px;--list-w:400px;--agenda-w:380px;--thumbs-w:132px;--bar-h:52px;--hd-h:56px;--sheet-s:420px;--sheet-m:560px;--sheet-l:720px;--pop-w:320px;
+  /* стіл навколо сторінки в редакторі, край сторінки, поповери й панель поверх контенту */
+  --desk:#0E0F11;--shadow-page:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);--shadow-pop:0 12px 40px rgba(0,0,0,.45);
+  /* рух (ipad-interactions.md 6.1): закриття коротше за відкриття */
+  --dur-1:100ms;--dur-2:200ms;--dur-3:300ms;--dur-4:400ms;
+  --ease-standard:cubic-bezier(.2,0,0,1);--ease-enter:cubic-bezier(.05,.7,.1,1);--ease-exit:cubic-bezier(.3,0,.8,.15);
   --font-body:var(--ff-inter),Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
   --font-display:var(--ff-display),"Space Grotesk",var(--ff-inter),Inter,system-ui,sans-serif;
   /* сумісність зі старими назвами змінних, якими користуються інші екрани */
@@ -33,6 +43,7 @@
   --c-personal:#7444C9;--c-personal-bg:#EEE6FC;--c-personal-sub:#553585;
   --c-home:#4A7A1A;--c-home-bg:#E7F3DA;--c-home-sub:#3B5A1E;
   --segon:#FFFFFF;--glass:rgba(236,236,238,.94);--shadow-fab:0 10px 24px rgba(20,21,24,.22);
+  --desk:#D9DADD;--shadow-page:0 1px 2px rgba(20,21,24,.12),0 8px 24px rgba(20,21,24,.12);--shadow-pop:0 12px 32px rgba(20,21,24,.18);
   color-scheme:light}
 @media(prefers-color-scheme:light){:root[data-theme="auto"]{
   --bg:#F4F4F5;--surface:#FFFFFF;--panel:#ECECEE;--bd:#D3D5D9;--bd2:#E2E3E6;--fill:#E9EAEC;
@@ -45,6 +56,7 @@
   --c-personal:#7444C9;--c-personal-bg:#EEE6FC;--c-personal-sub:#553585;
   --c-home:#4A7A1A;--c-home-bg:#E7F3DA;--c-home-sub:#3B5A1E;
   --segon:#FFFFFF;--glass:rgba(236,236,238,.94);--shadow-fab:0 10px 24px rgba(20,21,24,.22);
+  --desk:#D9DADD;--shadow-page:0 1px 2px rgba(20,21,24,.12),0 8px 24px rgba(20,21,24,.12);--shadow-pop:0 12px 32px rgba(20,21,24,.18);
   color-scheme:light}}
 *,*::before,*::after{box-sizing:border-box}
 html{touch-action:manipulation;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;overflow-x:hidden;max-width:100%}
@@ -54,7 +66,13 @@ button,input,select,textarea{font-family:inherit}
 :focus:not(:focus-visible){outline:none}
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,label:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent-tx);outline-offset:2px}
 ::placeholder{color:var(--tx3);opacity:1}
-.wrap{position:relative;max-width:560px;margin:0 auto;padding:24px 20px calc(170px + env(safe-area-inset-bottom))}
+.wrap{position:relative;max-width:560px;margin:0 auto;padding:24px 20px calc(170px + env(safe-area-inset-bottom));--rg-t:24px;--rg-l:20px}
+/* .region — область контенту між рейкою і панеллю Помічника; розкладки екранів — від її ширини (s < 600 · m < 860 · l < 1120 · xl).
+   .reg-in — внутрішній шар із полями: --gutter залежить від класу області, а контейнер не може запитувати сам себе. */
+.region{container:region/inline-size;min-width:0}
+.reg-in{--gutter:20px}
+@container region (min-width:600px){.reg-in{--gutter:28px}}
+@container region (min-width:1120px){.reg-in{--gutter:32px}}
 .date{color:var(--tx2);font-size:13px;font-weight:500}
 h1,h2,.disp{font-family:var(--font-display)}
 h1{font-size:32px;line-height:1.1;margin:2px 0 6px;font-weight:700;letter-spacing:-.5px}
@@ -91,7 +109,7 @@ input[type=checkbox]:focus-visible{outline-offset:3px}
 .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
 .cw{text-align:center;color:var(--mu);font-size:12px;padding:4px 0}
 .cd{position:relative;aspect-ratio:1;min-height:44px;border:0;background:none;color:var(--tx);font-size:17px;font-variant-numeric:tabular-nums;border-radius:var(--r-14);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0;cursor:pointer}
-.cd:hover{background:var(--fill)}
+@media (hover:hover){.cd:hover{background:var(--fill)}}
 .cd.td{background:var(--accent);color:var(--on-accent);font-weight:700}
 .cd.sel:not(.td){box-shadow:inset 0 0 0 2px var(--accent-tx)}
 .dot{position:absolute;bottom:6px;left:50%;margin-left:-2px;width:4px;height:4px;border-radius:50%;background:currentColor;opacity:.8}
@@ -245,6 +263,9 @@ input[type=checkbox]:focus-visible{outline-offset:3px}
 .edtop{display:flex;align-items:center;gap:8px;margin-bottom:10px}.edtop .chip{margin:0}
 .edbox{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:var(--fill);border-radius:12px;overflow:hidden}
 .edbox canvas{background:#fff;touch-action:none;box-shadow:0 2px 12px rgba(0,0,0,.3)}
+/* iPad: без цього Apple Pencil починає виділяти текст/показувати лупу замість малювання */
+.edbox,.edbox *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.edbox input,.edbox textarea{-webkit-user-select:text;user-select:text}
 .edtools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding-top:10px}
 .edtools .chip{margin:0}.edtools .chip.on{background:var(--acs);color:var(--on)}
 .edrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;width:100%}
@@ -259,14 +280,6 @@ input[type=checkbox]:focus-visible{outline-offset:3px}
 .star{position:absolute;top:6px;right:8px;color:#ffcc00;font-size:18px;text-shadow:0 1px 3px rgba(0,0,0,.5)}
 .dthumb{position:relative}
 .chip.on{background:var(--acs);color:var(--on)}
-.ov.ai{z-index:50}
-.aisheet{display:flex;flex-direction:column;height:88%;max-height:88%;padding-bottom:calc(14px + env(safe-area-inset-bottom))}
-.aihead{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.aihead .chip{margin:0}
-.aimsgs{flex:1;overflow-y:auto;min-height:0}
-.aicomp{padding-top:8px}
-.atts{display:flex;gap:8px;margin-bottom:8px}
-.att{position:relative;width:64px;height:64px;border-radius:10px;background:center/cover no-repeat}
-.att button{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:0;background:var(--tx);color:var(--bg);font-size:14px;line-height:1;padding:0}
 .dc{min-width:0}.dc.sm{width:112px;flex:none}
 .rrow{display:flex;gap:12px;overflow-x:auto;padding:2px 2px 14px;margin:0 -2px}
 .dcover{position:absolute;inset:0;display:flex;align-items:flex-end;padding:10px 10px 10px 18px;color:#fff;font-weight:700;font-size:15px;line-height:1.2;text-align:left}
@@ -279,44 +292,48 @@ input[type=checkbox]:focus-visible{outline-offset:3px}
 .dc[draggable=true],.dl[draggable=true]{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 .ftile.drop{outline:3px dashed var(--ac);outline-offset:-3px}
 
+/* ≥768 (вікно): рейка, кнопка «Налаштування», аркуші, FAB — прив'язані до вікна; розкладки екранів — у @container region нижче.
+   Обмеження max-width:1100 прибрано (I8): ширини задають колонки екранів. */
 @media (min-width:768px){
-  .wrap{max-width:none;margin:0;padding:26px 28px 60px calc(88px + 28px + env(safe-area-inset-left))}
-  .wrap>*{max-width:1100px}
-  .wrap>.ov{max-width:none}
+  .wrap{max-width:none;margin:0;padding:0 0 0 calc(var(--rail-w) + env(safe-area-inset-left))}
+  .reg-in{padding:26px var(--gutter) 60px;--rg-t:26px;--rg-l:var(--gutter)}
+  .wrap.t-ai{padding-bottom:0}
+  .wrap.t-ai .reg-in{padding-bottom:0}
   h1{font-size:34px}
   /* рейка 88px: іконка + підпис, внизу — Налаштування */
-  .nav{left:0;right:auto;top:0;bottom:0;width:calc(88px + env(safe-area-inset-left));display:flex;flex-direction:column;align-items:center;gap:6px;padding:calc(24px + env(safe-area-inset-top)) 10px calc(84px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));border-top:0;border-right:1px solid var(--bd2)}
+  .nav{left:0;right:auto;top:0;bottom:0;width:calc(var(--rail-w) + env(safe-area-inset-left));display:flex;flex-direction:column;align-items:center;gap:6px;padding:calc(24px + env(safe-area-inset-top)) 10px calc(84px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));border-top:0;border-right:1px solid var(--bd2)}
   .nav button{flex:none;width:68px;height:60px;min-height:0;border-radius:var(--r-16);gap:4px}
-  .nav button:hover{background:var(--fill)}
+  @media (hover:hover){.nav button:hover{background:var(--fill)}}
   .nav button[aria-current="page"]{background:var(--accent-soft)}
   .me{position:fixed;top:auto;right:auto;left:calc(20px + env(safe-area-inset-left));bottom:calc(20px + env(safe-area-inset-bottom));width:48px;height:48px;border-radius:var(--r-16);font-size:15px;z-index:11}
   .me i{border-color:var(--panel)}
   .me.cur{display:block;border-color:var(--accent-tx)}
-  .top,.ph{padding-right:0}
-  .ph{margin-bottom:18px;row-gap:12px}
-  .ph-t{flex-direction:row;align-items:baseline;gap:14px}
-  .ph-t .date{order:2;font-size:15px;font-weight:400;white-space:nowrap}
-  .views{width:auto;margin-top:0;flex-wrap:nowrap}
+  .ph{padding-right:0}
   .views>[role=group]{flex:none}
   .pill{height:40px;padding:0 18px;border-radius:20px}
   .wide-only{display:revert}.qbar.wide-only{display:flex}
   .phone-only{display:none!important}
-  .tl{--hh:72px;--tlx:60px}
   .tl-h{font-size:13px}
   .tlb .tlt{font-size:16px}.tlb .tls{font-size:14px}
   .fab{right:28px;bottom:28px}
-  .fgrid{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
-  .dgrid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
-  .cal{max-width:680px}
   .ov{align-items:center;justify-content:center}
   .sheet{max-width:620px;border-radius:var(--r-20);border:1px solid var(--bd);max-height:88%}
   .sheet::before{display:none}
-  .ov.ai{align-items:stretch;justify-content:flex-end}
-  .ov.ai .aisheet{width:440px;max-width:100%;height:100%;max-height:100%;border-radius:var(--r-20) 0 0 var(--r-20);margin:0 0 0 auto}
   .nv{max-width:none;margin:0}
 }
-/* iPad горизонтально / широкий: «Ще на сьогодні» — права колонка */
-@media (min-width:1024px){
+/* область m+ (раніше — вікно ≥768): шапка Плану в один рядок, сітки ширші */
+@container region (min-width:600px){
+  .ph{margin-bottom:18px;row-gap:12px}
+  .ph-t .date{font-size:15px;font-weight:400;white-space:nowrap}
+  .views{width:auto;margin-top:0;flex-wrap:nowrap}
+  .views>[role=group]{flex:none}
+  .tl{--hh:72px;--tlx:60px}
+  .fgrid{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+  .dgrid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+  .cal{max-width:680px}
+}
+/* область l+ (раніше — вікно ≥1024): «Ще на сьогодні» — права колонка */
+@container region (min-width:860px){
   .ph{flex-wrap:nowrap}
   .dayg.two{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:28px;align-items:start}
   .dayg .more-day{position:sticky;top:20px;background:var(--panel);border:1px solid var(--bd2);border-radius:var(--r-20);padding:22px;display:flex;flex-direction:column;gap:12px}
@@ -332,13 +349,13 @@ input[type=checkbox]:focus-visible{outline-offset:3px}
 .ib.on{background:var(--acs);color:var(--on)}.ib:disabled{opacity:.35}
 .edtitle{flex:1;min-width:60px;background:none;border:0;border-radius:8px;font-weight:600;font-size:16px;padding:8px;text-align:center;color:var(--tx)}
 .cdotbig{display:block;width:24px;height:24px;border-radius:50%;box-shadow:0 0 0 2px var(--bg),0 0 0 3.5px var(--mu)}
-.nv.ed .edbox{position:relative;flex:1;min-height:0;display:flex;align-items:stretch;justify-content:flex-start;overflow:auto;background:#fff;border-radius:0;-webkit-overflow-scrolling:touch}
+.nv.ed .edbox{position:relative;flex:1;min-height:0;display:flex;align-items:stretch;justify-content:flex-start;overflow:auto;background:var(--fill);border-radius:0;-webkit-overflow-scrolling:touch}
 .nv.ed .edbox canvas{margin:auto;flex:none;box-shadow:none;background:#fff}
 .pgnav{position:absolute;left:0;right:0;bottom:calc(12px + env(safe-area-inset-bottom));margin:0 auto;width:fit-content;display:flex;align-items:center;gap:2px;padding:3px 6px;border-radius:999px;background:var(--glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:.5px solid var(--glassb);box-shadow:0 6px 18px rgba(0,0,0,.3);font-size:14px;color:var(--tx);z-index:3}
 .pgnav .ib{width:44px;height:44px}
 .nv.ed .strip{position:absolute;left:10px;right:10px;bottom:calc(66px + env(safe-area-inset-bottom));margin:0;padding:8px;border-radius:16px;background:var(--glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:.5px solid var(--glassb);z-index:3}
 .popback{position:absolute;inset:0;z-index:6}
-.pop{position:absolute;left:10px;right:10px;margin:0 auto;max-width:380px;background:var(--card);border-radius:16px;padding:12px 14px;box-shadow:0 12px 40px rgba(0,0,0,.45)}
+.pop{position:absolute;left:10px;right:10px;margin:0 auto;max-width:380px;background:var(--card);border-radius:16px;padding:12px 14px;box-shadow:var(--shadow-pop)}
 .prow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
 .cpick{width:30px;height:30px;padding:0;border:0;border-radius:50%;background:none}
 .tg{display:flex;justify-content:space-between;align-items:center;width:100%;border:0;background:var(--fill);color:var(--tx);font-size:16px;padding:12px 14px;border-radius:12px;margin-top:8px}
@@ -361,7 +378,7 @@ input[type=checkbox]:focus-visible{outline-offset:3px}
 .icogrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:6px}
 .ico{border:0;border-radius:10px;background:var(--fill);font-size:22px;height:44px;color:var(--tx);padding:0}.ico.on{box-shadow:inset 0 0 0 2px var(--ac)}
 
-.cvwrap{position:relative;margin:auto;flex:none}
+.cvwrap{position:relative;margin:0 auto;flex:none}
 .cvwrap canvas{display:block}
 .ruler{position:absolute;height:0;transform-origin:0 0;pointer-events:none;z-index:2}
 .rbody{position:absolute;left:0;top:0;right:0;height:64px;border:1px solid rgba(0,0,0,.35);border-top:2px solid #ff9f0a;border-radius:0 0 10px 10px;box-shadow:0 4px 12px rgba(0,0,0,.3);background:repeating-linear-gradient(90deg,rgba(0,0,0,.6) 0 1px,transparent 1px 16px) top/100% 12px no-repeat,linear-gradient(rgba(255,255,255,.6),rgba(255,255,255,.3))}
@@ -448,13 +465,13 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;font-size:13px;color:var(--tx2);margin-bottom:2px}
 .crumbs button{position:relative;border:0;background:none;padding:0;color:var(--tx2);font:inherit;cursor:pointer}
 .crumbs button::after{content:"";position:absolute;left:-4px;right:-4px;top:50%;height:44px;transform:translateY(-50%)}
-.crumbs button:hover{color:var(--tx);text-decoration:underline}
+@media (hover:hover){.crumbs button:hover{color:var(--tx);text-decoration:underline}}
 .crumbs button.drop{outline:2px dashed var(--accent-tx);outline-offset:2px}
 .msec{margin-bottom:24px}
 .msh{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;min-height:32px}
 .msh-t,.lsh-t{margin:0;font-family:var(--font-body);font-size:13px;font-weight:600;color:var(--tx2);text-transform:uppercase;letter-spacing:.5px}
 .lnk{position:relative;border:0;background:none;color:var(--accent-tx);font-size:13px;font-weight:600;padding:0 4px;min-height:44px;cursor:pointer}
-.lnk:hover{text-decoration:underline}
+@media (hover:hover){.lnk:hover{text-decoration:underline}}
 .mempty{padding:18px 0 8px;color:var(--tx2)}
 .mempty p{margin:0 0 6px;font-size:15px}
 .msearch{display:flex;gap:8px;align-items:center;margin-bottom:18px}
@@ -471,13 +488,13 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 /* картка матеріалу (сітка) */
 .mc{position:relative;min-width:0}
 .mc-o{display:flex;flex-direction:column;gap:6px;width:100%;border:0;background:none;padding:0;color:var(--tx);text-align:left;font:inherit;cursor:pointer;border-radius:12px}
-.mc-o:hover .cv{filter:brightness(1.06)}
+@media (hover:hover){.mc-o:hover .cv{filter:brightness(1.06)}}
 .mc-t{font-size:13px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;margin-top:2px}
 .mc-m{font-size:12px;color:var(--tx2);margin-top:-4px}
 .mc .mc-t,.mc .mc-m{padding-right:26px}
 .mc-x{position:absolute;right:-8px;bottom:-8px;width:36px;height:36px;border-radius:var(--r-12);border:0;background:none;color:var(--tx2);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
 .mc-x::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%)}
-.mc-x:hover{color:var(--tx);background:var(--fill)}
+@media (hover:hover){.mc-x:hover{color:var(--tx);background:var(--fill)}}
 .mrow{display:flex;gap:12px;overflow-x:auto;margin:0 -20px;padding:0 20px 8px;scrollbar-width:none}
 .mrow::-webkit-scrollbar{display:none}
 .mrow .mc{width:104px;flex:none}
@@ -497,13 +514,13 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .fgrid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .msub{margin-bottom:20px}
 .ft{min-height:84px;min-width:0;border-radius:var(--r-16);background:var(--surface);border:1px solid var(--bd);color:var(--tx);padding:14px;display:flex;flex-direction:column;justify-content:space-between;gap:10px;text-align:left;font:inherit;cursor:pointer}
-.ft:hover{border-color:var(--tx3)}
+@media (hover:hover){.ft:hover{border-color:var(--tx3)}}
 .ft-b{display:flex;justify-content:space-between;align-items:baseline;gap:8px;width:100%;min-width:0}
 .ft-n{font-size:15px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ft-c{font-size:12px;color:var(--tx2);flex:none}
 .ft.drop,.sb.drop{outline:2px dashed var(--accent-tx);outline-offset:-2px}
 .fnew{margin-top:10px;width:100%;height:48px;border-radius:var(--r-14);border:1px dashed var(--tx3);background:none;color:var(--tx-pill);font-size:14px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
-.fnew:hover{color:var(--tx);border-color:var(--tx2)}
+@media (hover:hover){.fnew:hover{color:var(--tx);border-color:var(--tx2)}}
 /* інструменти папки (лише при ≥ 6 матеріалах) */
 .mtools{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
 .mt-types{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;margin:0 -20px;padding:4px 20px}
@@ -541,7 +558,7 @@ input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;bac
 .lsec{margin-bottom:24px;display:flex;flex-direction:column;gap:10px}
 .lsh{display:flex;justify-content:space-between;align-items:center;min-height:32px}
 .dkr{display:flex;align-items:center;gap:12px;width:100%;min-height:64px;padding:12px 14px;border-radius:var(--r-16);background:var(--surface);border:1px solid var(--bd);color:var(--tx);text-align:left;font:inherit;cursor:pointer}
-.dkr:hover{border-color:var(--tx3)}
+@media (hover:hover){.dkr:hover{border-color:var(--tx3)}}
 .dkr-bar{width:10px;height:36px;border-radius:3px;flex:none}
 .dkr-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .dkr-n{font-size:15px;font-weight:600;overflow-wrap:anywhere}
@@ -599,14 +616,18 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .rv-done h2{margin:0;font-size:24px}
 
 @media (min-width:420px){.src-n{font-size:15px}.src-s{font-size:13px}}
-@media (min-width:768px){
-  /* Матеріали: колонка папок + основна область */
-  .mat{display:grid;grid-template-columns:220px minmax(0,1fr);column-gap:28px;margin:-26px 0 0 -28px}
+/* кнопка «Налаштування» на ≥768 переїжджає в рейку — шапкам розділів більше не потрібне поле справа під неї */
+/* «Створити» в шапці замінює FAB, а FAB прив'язаний до вікна < 768 — тож і кнопка від вікна, не від області */
+@media (min-width:768px){.mhd{padding-right:0}.btn-a.mcreate{display:inline-flex}}
+/* область m+ (раніше — вікно ≥768) */
+@container region (min-width:600px){
+  /* Матеріали: колонка папок + основна область (сайдбар до краю рейки: від'ємні поля = поля .reg-in) */
+  .mat{display:grid;grid-template-columns:220px minmax(0,1fr);column-gap:28px;margin:calc(-1 * var(--rg-t)) 0 0 calc(-1 * var(--rg-l))}
   .m-side{display:flex;flex-direction:column;gap:2px;position:sticky;top:0;height:100vh;overflow-y:auto;padding:26px 12px 26px 14px;border-right:1px solid var(--bd2)}
-  .m-main{padding-top:26px;min-width:0}
+  .m-main{padding-top:var(--rg-t);min-width:0}
   .m-side-t{font-family:var(--font-display);font-size:22px;font-weight:700;padding:0 10px 14px}
   .sb{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 10px;border:0;border-radius:var(--r-12);background:none;color:var(--tx-pill);font-size:15px;text-align:left;cursor:pointer;flex:none}
-  .sb:hover{background:var(--fill)}
+  @media (hover:hover){.sb:hover{background:var(--fill)}}
   .sb[aria-current="true"]{background:var(--fill);color:var(--tx);font-weight:600}
   .sb.sub{font-size:14px}
   .sb .sq{width:10px;height:10px;border-radius:3px;flex:none}
@@ -615,9 +636,12 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .sb-c{margin-left:auto;padding-left:8px;font-size:12px;color:var(--tx2);font-weight:500}
   .sb-h{font-size:12px;font-weight:600;color:var(--tx3);letter-spacing:.5px;text-transform:uppercase;padding:16px 10px 6px}
   .sb.add{color:var(--tx2)}
-  .mhd{padding-right:0;align-items:flex-end}
-  .mhd h1{font-size:30px}
-  .btn-a.mcreate{display:inline-flex}
+  /* D1: шапка переноситься рядками, а не стискає назву до літер; назва — в один рядок із «…» (повна — у title) */
+  .mhd{align-items:flex-end;flex-wrap:wrap;row-gap:var(--s-3)}
+  .mhd-t{flex:1 1 220px}
+  .mhd h1{font-size:30px;overflow-wrap:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mhd-a{margin-left:auto}
+  .mhd>.mq{order:3;flex:1 1 100%;width:auto;max-width:520px}
   .mgrid{grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:22px 18px}
   .mc-t{font-size:14px}
   .mt-types{margin:0;padding:4px 0}
@@ -625,7 +649,6 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .mrow{margin:0;padding:0 0 8px}
   /* Навчання: 2 колонки */
   .lrn{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:28px;align-items:start}
-  .lh{padding-right:0}
   .rv-n{font-size:30px}
   .tf-card{background:none;border:0;padding:0;gap:22px}
   .tf-t{font-family:var(--font-display);font-size:26px;font-weight:700}
@@ -633,7 +656,8 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .tf-go{flex-direction:row;align-items:center;gap:16px}
   .tf-go .btn-a{flex:none}
 }
-@media (min-width:1024px){
+/* область l+ (раніше — вікно ≥1024) */
+@container region (min-width:860px){
   .mat{grid-template-columns:250px minmax(0,1fr)}
   .mgrid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
   .lrn{grid-template-columns:340px minmax(0,1fr);gap:36px}
@@ -647,7 +671,7 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
   .rv>.rv-l,.rv>.rv-n,.rv>.rv-p{grid-column:1}
   .rv>.rv-go{grid-column:2;grid-row:1 / span 2;min-height:44px;font-size:14px}
   .rv-n{font-size:26px}
-  .fld2{flex-direction:row;gap:24px}.fld2>.fld{flex:1}
+  .fld2{flex-direction:row;flex-wrap:wrap;gap:18px 24px}.fld2>.fld{flex:1 1 300px;min-width:0}
 }
 .menu .shd .ib{display:flex;width:44px;height:44px;margin:0;padding:0;background:var(--fill);color:var(--tx2)}
 
@@ -655,7 +679,7 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
    Колір папки — дані (hex), не токен. Іконка на папці — білий або #16181C, що контрастніше (≥ 4.3:1). */
 .fkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:12px 6px}
 .fk{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0;padding:8px 2px 6px;border:0;border-radius:var(--r-14);background:none;color:var(--tx);font:inherit;text-align:center;cursor:pointer}
-.fk:hover{background:var(--fill)}
+@media (hover:hover){.fk:hover{background:var(--fill)}}
 .fk .fg{display:block;width:100%;max-width:72px;height:auto;margin-bottom:3px}
 .fk-n{max-width:100%;font-size:13px;font-weight:600;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 .fk-c{font-size:12px;line-height:1.2;color:var(--tx2)}
@@ -673,12 +697,12 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .fcustom:focus-within,.icustom:focus-within{outline:2px solid var(--accent-tx);outline-offset:2px}
 .ficos{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:4px;margin-top:6px}
 .fico{height:44px;border:0;border-radius:var(--r-12);background:var(--fill);color:var(--tx);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
-.fico:hover{color:var(--accent-tx)}
+@media (hover:hover){.fico:hover{color:var(--accent-tx)}}
 .fico[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent-tx);box-shadow:inset 0 0 0 2px var(--accent-tx)}
 .ffe-ph{align-items:center;flex-wrap:wrap}
 /* iPad: 820 → 6 у ряд, 1194 → 8 у ряд */
-@media (min-width:768px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(68px,1fr));gap:14px 4px}}
-@media (min-width:1024px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}}
+@container region (min-width:600px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(68px,1fr));gap:14px 4px}}
+@container region (min-width:860px){.fkgrid{grid-template-columns:repeat(auto-fill,minmax(92px,1fr))}}
 
 /* ===== Редактор: інструменти + контекстний ряд (улюблені кольори, 3 товщини, лінійка, налаштування) ===== */
 .edrow3{display:flex;flex-wrap:wrap;align-items:center;column-gap:8px}
@@ -690,7 +714,7 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .fav[aria-pressed="true"] i,.ipc[aria-pressed="true"] i{box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--tx)}
 .wbtn i{display:block;border-radius:50%}
 .wbtn i.ring{background:none!important;border:2px solid currentColor}
-.wbtn:hover,.fav:hover{background:var(--fill)}
+@media (hover:hover){.wbtn:hover,.fav:hover{background:var(--fill)}}
 .wbtn[aria-pressed="true"]{background:var(--fill);color:var(--tx);box-shadow:inset 0 0 0 1.5px var(--tx3)}
 .edsep{flex:none;width:1px;height:24px;background:var(--bd);margin:0 4px}
 .edhint{padding:0 8px}
@@ -706,9 +730,51 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .tg>span{text-align:left}
 .tgsub{display:block;font-size:13px;color:var(--tx2);margin-top:2px}
 .edtoast{position:absolute;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));max-width:440px;margin:0 auto;padding:12px 16px;border-radius:var(--r-14);background:var(--surface);color:var(--tx);border:1px solid var(--bd);box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:14px;z-index:5}
-@media (min-width:768px){
-  .edrow3{flex-wrap:nowrap}
-  .edctx{flex-basis:auto;flex:1;padding-left:8px;border-left:1px solid var(--bd)}
+/* ===== Редактор: розкладка панелі від ширини самого редактора (@container editor; ipad-layout-spec 7.1–7.4, I1, I3) =====
+   < 560 — телефон, як було: один ряд документа (порядок кнопок у DOM задає docs.js),
+          інструменти на всю ширину, стиль окремим рядком із прокруткою.
+   ≥ 560 — два постійні ряди по 52: документ (зліва Готово/Сторінки/Скасувати, назва по центру, справа Масштаб/Поділитися/Ще/Помічник)
+          і інструменти + стиль однією групою по центру. 560–839 — стиль згорнуто в «Поточний стиль» + Лінійка;
+          ≥ 840 — розгорнуто. Ряд ніколи не прокручується прихованим скролом (I1). Навколо сторінки — стіл --desk і поле 24. */
+.nv.ed{container:editor/inline-size;max-width:none;margin:0}
+.edw,.edcur{display:none}
+.edzoom{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:2px;height:44px;min-width:64px;padding:0 6px 0 10px;border:0;border-radius:var(--r-12);background:none;color:var(--tx);font:600 var(--fs-cap)/1 var(--font-body);white-space:nowrap;cursor:pointer}
+.edzoom svg{color:var(--tx2)}
+.edzoom[aria-expanded="true"]{background:var(--fill)}
+@media (hover:hover){.edzoom:hover{background:var(--fill)}}
+.curst{position:relative;flex:none;width:44px;height:44px;border:0;border-radius:var(--r-12);background:var(--fill);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
+.curst i{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--tx3)}
+.curst b{display:block;border-radius:50%;background:var(--paper)}
+.curst::after{content:"";position:absolute;right:4px;bottom:4px;border:4px solid transparent;border-top-color:var(--tx2);transform:translateY(2px)}
+.curst[aria-expanded="true"]{box-shadow:inset 0 0 0 1.5px var(--tx3)}
+.zpop .tg{margin-top:var(--s-1)}
+.zpop .zrow{justify-content:space-between;margin:var(--s-3) 0 0}
+.zpct{font-variant-numeric:tabular-nums;font-weight:600;font-size:var(--fs-sm)}
+.pgz{color:var(--tx2);font-size:var(--fs-cap);padding:0 10px 0 8px;margin-left:4px;border-left:1px solid var(--bd);white-space:nowrap;font-variant-numeric:tabular-nums;align-items:center;align-self:stretch}
+@container editor (max-width:559px){
+  .edtools{flex:1 1 100%;justify-content:space-between}.edtools .ib{flex:1 1 0;min-width:0;max-width:44px}
+}
+@container editor (min-width:560px){
+  .edbar{padding:env(safe-area-inset-top) max(var(--s-2),env(safe-area-inset-right)) 0 max(var(--s-2),env(safe-area-inset-left))}
+  .edrow2{height:var(--bar-h);padding:var(--s-1) 0;gap:var(--s-1);overflow:visible}
+  .edg{display:flex;align-items:center;gap:2px;flex:1 1 0;min-width:max-content}
+  .edr{justify-content:flex-end}
+  .edtitle{flex:0 1 auto;width:40cqi;max-width:40cqi;min-width:60px;height:44px;font-size:var(--fs-sm);padding:0 var(--s-2)}
+  .edw{display:inline-flex}
+  .edrow3{flex-wrap:nowrap;justify-content:center;column-gap:0;height:var(--bar-h);padding:var(--s-1) 0}
+  .edtools{flex:none;padding-top:0}
+  .edctx{flex:0 1 auto;min-width:0;overflow:visible;padding-left:0;border-left:0}
+  .edctx .edhint{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .ph-z{display:none}
+  .nv.ed .edbox{background:var(--desk);padding:var(--s-6)}
+  .nv.ed .edbox canvas{box-shadow:var(--shadow-page);border-radius:2px}
+  /* сторінка — від верхнього краю столу (поле 24), як у макеті; по горизонталі — по центру */
+  .nv.ed .cvwrap{margin:0 auto}
+  .pgn{padding:0 4px;font-variant-numeric:tabular-nums}
+}
+@container editor (min-width:560px) and (max-width:839px){
+  .edctx{display:none}
+  .edcur{display:flex;align-items:center;gap:2px;flex:none}
 }
 @media (max-width:420px){.edtools,.edctx{gap:0}.edsep{margin:0 2px}}
 /* 320–360 px: 8 кнопок по 38 px завширшки (висота 44; мінімум WCAG 2.2 — 24) */
@@ -727,7 +793,7 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .a-hd-h .a-ht{font-size:22px}
 .a-ib{flex:none;width:44px;height:44px;border-radius:var(--r-14);border:0;background:transparent;color:var(--tx);display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
 .a-ib.bd{border:1px solid var(--bd);background:var(--surface)}
-.a-ib:hover{background:var(--fill)}
+@media (hover:hover){.a-ib:hover{background:var(--fill)}}
 .a-hd-c{border-bottom:1px solid var(--bd2);padding-bottom:8px;margin:-8px -4px 12px}
 .a-hc{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;text-align:center}
 .a-hct{margin:0;font-size:15px;font-weight:600;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -740,7 +806,7 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .a-sub{margin:0 0 10px;font-size:14px;color:var(--tx2)}
 .a-starts{display:flex;flex-direction:column;gap:8px}
 .a-st{min-height:64px;border:1px solid var(--bd);border-radius:var(--r-16);background:var(--surface);color:var(--tx);text-align:left;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;font:inherit}
-.a-st:hover{border-color:var(--tx3)}
+@media (hover:hover){.a-st:hover{border-color:var(--tx3)}}
 .a-st:disabled{opacity:.5;cursor:default}
 .a-st.hot{background:var(--accent-card);border-color:var(--accent-bd)}
 .a-sti{width:36px;height:36px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;background:var(--accent-soft);color:var(--accent-tx)}
@@ -760,11 +826,11 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .a-at .li{display:flex;gap:8px;margin:2px 0}.a-at .li>span:first-child{flex:none;color:var(--tx2)}
 .a-at .gap{height:6px}.a-at code{background:var(--fill);padding:1px 6px;border-radius:6px;font-size:.92em}
 .a-pg{display:inline-flex;align-items:center;min-height:26px;min-width:26px;padding:0 8px;margin:0 1px;border:0;border-radius:7px;background:var(--c-study-bg);color:var(--c-study-sub);font-size:12px;font-weight:600;line-height:1;vertical-align:baseline;cursor:pointer;font-family:inherit}
-.a-pg:hover{text-decoration:underline}
+@media (hover:hover){.a-pg:hover{text-decoration:underline}}
 .a-pg.off{cursor:default}
 .a-ma{display:flex;gap:6px;margin-top:-4px}
 .a-tb{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 10px;border:0;border-radius:10px;background:transparent;color:var(--tx2);font-size:13px;cursor:pointer;margin-left:-10px}
-.a-tb:hover{background:var(--fill);color:var(--tx)}
+@media (hover:hover){.a-tb:hover{background:var(--fill);color:var(--tx)}}
 .a-err p{margin:0;color:var(--wn);font-size:15px;line-height:1.45}
 .a-stop p{margin:0;color:var(--tx2);font-size:14px}
 .a-err .btn2,.a-stop .btn2{align-self:flex-start}
@@ -820,7 +886,7 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .a-ta:focus-visible{outline:none}
 .a-ta:disabled{cursor:not-allowed}
 .a-cb{flex:none;min-width:44px;height:44px;border:0;border-radius:16px;background:transparent;color:var(--tx-pill);display:flex;align-items:center;justify-content:center;gap:6px;padding:0;cursor:pointer}
-.a-cb:hover{background:var(--fill)}
+@media (hover:hover){.a-cb:hover{background:var(--fill)}}
 .a-cb:disabled{opacity:.45;cursor:default}
 .a-cb.rec{background:var(--wn);color:var(--bg);padding:0 12px}
 .a-recl{font-size:14px;font-weight:600}
@@ -830,7 +896,7 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .a-menu{position:absolute;left:-6px;bottom:calc(100% + 12px);width:min(320px,calc(100vw - 32px));background:var(--surface);border:1px solid var(--bd);border-radius:var(--r-16);padding:6px;box-shadow:0 12px 32px rgba(0,0,0,.4);z-index:8;display:flex;flex-direction:column;gap:2px}
 .a-menu button{display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:8px 12px;border:0;border-radius:var(--r-12);background:transparent;color:var(--tx);text-align:left;font-size:15px;font-weight:600;cursor:pointer}
 .a-menu button svg{flex:none;color:var(--tx2)}
-.a-menu button:hover{background:var(--fill)}
+@media (hover:hover){.a-menu button:hover{background:var(--fill)}}
 .a-menu button:disabled{opacity:.5;cursor:default}
 .a-menu small{display:block;font-size:12px;font-weight:400;color:var(--tx2);margin-top:1px}
 .a-st-l{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;color:var(--tx2)}
@@ -862,31 +928,99 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 /* кнопка «Помічник» у шапці редактора */
 .ed-ai{flex:none;display:inline-flex;align-items:center;gap:6px;height:44px;padding:0 12px;margin-left:4px;border:0;border-radius:var(--r-12);background:var(--accent-soft);color:var(--accent-tx);font-size:14px;font-weight:600;cursor:pointer}
 .ed-ai.on{background:var(--accent);color:var(--on-accent)}
-@media (max-width:520px){.ed-ai{padding:0;width:44px;justify-content:center}.ed-ai-l{display:none}}
+/* підпис «Помічник» — від ширини редактора ≥720, інакше лише іконка (ipad-layout-spec 7.2) */
+@container editor (max-width:719px){.ed-ai{padding:0;width:44px;justify-content:center}.ed-ai-l{display:none}}
 
-/* бічна панель Помічника поруч із документом (iPad ≥1024) */
-.a-side{display:none}
 @media (min-width:768px){
-  .wrap.t-ai{padding-bottom:0}
   .asst.tab{height:calc(100dvh - 26px - env(safe-area-inset-top))}
   .asst.tab .a-hd{padding-right:0}
-  .asst.tab .a-comp{padding-bottom:16px}
-  .a-starts{display:grid;grid-template-columns:1fr 1fr}
+  .asst.tab .a-comp{padding-bottom:max(16px,env(safe-area-inset-bottom))}
   .a-hd-c{margin:-8px 0 12px}
 }
-@media (min-width:1024px){
-  .a-side{display:flex;position:fixed;top:0;right:0;bottom:0;width:400px;z-index:25;background:var(--panel);border-left:1px solid var(--bd2);padding-top:env(safe-area-inset-top)}
-  .nv.ed.with-ai{right:400px}
-  .asst.side{flex:1;height:100%;min-height:0}
-  .asst.side .a-hd{height:60px;margin:0;padding:0 8px 0 18px;border-bottom:1px solid var(--bd2)}
-  .asst.side .a-ht{font-size:18px}
-  .asst.side .a-ib.bd{border:0;background:transparent;color:var(--tx-pill)}
-  .asst.side .a-body{overflow-y:auto;padding:12px 16px;min-height:0}
-  .asst.side .a-starts{display:flex}
-  .asst.side .a-hello{font-size:22px}
-  .asst.side .a-comp{padding:10px 12px 14px;border-top:1px solid var(--bd2)}
+@container region (min-width:600px){.a-starts{display:grid;grid-template-columns:1fr 1fr}}
+
+/* ===== Кнопка «Помічник» у шапці розділу (вікно ≥768; ipad-layout-spec 3.1): s/m — іконка 44, l/xl — іконка + підпис ===== */
+.hd-ai{display:none}
+@media (min-width:768px){
+  .hd-ai{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;width:44px;height:44px;padding:0;border:0;border-radius:var(--r-12);background:var(--accent-soft);color:var(--accent-tx);font:600 var(--fs-sm)/1 var(--font-body);cursor:pointer}
+  .hd-ai.on{background:var(--accent);color:var(--on-accent)}
+  .hd-ai-l{display:none}
+  .ph>.hd-ai{order:1}.ph>.views{order:2}
+  .lh,.top{position:relative}
+  .lh>.hd-ai,.top>.hd-ai{position:absolute;right:0;top:0}
 }
+@container region (min-width:600px){.ph>.hd-ai{order:3}}
+@container region (min-width:860px){.hd-ai{width:auto;padding:0 14px}.hd-ai-l{display:inline}}
+
+/* ===== Права панель Помічника, одна на весь застосунок (ipad-layout-spec 4; ipad-interactions 6.2) =====
+   768–1023 — поверх контенту справа, без затемнення (360 / 400 від 900); ≥1024 — поруч (380), ≥1280 — 400, край тягнеться 360–480.
+   Поруч: .region і шари .nv (редактор, нотатка, сесія) звужуються на --ai-w — клас ai-dock на <html> ставить AiPanel. */
+@media (min-width:768px){:root{--ai-w:360px}}
+@media (min-width:900px){:root{--ai-w:400px}}
+@media (min-width:1024px){:root{--ai-w:380px}}
+@media (min-width:1280px){:root{--ai-w:400px}}
+html.ai-dock .region{margin-right:var(--ai-w)}
+html.ai-dock .nv{right:var(--ai-w)}
+html.ai-dock .toast{left:calc(50% - var(--ai-w) / 2)}
+/* панель поверх (768–1023): тост, .pgnav і тост редактора центруються в частині, яку панель не закриває (D2, D4) */
+html.ai-ov .toast{left:calc(50% - var(--ai-w) / 2);max-width:calc(100% - var(--ai-w) - 32px)}
+html.ai-ov .nv.ed .pgnav,html.ai-ov .nv.ed .edtoast{right:var(--ai-w)}
+html.ai-ov .nv.ed .zchip{left:calc(50% - var(--ai-w) / 2)}
+.aip{position:fixed;top:0;right:0;bottom:0;width:var(--ai-w);z-index:25;display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--bd2);padding-top:env(safe-area-inset-top);overscroll-behavior:contain;transition:transform var(--dur-3) var(--ease-enter)}
+.aip.over{box-shadow:var(--shadow-pop)}
+/* поверх редактора — під його панеллю інструментів, щоб інструменти й «Помічник» лишалися досяжними */
+html.ed-open .aip.over{top:calc(2 * var(--bar-h) + env(safe-area-inset-top));padding-top:0}
+.aip[data-st="enter"]{transform:translateX(100%);transition:none}
+.aip[data-st="exit"]{transform:translateX(100%);transition:transform var(--dur-2) var(--ease-exit)}
+.aip-grip{position:absolute;left:-12px;top:0;bottom:0;width:24px;z-index:2;display:flex;align-items:center;justify-content:center;cursor:col-resize;touch-action:none}
+.aip-grip i{display:block;width:4px;height:32px;border-radius:2px;background:var(--bd)}
+.aip.drag .aip-grip i{background:var(--accent-tx)}
+.aip-grip:focus-visible{outline:2px solid var(--accent-tx);outline-offset:-2px}
+.aip.drag{-webkit-user-select:none;user-select:none}
+.asst.side{flex:1;min-height:0;display:flex;flex-direction:column}
+.asst.side .a-hd{flex:none;height:var(--hd-h);margin:0;padding:0 var(--s-2);gap:2px;border-bottom:1px solid var(--bd2)}
+.asst.side .a-ht{margin-left:var(--s-1);font-size:var(--fs-t3);font-weight:600;letter-spacing:0}
+.asst.side .a-ctx{flex:none;min-height:52px;display:flex;align-items:center;justify-content:flex-end;gap:var(--s-2);padding:var(--s-2) var(--s-4);border-bottom:1px solid var(--bd2)}
+.a-cx{flex:1;min-width:0;height:36px;min-height:36px;padding-left:10px;background:var(--fill);font-size:var(--fs-sm)}
+.a-cx svg{color:var(--tx2)}
+.a-cx button{position:relative;height:36px;width:40px}
+.a-cx button::after{content:"";position:absolute;left:0;right:0;top:-4px;bottom:-4px}
+.a-seg.sm{flex:none;background:var(--fill);border:0;border-radius:10px;padding:2px}
+.a-seg.sm button{height:32px;min-width:44px;padding:0 10px;border-radius:8px;font-size:var(--fs-cap);font-weight:600}
+.a-seg.sm button::after{top:-6px;bottom:-6px}
+.a-seg.sm button[aria-pressed="true"]:not(:last-child){background:var(--segon);color:var(--tx)}
+.asst.side .a-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:var(--s-4)}
+.asst.side .a-start{padding-top:var(--s-2)}
+.asst.side .a-starts{display:flex}
+.asst.side .a-hello{font-size:var(--fs-t3)}
+.asst.side .a-comp{flex:none;padding:var(--s-3) var(--s-3) max(var(--s-4),env(safe-area-inset-bottom));border-top:1px solid var(--bd2)}
+.a-hs{margin:0 0 var(--s-3)}
+.a-hs input{height:44px;padding:0 14px;font-size:var(--fs-sm)}
+.asst.side .a-ho,.a-hcol .a-ho{min-height:64px}
+.asst.side .a-hi.is-cur,.a-hcol .a-hi.is-cur{background:var(--fill);border-radius:var(--r-12)}
+.asst.side .a-hi.is-cur .a-ho,.a-hcol .a-hi.is-cur .a-ho{padding-left:var(--s-2)}
 .a-ta::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (prefers-reduced-motion:reduce){
+  /* замість зсуву — коротке згасання 150 мс (ipad-interactions 6.4); перекриває глобальне обнулення переходів */
+  .aip,.aip[data-st]{transform:none!important;transition:opacity 150ms linear!important}
+  .aip[data-st="enter"],.aip[data-st="exit"]{opacity:0}
+}
+
+/* ===== Вкладка «Помічник» на області l/xl: колонка розмов 300 + чат у колонці ≤720 (ipad-layout-spec 4.5, I12, I13) ===== */
+.asst.tab.wide{width:auto;max-width:none;margin:calc(-1 * var(--rg-t)) calc(-1 * var(--gutter)) 0;height:calc(100dvh - env(safe-area-inset-top));display:grid;grid-template-columns:var(--hist-w) minmax(0,1fr)}
+.a-hcol{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--bd2)}
+.a-hch{flex:none;height:var(--hd-h);display:flex;align-items:center;gap:var(--s-2);padding:0 var(--s-2) 0 var(--s-4);border-bottom:1px solid var(--bd2)}
+.a-hct2{flex:1;min-width:0;margin:0;font:600 var(--fs-t3)/1.25 var(--font-display)}
+.a-hcol .a-hs{flex:none;margin:0;padding:var(--s-3) var(--s-4)}
+.a-hcl{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 var(--s-2) var(--s-4) var(--s-4)}
+.a-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.asst.tab .a-whd{flex:none;height:var(--hd-h);min-height:0;margin:0;padding:0 var(--gutter);gap:var(--s-3);border-bottom:1px solid var(--bd2)}
+.a-wt{flex:1;min-width:0;margin:0;font:600 var(--fs-sm)/1.3 var(--font-body);letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.asst.tab.wide .a-body{flex:1;min-height:0;margin:0;padding:var(--s-4) var(--gutter) 0;display:flex;flex-direction:column}
+.a-col{width:100%;max-width:var(--read-w);margin:0 auto}
+.asst.tab.wide .a-body.is-start>.a-col{margin:auto}
+.a-main>.a-col{width:calc(100% - 2 * var(--gutter))}
+.asst.tab.wide .a-starts{display:grid;grid-template-columns:1fr 1fr}
 
 /* ===== Навчання: інтервальне повторення, «Поясни», картки з помилок; План: іспити ===== */
 .rvs-a{display:flex;margin:0 0 8px}
@@ -963,7 +1097,7 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .selmenu{position:absolute;z-index:4;box-sizing:border-box;width:max-content;padding:4px;border-radius:var(--r-12);background:var(--surface);border:1px solid var(--bd);box-shadow:0 8px 20px rgba(0,0,0,.35);color:var(--tx)}
 .selrow{display:flex;flex-wrap:wrap;gap:2px}
 .selb{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;border:0;border-radius:9px;background:transparent;color:var(--tx);font-size:14px;font-weight:500;cursor:pointer;white-space:nowrap}
-.selb:hover{background:var(--fill)}
+@media (hover:hover){.selb:hover{background:var(--fill)}}
 .selb:focus-visible{outline:2px solid var(--accent-tx);outline-offset:-2px}
 .selb.pri{background:var(--accent-soft);color:var(--accent-tx);font-weight:600}
 .selb.wn{color:var(--wn)}
@@ -971,10 +1105,9 @@ button.flip{width:100%;font:inherit;color:var(--tx);cursor:pointer;flex:1;max-he
 .seldot{display:block;width:18px;height:18px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--tx3)}
 .selpal{margin:4px 0 0;padding-top:4px;border-top:1px solid var(--bd2);grid-template-columns:repeat(auto-fill,minmax(44px,44px));justify-content:start}
 .edtb{flex:none;display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 12px;border:0;border-radius:var(--r-12);background:none;color:var(--tx);font-size:14px;font-weight:600;cursor:pointer;white-space:nowrap}
-.edtb:hover{background:var(--fill)}
+@media (hover:hover){.edtb:hover{background:var(--fill)}}
 .edctx .edhint{white-space:nowrap}
 /* 9 інструментів (з «Ласо») на телефоні: рівні частки ряду, до 44 px; 375 → ≈ 40 px, 320 → ≈ 34 px (висота 44; мінімум WCAG 2.2 — 24) */
-@media (max-width:767px){.edtools{flex:1 1 100%;justify-content:space-between}.edtools .ib{flex:1 1 0;min-width:0;max-width:44px}}
 /* на вузькому екрані меню переноситься: дві «ШІ»-дії першим рядком, решта — значки з підписами нижче */
 @media (max-width:520px){.selb{padding:0 10px;font-size:13px}}
 
@@ -1052,7 +1185,7 @@ h2.sec{font-family:var(--font-body);line-height:1.3}
   .qrow.wide-only{display:flex;align-items:center;gap:8px}
   .qrow .qbar{flex:1;min-width:0}
 }
-@media (min-width:1024px){
+@container region (min-width:860px){
   .dayg.two .daymain{grid-column:1;grid-row:1}
   .dayg.two .dside{grid-column:2;grid-row:1;position:sticky;top:20px;margin:0}
   .dayg .dside .more-day{position:static}
@@ -1078,3 +1211,321 @@ h2.sec{font-family:var(--font-body);line-height:1.3}
 .exp-a{display:flex;flex-direction:column;gap:8px;margin-top:14px}
 .exp-a .btn-a,.exp-a .btn2{width:100%;min-height:48px}
 .sheet .seg button{min-height:44px}
+
+/* ===== iPad, етап 3 (ipad-layout-spec 5.2, 7.5, 8.2–8.3; I5, I6, I9) =====
+   Сесія повторення й тест: вікно ≥768 — шапка 56 «Завершити — назва — Помічник», смуга прогресу 4 px, колонка --session-w по центру
+   (у ширині шару .nv, що звужується поруч із панеллю Помічника). На телефоні .nvcol прозорий (display:contents). */
+.nvcol{display:contents}
+.nvpg{display:none}
+@media (min-width:768px){
+  .nv.nvw{padding:env(safe-area-inset-top) 0 calc(var(--s-4) + env(safe-area-inset-bottom))}
+  .nv.nvw .nvbar{flex:none;height:var(--hd-h);margin:0;padding:0 var(--s-5);gap:var(--s-3)}
+  .nv.nvw .nvbar .chip{min-height:44px}
+  .nv.nvw .nvbar>.sub{flex:1;min-width:0;text-align:center;font-size:var(--fs-sm);font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .nvpg{display:block;flex:none;width:min(var(--session-w),100% - 2 * var(--s-5));height:4px;margin:0 auto;border-radius:2px;background:var(--fill);overflow:hidden}
+  .nvpg i{display:block;height:100%;border-radius:2px;background:var(--ok);transition:width var(--dur-2) ease}
+  .nv.nvw .nvcol,.nv.tst .quiz{display:flex;flex-direction:column;flex:1;min-height:0;width:min(var(--session-w),100% - 2 * var(--s-5));margin:0 auto;padding-top:clamp(24px,6vh,64px);overflow-y:auto}
+  /* картка: питання --fs-t2 по центру, відповідь під розділювачем --fs-body зліва */
+  .nv.nvw button.flip{flex:none;min-height:320px;max-height:60vh;overflow-y:auto;margin:0;padding:var(--s-8);justify-content:center;gap:var(--s-4);border-radius:var(--r-20)}
+  .nv.nvw .flip .fq{font:700 var(--fs-t2)/1.15 var(--font-display);letter-spacing:-.3px;overflow-wrap:anywhere}
+  .nv.nvw .flip .fdiv{display:block;height:1px;background:var(--bd);margin:var(--s-2) 0}
+  .nv.nvw .flip .fa{font-size:var(--fs-body);line-height:1.5;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-width:60ch;margin:0 auto;align-self:stretch}
+  .nv.nvw .flip .sub{font-size:var(--fs-cap)}
+  .nv.nvw .rvs-a{margin:var(--s-6) 0 0}
+  .nv.nvw .rvs-a .btn-a.big{width:320px;max-width:100%;min-height:56px;margin:0 auto}
+  .nv.nvw .rvs-a.row{gap:var(--s-3);justify-content:center}.nv.nvw .rvs-a.row .btn{flex:0 1 200px;margin:0}
+  .nv.nvw .rvs-g{grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s-3);margin:var(--s-6) 0 0}
+  .nv.nvw .rg{min-height:72px}
+  .nv.nvw .rg-t{font-size:var(--fs-sm)}.nv.nvw .rg-s{font-size:var(--fs-cap)}
+  .nv.nvw .rvs-k{font-size:var(--fs-cap);margin:var(--s-3) 0 0}
+  .nv.nvw .rv-done .btn{width:320px;max-width:100%;min-height:56px}
+  .nv.nvw .rv-done h2{font:700 var(--fs-t2)/1.15 var(--font-display)}
+  /* тест: варіанти на всю колонку, буква в колі 28, вибраний — кільце */
+  .nv.tst .qq{font:600 var(--fs-t3)/1.35 var(--font-display);margin:0 0 var(--s-6)}
+  .nv.tst .opt{display:flex;align-items:center;gap:var(--s-3);min-height:56px;padding:var(--s-3) var(--s-4);margin-bottom:var(--s-2);background:var(--surface);border:1px solid var(--bd);color:var(--tx);font-size:var(--fs-body);line-height:1.35;cursor:pointer}
+  .nv.tst .opt.on{background:var(--surface);color:var(--tx);box-shadow:inset 0 0 0 2px var(--accent-tx);border-color:transparent}
+  .nv.tst .opt-k{flex:none;width:28px;height:28px;border-radius:50%;background:var(--fill);display:flex;align-items:center;justify-content:center;font-size:var(--fs-cap);font-weight:600}
+  .nv.tst .opt.on .opt-k{background:var(--accent);color:var(--on-accent)}
+  .nv.tst .opt-t{flex:1;min-width:0;overflow-wrap:anywhere}
+  .nv.tst .qnav{justify-content:center;gap:var(--s-3);margin-top:var(--s-6)!important}
+  .nv.tst .qnav .btn{flex:0 1 320px;min-height:56px;margin:0}
+  .nv.tst .qnav .btn.alt{flex:0 1 160px}
+  .nv.tst textarea{font-size:var(--fs-body)}
+}
+
+/* Місяць на iPad (.mw — лише вікно ≥768): клас s — сітка з крапками, як на телефоні, але без max-width;
+   m/l/xl — клітинки з назвами подій у кольорах категорій, «+N», сьогодні — коло на числі, вибраний день — рамка; список дня (.agd) */
+.mw .cal{max-width:none;grid-template-columns:repeat(7,minmax(0,1fr))}
+.mw .cd-top{display:contents}
+@container region (min-width:600px){
+  .mw .cal{grid-template-columns:repeat(7,minmax(0,1fr));gap:var(--s-1)}
+  .mw .cw{text-align:left;padding:0 6px 6px;font-size:var(--fs-cap);font-weight:500;color:var(--tx2)}
+  .mw .cd{aspect-ratio:auto;min-height:88px;min-width:0;align-items:stretch;justify-content:flex-start;gap:3px;padding:6px;background:var(--surface);border:1px solid var(--bd2);border-radius:var(--r-12);font-size:var(--fs-sm);text-align:left;overflow:hidden}
+  .mw .cd.td{background:var(--surface);color:var(--tx);font-weight:400}
+  .mw .cd.ex:not(.sel){box-shadow:none}
+  .mw .cd.sel{box-shadow:inset 0 0 0 2px var(--accent-tx)}
+  .mw .cd-top{display:flex;align-items:center;gap:4px;margin-bottom:1px}
+  .mw .cd-n{flex:none;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:600;font-variant-numeric:tabular-nums}
+  .mw .cd.td .cd-n{background:var(--accent);color:var(--on-accent);font-weight:700}
+  .mw .cd .exm,.mw .cd.td .exm{position:static;color:var(--wn)}
+  .cd-ev{flex:none;height:22px;display:flex;align-items:center;gap:4px;min-width:0;padding:0 6px 0 7px;border-left:3px solid;border-radius:6px;font-size:var(--fs-cap);font-weight:500;white-space:nowrap;overflow:hidden}
+  .cd-ev span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .cd-ev b{flex:none;font-weight:600;font-variant-numeric:tabular-nums}
+  .cd-ev.exam{background:transparent;color:var(--tx);border-color:var(--wn);font-weight:600}
+  .cd-tk{flex:none;height:22px;display:flex;align-items:center;gap:6px;min-width:0;padding:0 6px;font-size:var(--fs-cap);color:var(--tx2);white-space:nowrap;overflow:hidden}
+  .cd-tk span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .cd-tk .sq{flex:none;width:8px;height:8px;border-radius:2px;background:var(--c-study)}
+  .cd-more{font-size:var(--fs-cap);font-weight:600;color:var(--tx2);padding:0 6px}
+}
+.cd-ev.study{background:var(--c-study-bg);color:var(--c-study-sub);border-color:var(--c-study)}
+.cd-ev.health{background:var(--c-health-bg);color:var(--c-health-sub);border-color:var(--c-health)}
+.cd-ev.work{background:var(--c-work-bg);color:var(--c-work-sub);border-color:var(--c-work)}
+.cd-ev.personal{background:var(--c-personal-bg);color:var(--c-personal-sub);border-color:var(--c-personal)}
+.cd-ev.home{background:var(--c-home-bg);color:var(--c-home-sub);border-color:var(--c-home)}
+.cd-tk .sq.health,.agr-bar.health{background:var(--c-health)}.cd-tk .sq.work,.agr-bar.work{background:var(--c-work)}.cd-tk .sq.personal,.agr-bar.personal{background:var(--c-personal)}.cd-tk .sq.home,.agr-bar.home{background:var(--c-home)}
+.agr-bar.exam{background:var(--wn)}
+@container region (min-width:860px){.mw .cd{min-height:104px}}
+@container region (min-width:1120px){
+  .mw{display:grid;grid-template-columns:minmax(0,1fr) var(--agenda-w);gap:var(--s-8);align-items:start}
+  .mw .cd{min-height:120px}
+  .mw .agd{position:sticky;top:var(--s-5);margin-top:0}
+}
+.agd{margin-top:var(--s-6);padding:var(--s-5);background:var(--panel);border:1px solid var(--bd2);border-radius:var(--r-20)}
+.agd-h{display:flex;align-items:flex-start;gap:var(--s-3);margin-bottom:var(--s-4)}
+.agd-tt{flex:1;min-width:0}
+.agd-h h2{margin:0;font:600 var(--fs-t3)/1.25 var(--font-display)}
+.agd-s{margin:2px 0 0;font-size:var(--fs-cap);color:var(--tx2)}
+.agd-h .btn2{flex:none}
+.agd-l{list-style:none;margin:0;padding:0}
+.agd-l li{border-top:1px solid var(--bd2);break-inside:avoid}
+.agr{display:flex;align-items:center;gap:var(--s-3);flex:1;width:100%;min-width:0;min-height:64px;padding:var(--s-2) 0;border:0;background:none;color:var(--tx);font:inherit;text-align:left;cursor:pointer}
+.agr-tm{flex:none;width:56px;font-size:var(--fs-sm);font-weight:600;font-variant-numeric:tabular-nums}
+.agr-bar{flex:none;width:3px;align-self:stretch;border-radius:2px;background:var(--c-study)}
+.agr-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.agr-n{font-size:var(--fs-sm);font-weight:600;overflow-wrap:anywhere}
+.agr-n svg{vertical-align:-2px;color:var(--wn)}
+.agr-m{font-size:var(--fs-cap);color:var(--tx2)}
+.agt{display:flex;align-items:center;gap:var(--s-1)}
+.agt .agr{min-height:52px}
+.agt.done .agr-n{text-decoration:line-through;color:var(--tx2)}
+.agd-e{display:flex;flex-direction:column;align-items:flex-start;gap:var(--s-3)}
+.agd-e p{margin:0;font-size:var(--fs-sm);color:var(--tx2)}
+.agd-e .btn2{gap:6px}
+@container region (min-width:860px) and (max-width:1119px){.mw .agd-l{columns:2;column-gap:var(--s-8)}}
+
+/* Колонка мініатюр редактора (7.5, I9): ширина редактора ≥900 — колонка --thumbs-w поруч із холстом (.thl зсуває .pgnav і тост);
+   560–899 — та сама колонка поверх холста (.thc.over). На телефоні .edmain прозорий, мініатюри — нижня стрічка .strip. */
+.edmain{display:contents}
+@container editor (min-width:560px){
+  .edmain{display:flex;flex:1;min-height:0;position:relative}
+  .edmain>.edbox{flex:1;min-width:0}
+  .thc{flex:none;width:var(--thumbs-w);overflow-y:auto;overscroll-behavior:contain;background:var(--panel);border-right:1px solid var(--bd2)}
+  .thc.over{position:absolute;left:0;top:0;bottom:0;z-index:4;box-shadow:var(--shadow-pop)}
+  .thc ol{list-style:none;margin:0;padding:var(--s-4) 18px calc(var(--s-4) + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:var(--s-4)}
+  .th{display:flex;flex-direction:column;align-items:center;gap:6px;width:100%;padding:0;border:0;background:none;color:var(--tx2);font:inherit;cursor:pointer}
+  .th-im{display:flex;align-items:center;justify-content:center;width:96px;aspect-ratio:3 / 4;border-radius:6px;background:#fff center/cover no-repeat;box-shadow:var(--shadow-page)}
+  .th.on .th-im{outline:2px solid var(--accent-tx);outline-offset:3px}
+  .th-n{font-size:var(--fs-cap);font-variant-numeric:tabular-nums}
+  .th.on .th-n{color:var(--accent-tx);font-weight:600}
+  .th-add .th-im{background:none;box-shadow:none;border:1.5px dashed var(--bd);color:var(--tx2)}
+  .th:focus-visible{outline:none}.th:focus-visible .th-im{outline:3px solid var(--accent-tx);outline-offset:3px}
+  @media (hover:hover){.th-add:hover .th-im{border-color:var(--tx3);color:var(--tx)}}
+  .nv.ed.thl .pgnav,.nv.ed.thl .edtoast{left:var(--thumbs-w)}
+}
+
+/* ===== iPad, етап 4 (ipad-layout-spec 5.3, 6, 9, 10, 12; I7, I15, I19, I20, I24, I25) ===== */
+/* Форми на iPad (вікно ≥768): зверху, шапка «Скасувати — заголовок — Готово», без нижніх кнопок (I15).
+   .fsh — 560 (--sheet-m), .fsh.wide — 720 (--sheet-l, запис із підписами полів), .conf — підтвердження 420 по центру. */
+@media (min-width:768px){
+  .ov.ovt{align-items:flex-start;padding:clamp(24px,8vh,96px) var(--s-5) var(--s-5)}
+  .sheet.fsh{max-width:var(--sheet-m);max-height:100%;padding:0;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--r-20)}
+  .sheet.fsh.wide{max-width:var(--sheet-l)}
+  .sheet.conf{max-width:var(--sheet-s)}
+  .fhd{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;height:var(--hd-h);padding:0 var(--s-2);border-bottom:1px solid var(--bd2)}
+  .fhd h2{margin:0;font-size:var(--fs-sm);font-weight:600;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:360px}
+  .fhd-b{justify-self:start;min-height:44px;padding:0 var(--s-3);border:0;border-radius:var(--r-12);background:none;color:var(--tx);font:500 var(--fs-sm)/1 var(--font-body);cursor:pointer}
+  .fhd-b.pri{justify-self:end;color:var(--accent-tx);font-weight:600}
+  .fhd-b:disabled{opacity:.4;cursor:default}
+  @media (hover:hover){.fhd-b:not(:disabled):hover{background:var(--fill)}}
+  .fbody{flex:1;min-height:0;overflow-y:auto;padding:var(--s-4) var(--s-5) calc(var(--s-5) + env(safe-area-inset-bottom))}
+  .fbody .qrow{margin-bottom:var(--s-3)}
+  .swatch{width:44px;height:44px}
+  .mc-x{width:44px;height:44px;right:-10px;bottom:-10px}
+}
+/* форма запису з видимими підписами (I19): підпис 160 зліва — поле справа */
+.fform{display:flex;flex-direction:column;gap:var(--s-3);margin-top:var(--s-2)}
+.frow{display:grid;grid-template-columns:160px minmax(0,1fr);column-gap:var(--s-4);align-items:start}
+.frow-l{padding-top:12px;font-size:var(--fs-sm);color:var(--tx2);line-height:1.3}
+.frow-f{min-width:0}
+.frow-f input,.frow-f select,.frow-f textarea{min-height:44px;font-size:var(--fs-body)}
+.frow-f .seg{display:inline-flex}.frow-f .seg button{flex:none;padding:8px 16px;min-height:40px}
+.frow-f .hint{margin:6px 0 0}
+.fsuf{display:flex;align-items:center;gap:var(--s-2)}.fsuf input{width:120px}.fsuf span{color:var(--tx2);font-size:var(--fs-sm)}
+.fdel{margin-top:var(--s-6)}
+.btn2.wn{color:var(--wn)}
+
+/* меню-кнопки на iPad — поповер 320 під кнопкою (I20); позицію задає popAt() у docs.js */
+.popback.fixed{position:fixed;z-index:30}
+.sheet.mpop{position:fixed;margin:0;padding:var(--s-2);border:1px solid var(--bd);border-radius:var(--r-16);box-shadow:var(--shadow-pop);overflow-y:auto}
+.sheet.mpop .shd{margin:0 0 var(--s-2);padding:var(--s-1) 0 0 var(--s-2)}
+.sheet.mpop .shd h2{font-size:var(--fs-sm)}
+.sheet.mpop button:not(.ib):not(.lnk){min-height:52px;margin-bottom:var(--s-1);font-size:var(--fs-sm);font-weight:600;background:none}
+.sheet.mpop.mk button:not(.ib){min-height:56px}
+@media (hover:hover){.sheet.mpop button:not(.ib):not(.lnk):hover{background:var(--fill)}}
+.sheet.mpop small{font-weight:400}
+
+/* Матеріали за класом області (6, 6.1): сайдбар 220/250/280, пошук у шапці з m, сітка без обмеження; «Нещодавні» без папок і «Без папки» (I24) */
+.mq{display:none}
+@container region (min-width:600px){
+  .mq{display:flex;align-items:center;gap:var(--s-2);width:240px;height:44px;padding:0 var(--s-1) 0 var(--s-3);border:1px solid transparent;border-radius:var(--r-12);background:var(--fill);color:var(--tx2)}
+  .mq:focus-within{border-color:var(--accent-tx)}
+  .mq input{flex:1;min-width:0;height:42px;padding:0;border:0;background:none;font-size:var(--fs-sm)}
+  .mq input:focus{outline:none}
+  .mq-x{flex:none;width:44px;height:44px;margin-right:-4px;border:0;border-radius:var(--r-12);background:none;color:var(--tx2);display:flex;align-items:center;justify-content:center;cursor:pointer}
+  .m-fold,.m-loose{display:none!important}
+  .mres .msh-t{margin:0 0 var(--s-3)}
+  .mgrid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:var(--s-6) var(--s-5)}
+}
+@container region (min-width:860px){.mq{width:280px}}
+/* xl: пошук у першому рядку між назвою й діями */
+@container region (min-width:1120px){.mhd>.mq{order:1;flex:0 1 280px}.mhd-a{order:2;margin-left:0}}
+/* поле пошуку в шапці є лише у вікні ≥768 (useWide); у вікні < 768 лишається кнопка-лупа */
+@media (min-width:768px){@container region (min-width:600px){.mq-ic,.msearch{display:none!important}}}
+@container region (min-width:1120px){
+  .mat{grid-template-columns:280px minmax(0,1fr)}
+  .mgrid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+}
+
+/* Налаштування (9, I7): m — одна колонка 640 з розділами підряд; l/xl — розділи 250/280 + деталі ≤ --form-w */
+.setw.one{max-width:640px;margin:0 auto}
+.setw.two{display:grid;grid-template-columns:250px minmax(0,1fr);column-gap:var(--s-10);align-items:start}
+@container region (min-width:1120px){.setw.two{grid-template-columns:280px minmax(0,1fr)}}
+.setn{position:sticky;top:var(--s-5);display:flex;flex-direction:column;gap:2px}
+.setn .top{margin-bottom:var(--s-4)}
+.setn .top .hd-ai{position:static}
+.setn-i{display:flex;align-items:center;gap:var(--s-3);width:100%;min-height:52px;padding:0 var(--s-2);border:0;border-radius:var(--r-12);background:none;color:var(--tx);font:inherit;text-align:left;cursor:pointer}
+.setn-i[aria-current="true"]{background:var(--fill)}
+@media (hover:hover){.setn-i:hover{background:var(--fill)}}
+.setn-ic{flex:none;width:32px;height:32px;border-radius:9px;background:var(--fill);color:var(--tx2);display:flex;align-items:center;justify-content:center}
+.setn-i[aria-current="true"] .setn-ic{background:var(--surface)}
+.setn-n{flex:1;min-width:0;font-size:var(--fs-sm);font-weight:600}
+.setn-v{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-cap);color:var(--tx2)}
+.setd{max-width:var(--form-w);min-width:0}
+.setw.two .setd{padding-top:0}
+.setw.one .setd{margin-top:var(--s-8)}
+.setd-t{margin:0;font:700 var(--fs-t2)/1.15 var(--font-display)}
+.setd-s{margin:6px 0 var(--s-4);font-size:var(--fs-sm);color:var(--tx2);max-width:60ch}
+.setd .card{border-radius:var(--r-16)}
+.setd .seg{display:inline-flex}.setd .seg button{flex:none;padding:8px 18px;min-height:44px}
+.setd .btn{width:auto;min-width:200px;margin-left:0;margin-right:0}
+.setd input[type=number]{width:120px}
+.setd .row label{flex:none}
+.setd label.sec{display:block;margin-bottom:8px}
+.setn .top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s-2)}
+.setn .top h1{font-size:var(--fs-t2)}
+
+/* Усі (5.3): l/xl — список --list-w + деталь ≤ --form-w із формою, що зберігається одразу */
+.allv.md{display:grid;grid-template-columns:minmax(0,var(--list-w)) minmax(0,1fr);gap:var(--s-8);align-items:start}
+.md-d{position:sticky;top:var(--s-5);max-width:var(--form-w);padding:var(--s-5);background:var(--panel);border:1px solid var(--bd2);border-radius:var(--r-20)}
+.md-t{margin:0;font:700 var(--fs-t2)/1.15 var(--font-display)}
+.md-s{margin:4px 0 var(--s-4);font-size:var(--fs-cap);color:var(--tx2)}
+.md-e{margin:var(--s-10) 0;text-align:center;font-size:var(--fs-sm);color:var(--tx2)}
+.allv.md .it.it-on{background:var(--fill);border-radius:var(--r-12)}
+.md-d .frow{grid-template-columns:120px minmax(0,1fr)}
+
+/* Типографіка ≥1024 (I25): ніде не менше 13 px */
+@media (min-width:1024px){
+  .sec,.cw,.applied,.lbl,.tl-h,.mh-t,.mi .mm,.grp summary,.aht small,.sg small,.chg,.mc-m,.ft-c,.src-s,.dk-st,.sb-c,.sb-h,.fk-c,.a-hcs,.a-umc,.a-pg,.a-pvs,.a-pvg,.a-pvnote,.a-modec,.a-menu small,.exd-l dt{font-size:13px}
+  .nav .lbl{font-size:12px} /* «Матеріали» 13 px не влазить у 68 (спец. 2.1: тоді 12) */
+}
+
+/* ===== iPad · взаємодії (ipad-interactions 1–6) ===== */
+/* тост редактора з дією: контейнер не перехоплює дотики, лише кнопка; поява — зсув 8 px + прозорість 200 мс */
+.edtoast{display:flex;align-items:center;gap:12px;pointer-events:none;bottom:max(16px,calc(72px + env(safe-area-inset-bottom)));max-width:360px;animation:toast-in var(--dur-2) var(--ease-enter)}
+.edtoast>span{flex:1;min-width:0}
+.edtoast.act{padding:0 4px 0 16px;min-height:48px}
+.edtoast-b{pointer-events:auto;flex:none;min-width:44px;min-height:44px;padding:0 12px;border:0;border-radius:var(--r-12);background:none;color:var(--accent-tx);font:inherit;font-weight:600;cursor:pointer}
+@media (hover:hover){.edtoast-b:hover{background:var(--fill)}}
+.toast{animation:toast-in-x var(--dur-2) var(--ease-enter)}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes toast-in-x{from{opacity:0;transform:translate(-50%,8px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+/* чип масштабу під час щипка: зверху по центру холста, з'являється 100 мс, гасне 200 мс */
+.zchip{position:absolute;left:50%;transform:translateX(-50%);z-index:5;padding:6px 12px;border-radius:999px;background:var(--glass);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border:.5px solid var(--glassb);color:var(--tx);font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;pointer-events:none;opacity:0;transition:opacity var(--dur-2) linear}
+.zchip.on{opacity:1;transition-duration:var(--dur-1)}
+/* текст на холсті: поле поверх сторінки, шрифт і інтерліньяж як у fillText (line-height 1.25), пунктир --accent */
+.cvtext{position:absolute;z-index:4;box-sizing:border-box;margin:0;padding:12px;min-height:0;border:1px dashed #A65F00;border-radius:4px;background:rgba(255,255,255,.6);font-family:-apple-system,system-ui,sans-serif;line-height:1.25;resize:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word;caret-color:#A65F00;-webkit-user-select:text;user-select:text;outline:none;box-shadow:none}
+.cvtext[hidden]{display:none}
+.cvtext::placeholder{color:rgba(28,28,30,.5)}
+.cvt-h{position:absolute;z-index:5;width:44px;height:44px;display:flex;align-items:center;justify-content:center;touch-action:none}
+.cvt-h.mv{cursor:move}.cvt-h.wd{cursor:ew-resize}
+.cvt-h i{display:block;background:#A65F00;box-shadow:0 0 0 1.5px #fff}
+.cvt-h.mv i{width:8px;height:8px;border-radius:50%}
+.cvt-h.wd i{width:4px;height:16px;border-radius:2px}
+/* прев'ю кінчика пера (hover): окремий шар, рухається лише transform; без анімації — це інструмент точності */
+.hovp{position:absolute;left:0;top:0;z-index:3;pointer-events:none;display:none;will-change:transform}
+.hovp[data-on]{display:block}
+.hovp i{position:absolute;left:0;top:0;transform:translate(-50%,-50%);box-sizing:border-box}
+.hovp.k-pen i{width:var(--hw);height:var(--hh);border-radius:50%;background:var(--hf);border:1px solid var(--hb)}
+.hovp.k-hl i{width:var(--hw);height:var(--hh);border-radius:3px;background:var(--hf);border:1px solid var(--hb)}
+.hovp.k-er i{width:var(--hw);height:var(--hh);border-radius:50%;border:1.5px solid rgba(28,28,30,.6);box-shadow:0 0 0 1px #fff,inset 0 0 0 1px #fff}
+.hovp.k-x i{width:13px;height:13px;background:linear-gradient(rgba(28,28,30,.85),rgba(28,28,30,.85)) center/1.5px 100% no-repeat,linear-gradient(rgba(28,28,30,.85),rgba(28,28,30,.85)) center/100% 1.5px no-repeat;filter:drop-shadow(0 0 1px #fff)}
+.hovp.k-x[data-on="snap"] i{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 1.5px #fff}
+.hovp.k-tx i{width:2px;height:var(--hh);background:var(--hf);box-shadow:0 0 0 1px rgba(255,255,255,.8)}
+.hovp.k-none{display:none!important}
+/* шкала дня: призрак слоту (hover / pressed / opening); минуле — підпис сірим */
+.tl-ghost{position:absolute;left:var(--tlx);right:0;box-sizing:border-box;border-radius:var(--r-14);background:color-mix(in srgb,var(--accent) 8%,transparent);display:flex;align-items:flex-start;padding:6px 12px;pointer-events:none;z-index:1}
+.tl-ghost span{font-size:13px;line-height:1.25;color:var(--tx2);font-variant-numeric:tabular-nums}
+.tl-ghost.pressed,.tl-ghost.opening{background:color-mix(in srgb,var(--accent) 14%,transparent);border:1px solid var(--accent-tx)}
+.tl-ghost.pressed span,.tl-ghost.opening span{color:var(--tx);font-weight:600}
+.tl-ghost.past span{color:var(--tx3)}
+/* шпаргалка скорочень (⌘/) і розділ у Налаштуваннях */
+.kbs{max-width:640px;width:100%;max-height:min(86vh,760px);overflow:auto}
+.kbs .hint{margin:4px 0 12px}
+.kbl{display:grid;gap:16px}
+.kbl.two{grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px 28px}
+.kbg-t{margin:0 0 6px;font-size:13px;font-weight:600;color:var(--tx2);text-transform:uppercase;letter-spacing:.04em}
+.kbg dl{margin:0;display:grid;grid-template-columns:max-content minmax(0,1fr);column-gap:12px}
+.kbg dl>.kbr{grid-column:1 / -1;display:grid;grid-template-columns:subgrid}
+.kbg dl>.kbr dt{min-width:0}
+.kbr{display:flex;align-items:center;gap:12px;min-height:36px;border-bottom:1px solid var(--bd2)}
+.kbr dt{flex:none;min-width:84px;font-size:14px}
+.kbr dd{margin:0;font-size:15px;color:var(--tx)}
+.kbr.off dd{color:var(--tx3)}
+.kbor{font-size:12px;color:var(--tx3)}
+kbd{display:inline-block;min-width:24px;padding:2px 6px;border-radius:6px;border:1px solid var(--bd);border-bottom-width:2px;background:var(--surface);color:var(--tx);font:600 13px/1.3 var(--font-body,system-ui);text-align:center;font-variant-numeric:tabular-nums}
+.kbc .kbl{margin-top:16px}
+.kbc-all{margin-top:12px}
+.kbc-h{margin:20px 0 8px}
+/* master-detail ≥768: нова деталь проявляється 150 мс без зсуву (ipad-interactions 6.3) */
+.mdfade{animation:fade-in 150ms var(--ease-standard)}
+@media (prefers-reduced-motion:reduce){
+  /* перекриває глобальне обнулення: короткі згасання прозорості без руху лишаються (6.4) */
+  .edtoast,.toast{animation:fade-in 150ms linear!important}
+  .mdfade{animation:fade-in 150ms linear!important}
+  .zchip{transition:opacity 150ms linear!important}
+}
+
+/* ===== Правки за фінальною перевіркою iPad (ipad-visual-qa D8–D23, ipad-a11y) ===== */
+@media (min-width:900px){.kbs{max-width:760px}}
+/* D9: час події в клітинці Місяця — лише якщо клітинка ≥140 px; інакше назва + смуга категорії (час — у списку дня) */
+@container region (min-width:600px){.mw .cd{container-type:inline-size}}
+@container (max-width:139px){.cd-ev b{display:none}}
+/* D18: перемикачі панелей (Сторінки, Ще, Помічник) — м'який акцент; повний --accent лишається активному інструменту */
+.edrow2 .ib.on{background:var(--accent-soft);color:var(--accent-tx)}
+.ed-ai.on{background:var(--accent-soft);color:var(--accent-tx);box-shadow:inset 0 0 0 1.5px var(--accent-tx)}
+/* D21: назва документа в полі — з «…», поки поле не у фокусі */
+.edtitle:not(:focus){text-overflow:ellipsis}
+/* D15: на l значення справа в списку розділів Налаштувань не вміщаються — показуємо лише в xl */
+@container region (max-width:1119px){.setn-v{display:none}}
+/* D22: «Усі матеріали» над сіткою дублює пункт сайдбара, коли сайдбар видно */
+@container region (min-width:600px){.m-reclnk{display:none}}
+.mempty .btn2{margin-top:12px}
+/* a11y #24: «сьогодні» в Місяці у світлій темі — заливка --accent-tx + біле число (6.39:1 до клітинки й числа; було 2.00:1) */
+:root[data-theme="light"] .mw .cd.td .cd-n{background:var(--accent-tx);color:#fff}
+@media(prefers-color-scheme:light){:root[data-theme="auto"] .mw .cd.td .cd-n{background:var(--accent-tx);color:#fff}}
+/* a11y #25: пунктир текстового поля — з білим ореолом, видно й над темним чорнилом або сканом (≥4.93:1 до ореолу) */
+.cvtext{box-shadow:0 0 0 1px rgba(255,255,255,.9);background:rgba(255,255,255,.85)}
+/* a11y #26: точка прив'язки до лінійки — #A65F00 з білим ореолом (4.93:1 на білому) */
+.hovp.k-x[data-on="snap"] i{background:#A65F00;box-shadow:0 0 0 1.5px #fff}
+.hovp.k-pen i,.hovp.k-hl i{box-shadow:0 0 0 1px rgba(255,255,255,.9)}

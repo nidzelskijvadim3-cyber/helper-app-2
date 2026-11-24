@@ -1,15 +1,16 @@
 'use client';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import Materials, { bridge, listDocs, putDoc, delDoc, newDoc, shrink, reparentDocs, docMaterial, materialOf, TEXT_PAGES, PALETTE_C, SOLID, colorKey } from './docs';
 import { FolderGlyph, FOLDER_COLORS, FICONS, LineIcon, isHex } from './folder-icons';
 import { canMoveFolder, folderPath } from './lib';
 import { syncNow, syncStatus, getSyncMeta, setSyncOn } from './sync';
 import { nsKey, listAccounts, getActiveId, setActiveId, addAccount, activeAccount, deriveAccountId, validateCredentials } from './accounts';
 import { t as tr, loc, setLang, getLang, plural } from './i18n';
-import Assistant, { migrateChats } from './assistant';
+import Assistant, { migrateChats, AiPanel } from './assistant';
 import { occurs, makePlan, isEv, isRep, isExam, openTasks, dayCount } from './plan';
 import { localParse } from './qparse';
 import { buildBackup, downloadBlob, backupName, inspectBackup, applyBackup, getBkMeta, setBkMeta } from './backup';
+import { SC, SC_GROUPS, scFind, inField, composing, oneKeysOn, setOneKeys, keyLabel, announce } from './shortcuts';
 import { normCard, needsNorm, preview as srsPreview, queue as srsQueue, nextUp, isLearned, resetCard, newCardFields, ivParts, NEW_PER_DAY } from './srs';
 
 const DN = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
@@ -46,7 +47,12 @@ const ICONS = {
   trash: <><path d="M5 7h14M10 7V4h4v3" /><path d="M7 7l1 13h8l1-13" /></>,
   close: <path d="M6 6l12 12M18 6L6 18" />,
   flag: <><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>,
-  set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>
+  set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>,
+  user: <><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" /></>,
+  sync: <><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" /><path d="M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16" /><path d="M20 20v-4h-4" /></>,
+  data: <><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></>,
+  kbd: <><rect x="2.5" y="6" width="19" height="12" rx="2" /><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M8 14h8" /></>,
+  key: <><circle cx="8" cy="15" r="4" /><path d="M11 12l9-9M17 6l3 3M15 8l2 2" /></>
 };
 // чекбокс задачі: видимий квадрат 22px, зона натискання — label 44×44 (WCAG 2.5.8, HIG 44 pt)
 const Ck = ({ checked, onChange, label }) => <label className="ck"><input type="checkbox" checked={!!checked} onChange={onChange} aria-label={label} /></label>;
@@ -218,17 +224,35 @@ export default function Home() {
   const [cards, setCards] = useState([]);
   const [notes, setNotes] = useState([]);
   const [tests, setTests] = useState([]);
-  // Помічник: розмови (замість одного msgs), поточна розмова, останній відкритий матеріал, бічна панель у редакторі (iPad ≥1024)
+  // Помічник: розмови (замість одного msgs), поточна розмова, останній відкритий матеріал.
+  // aiOpen — права панель Помічника, одна на весь застосунок (вікно ≥768; ipad-layout-spec 4.1), запам'ятовується.
   const [chats, setChats] = useState([]);
   const [chatCur, setChatCur] = useState(null);
   const [lastMat, setLastMat] = useState(null);
-  const [aiSide, setAiSide] = useState(false);
+  const [aiOpen, setAiOpenS] = useState(false);
+  const setAiOpen = v => { setAiOpenS(v); try { localStorage.setItem('helper-ai-open', v ? '1' : '0'); } catch (e) {} };
+  // клас вікна (навігація і режим панелі): c < 768 (вкладка) · m 768–1023 (панель поверх) · e 1024–1279 (поруч, 380) · l ≥ 1280 (поруч, 360–480)
+  const [win, setWin] = useState('c');
+  // клас області контенту (.region, без рейки й панелі): s < 600 · m < 860 · l < 1120 · xl — для поведінки (CSS — через @container region)
+  const [rc, setRc] = useState('s');
+  const regRef = useRef(null);
+  const [edDoc, setEdDoc] = useState(null); // відкритий у редакторі документ — контекст панелі за замовчуванням
   const [aiPend, setAiPend] = useState(null);
   const [openReq, setOpenReq] = useState(null);
   const [undo, setUndo] = useState(null);
   const [ready, setReady] = useState(false);
   const [sheet, setSheet] = useState(null);
   const [f, setF] = useState(EMPTY);
+  const [allSel, setAllSel] = useState(null); // «Усі» на iPad: вибраний запис і його форма
+  const [af, setAfS] = useState(null);
+  const [setSec, setSetSec] = useState('gen'); // Налаштування на iPad: поточний розділ
+  // клавіатура (ipad-interactions 5): шпаргалка ⌘/, вимикач однолітерних скорочень; keyRef — обробник з актуальним станом
+  const [kbOpen, setKbOpen] = useState(false);
+  const [oneKeys, setOneKeysS] = useState(true);
+  const keyRef = useRef(null), kbPrev = useRef(null);
+  // шкала дня: призрак слоту { min, dur, st: 'hover' | 'pressed' | 'opening' }; press — поточне натискання; slotNew — подію створюють зі слоту
+  const [ghost, setGhost] = useState(null);
+  const press = useRef(null), lastScroll = useRef(0), slotNew = useRef(false), tlRef = useRef(null);
   const [show, setShow] = useState(false);
   const [cq, setCq] = useState('');
   const [ca, setCa] = useState('');
@@ -305,7 +329,54 @@ export default function Home() {
     const h = e => revKey.current && revKey.current(e);
     document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h);
   }, [rev != null]);
+  useEffect(() => {
+    setOneKeysS(oneKeysOn());
+    const h = e => keyRef.current && keyRef.current(e);
+    const sc = () => { lastScroll.current = performance.now(); };
+    document.addEventListener('keydown', h); window.addEventListener('scroll', sc, { passive: true, capture: true });
+    return () => { document.removeEventListener('keydown', h); window.removeEventListener('scroll', sc, { capture: true }); };
+  }, []);
+  // вікно «Нова подія» зі слоту закрили (створено або скасовано) — призрак зникає
+  useEffect(() => { if (!sheet) { setGhost(g => (g && g.st === 'opening' ? null : g)); slotNew.current = false; } }, [sheet]);
   useEffect(() => { if (!toast || toast.hold) return; const tm = setTimeout(() => setToast(null), 8000); return () => clearTimeout(tm); }, [toast]);
+  // тост озвучується через постійну live-область (a11y #15); hold змінює об'єкт, але не текст — повторно не озвучуємо
+  useEffect(() => { if (toast && toast.text) announce(toast.text + (toast.undo ? '. ' + tr("Можна скасувати") : '')); }, [toast && toast.text]);
+  // ===== Шари .nv (редактор, сесія, тест, нотатка) — a11y #1–#4 =====
+  // Поки відкрито шар: .region, рейка й кнопка «Налаштування» — inert (Tab і VoiceOver не йдуть у фон), фокус — у шар.
+  // Після закриття — назад на елемент, з якого шар відкрили (останній фокус / дотик поза шарами), інакше — на «Почати повторення»
+  // або заголовок розділу. Панель Помічника не чіпаємо: вона працює поруч із шаром.
+  const lastOut = useRef(null);
+  useEffect(() => {
+    const inLayer = el => !!(el && el.closest && el.closest('.nv, .aip, .ov, .popback'));
+    const onFocus = e => { if (!inLayer(e.target)) lastOut.current = e.target; };
+    const onDown = e => { const b = e.target && e.target.closest && e.target.closest('button, a, [role="button"]'); if (b && !inLayer(b)) lastOut.current = b; };
+    const FOC = 'button:not([disabled]), [href], input:not([type="hidden"]), textarea:not([hidden]), select, [tabindex]:not([tabindex="-1"])';
+    let layer = null;
+    const sync = () => {
+      const l = document.querySelector('.nv');
+      for (const el of [document.querySelector('.region'), document.querySelector('nav.nav'), document.querySelector('.wrap > .me')]) {
+        if (!el) continue; if (l && !el.hasAttribute('inert')) el.setAttribute('inert', ''); else if (!l && el.hasAttribute('inert')) el.removeAttribute('inert');
+      }
+      if (l && l !== layer) {
+        layer = l; const a = document.activeElement;
+        if (!l.contains(a) && !(a && a.closest && a.closest('.aip'))) { const f = [...l.querySelectorAll(FOC)].find(x => x.offsetParent !== null); if (f) f.focus({ preventScroll: true }); }
+      } else if (!l && layer) {
+        layer = null;
+        // після кадру: клас ed-open (ховає фон під редактором) знімається в cleanup ефекту редактора, уже після зміни DOM
+        setTimeout(() => {
+          const a = document.activeElement;
+          if (document.querySelector('.nv') || (a && a !== document.body && document.contains(a))) return;
+          const r = lastOut.current;
+          const t = r && document.contains(r) && r.offsetParent !== null ? r : document.querySelector('.region .rv-go') || document.querySelector('.region h1');
+          if (t) { if (!t.matches(FOC)) t.setAttribute('tabindex', '-1'); t.focus({ preventScroll: true }); }
+        }, 0);
+      }
+    };
+    const mo = new MutationObserver(sync); mo.observe(document.body, { childList: true, subtree: true });
+    document.addEventListener('focusin', onFocus); document.addEventListener('pointerdown', onDown, true); document.addEventListener('click', onDown, true);
+    sync();
+    return () => { mo.disconnect(); document.removeEventListener('focusin', onFocus); document.removeEventListener('pointerdown', onDown, true); document.removeEventListener('click', onDown, true); };
+  }, []);
   // лінія «зараз» на шкалі дня: перемальовувати раз на хвилину
   useEffect(() => { const iv = setInterval(() => setTick(x => x + 1), 60000); return () => clearInterval(iv); }, []);
   useEffect(() => { if (ready) { try { localStorage.setItem(nsKey('helper-next'), JSON.stringify({ items, cap, chats: chats.slice(0, 50), chatCur, aiLast: lastMat, start, cards, notes, tests, folders, ui })); } catch (e) {} } }, [items, cap, chats, chatCur, lastMat, start, cards, notes, tests, folders, ui, ready]);
@@ -330,7 +401,7 @@ export default function Home() {
   const switchAcc = id => { setActiveId(id); window.location.reload(); };
   const enterAcc = async () => {
     const bad = validateCredentials(acf.name, acf.pass);
-    if (bad) { setAcf(a => ({ ...a, err: bad === 'name' ? tr("Введіть ім’я акаунта.") : tr("Пароль має бути не коротшим за 6 символів.") })); return; }
+    if (bad) { setAcf(a => ({ ...a, errF: bad === 'name' ? 'name' : 'pass', err: bad === 'name' ? tr("Введіть ім’я акаунта.") : tr("Пароль має бути не коротшим за 6 символів.") })); return; }
     setAcf(a => ({ ...a, busy: true, err: '' }));
     try { const id = await deriveAccountId(acf.name, acf.pass); addAccount(acf.name, id); setActiveId(id); window.location.reload(); }
     catch (e) { setAcf(a => ({ ...a, busy: false, err: tr("Не вдалося створити акаунт у цьому браузері.") })); }
@@ -371,6 +442,16 @@ export default function Home() {
       ? p.map(n => n.id === nview && n.text !== ntext ? { ...n, text: ntext, upd: Date.now() } : n)
       : [{ id: nview, text: ntext, upd: Date.now(), folder: nfold }, ...p]);
   }, [ntext]);
+  useEffect(() => {
+    try { if (localStorage.getItem('helper-ai-open') === '1') setAiOpenS(true); } catch (e) {}
+    const f = () => { const w = window.innerWidth; setWin(w < 768 ? 'c' : w < 1024 ? 'm' : w < 1280 ? 'e' : 'l'); };
+    f(); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f);
+  }, []);
+  useEffect(() => {
+    const el = regRef.current; if (!el) return;
+    const f = () => { const w = el.clientWidth; setRc(w < 600 ? 's' : w < 860 ? 'm' : w < 1120 ? 'l' : 'xl'); };
+    f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect();
+  }, [ready]);
   if (!ready) return null;
 
   const now = new Date();
@@ -386,32 +467,42 @@ export default function Home() {
   const newNote = flowMode => { openNote('new'); setFlow(flowMode); };
   const delNote = () => { setNotes(notes.filter(n => n.id !== nview)); setNview(null); setNtext(''); setFlow(false); };
   // expanded=false: sheet відкривається з полем швидкого вводу зверху і згорнутою повною формою (FAB на телефоні)
-  const openNew = (expanded = true) => { sheetPrev.current = document.activeElement; setF({ ...EMPTY, due: selDate !== today ? selDate : '', folder: tab === 'folders' && typeof fview === 'number' ? fview : '' }); setMore(expanded !== false); setSheet('new'); };
+  const openNew = (expanded = true, kind) => { sheetPrev.current = document.activeElement; setF({ ...EMPTY, ...(kind ? { kind } : null), due: selDate !== today ? selDate : '', folder: tab === 'folders' && typeof fview === 'number' ? fview : '' }); setMore(expanded !== false); setSheet('new'); };
   const setPlanView = v => { setPv(v); try { localStorage.setItem(PV_KEY, v); } catch (e) {} };
   const goTab = k => {
     if (k === tab) { if (k === 'today') setSel(''); if (k === 'folders') setFview(null); if (k === 'cards') setDeckV(null); return; }
     setTab(k);
   };
-  const openEdit = i => { if (!i) return; sheetPrev.current = document.activeElement; setF({ kind: isExam(i) ? 'exam' : i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', until: i.until || '', folder: i.folder || '' }); setSheet(i.id); };
-  const saveTask = () => {
-    if (!f.t.trim()) return;
-    const h = parseFloat(f.h);
-    if (f.kind === 'exam') {
-      if (!isDate(f.due)) return;
-      const eb = { kind: 'event', exam: true, t: f.t.trim(), area: 'study', h: h > 0 ? h : 2, due: f.due, time: isTime(f.time) ? f.time : '', pri: 2, note: f.note.trim(), repeat: 'none', folder: f.folder === '' || f.folder == null ? '' : Number(f.folder) };
-      if (sheet === 'new') setItems([...items, { id: Date.now(), ...eb, done: false }]);
-      else setItems(items.map(i => i.id === sheet ? { ...i, ...eb } : i));
-      closeSheet(); return;
+  const formOf = i => ({ kind: isExam(i) ? 'exam' : i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', until: i.until || '', folder: i.folder || '' });
+  const openEdit = i => { if (!i) return; sheetPrev.current = document.activeElement; setF(formOf(i)); setSheet(i.id); };
+  // поля форми → запис (null, якщо форма невалідна); спільне для аркуша й деталі «Усі» на iPad
+  const buildItem = fv => {
+    if (!fv.t.trim()) return null;
+    const h = parseFloat(fv.h);
+    if (fv.kind === 'exam') {
+      if (!isDate(fv.due)) return null;
+      return { kind: 'event', exam: true, t: fv.t.trim(), area: 'study', h: h > 0 ? h : 2, due: fv.due, time: isTime(fv.time) ? fv.time : '', pri: 2, note: fv.note.trim(), repeat: 'none', folder: fv.folder === '' || fv.folder == null ? '' : Number(fv.folder) };
     }
-    const ev = f.kind === 'event';
-    const rep = f.repeat || 'none';
-    const due = f.due || (ev || rep !== 'none' || isTime(f.time) ? selDate : '');
-    if (rep !== 'none' && isDate(f.until) && f.until < due) return; // кінець повтору раніше за початок — кнопка вимкнена, підказка під полем
-    const base = { kind: f.kind, t: f.t.trim(), area: f.area, h: h > 0 ? h : 1, due, time: ev ? (f.time || '09:00') : (isTime(f.time) ? f.time : ''), pri: Number(f.pri) || 1, note: f.note.trim(), repeat: rep, until: normUntil(f.until, rep, due), folder: f.folder === '' || f.folder == null ? '' : Number(f.folder), exam: undefined };
-    if (sheet === 'new') setItems([...items, { id: Date.now(), ...base, done: false }]);
+    const ev = fv.kind === 'event';
+    const rep = fv.repeat || 'none';
+    const due = fv.due || (ev || rep !== 'none' || isTime(fv.time) ? selDate : '');
+    if (rep !== 'none' && isDate(fv.until) && fv.until < due) return null; // кінець повтору раніше за початок — кнопка вимкнена, підказка під полем
+    return { kind: fv.kind, t: fv.t.trim(), area: fv.area, h: h > 0 ? h : 1, due, time: ev ? (fv.time || '09:00') : (isTime(fv.time) ? fv.time : ''), pri: Number(fv.pri) || 1, note: fv.note.trim(), repeat: rep, until: normUntil(fv.until, rep, due), folder: fv.folder === '' || fv.folder == null ? '' : Number(fv.folder), exam: undefined };
+  };
+  const saveTask = () => {
+    const base = buildItem(f); if (!base) return;
+    if (sheet === 'new') {
+      const id = Date.now();
+      setItems([...items, { id, ...base, done: false }]);
+      // подія зі слоту шкали: тост із «Скасувати» (блок з'являється на місці призрака)
+      if (slotNew.current) setToast({ text: base.kind === 'event' ? tr("Подію додано") : tr("Додано"), undo: () => setItems(its => its.filter(i => i.id !== id)) });
+    }
     else setItems(items.map(i => i.id === sheet ? { ...i, ...base } : i));
     closeSheet();
   };
+  // «Усі» на iPad (l/xl): список + деталь; правка зберігається одразу (ipad-layout-spec 5.3)
+  const pickAll = i => { setAllSel(i.id); setAfS(formOf(i)); };
+  const setAf = v => { setAfS(v); const b = buildItem(v); if (b && allSel != null) setItems(its => its.map(i => i.id === allSel ? { ...i, ...b } : i)); };
   const tog = (id, date) => setItems(items.map(i => {
     if (i.id !== id) return i;
     if (isRep(i)) { const ds = i.doneDates || []; return { ...i, doneDates: ds.includes(date) ? ds.filter(x => x !== date) : [...ds, date] }; }
@@ -436,7 +527,7 @@ export default function Home() {
   // «Скласти тест» — форму тесту: джерело = текстова нотатка з папки, якщо є, інакше тема = назва папки
   const goNewTest = () => { setTimeout(() => { const el = document.getElementById('new-test'); if (el) { el.scrollIntoView({ block: 'start' }); el.focus({ preventScroll: true }); } }, 60); };
   const onStudy = (kind, fo) => {
-    if (kind === 'cards') { setTab('ai'); setAiPend({ text: tr("Зроби картки за темою: ") + fo.name }); return; }
+    if (kind === 'cards') { toAI({ text: tr("Зроби картки за темою: ") + fo.name }); return; }
     const nt = notes.filter(n => n.folder === fo.id && n.text && n.text.trim()).sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
     // немає текстової нотатки → останній зошит / дошка папки (сторінка 1), інакше тема = назва папки
     const dc = nt ? null : docMeta.filter(d => d.folder === fo.id).sort((a, b) => (b.upd || 0) - (a.upd || 0))[0];
@@ -496,19 +587,34 @@ export default function Home() {
     if (!ref) return;
     if (ref.k === 'note') { if (notes.some(n => n.id === ref.id)) openNote(ref.id); return; }
     setOpenReq({ id: ref.id, page: page || 1, t: Date.now() });
-    if (!aiSide) setTab('folders');
+    setTab('folders');
   };
   const askFromEditor = info => {
     setLastMat({ k: 'doc', id: info.id, title: info.title, type: info.type, page: info.page });
     // ласо: info.sel — область виділення (рендериться лише вона), info.text — заготовка запиту без автонадсилання
     setAiPend({ ctx: { k: 'doc', id: info.id, title: info.title, type: info.type, pages: [info.page], ...(info.sel ? { sel: info.sel } : {}) }, ...(info.text ? { text: info.text } : {}) });
-    if (window.matchMedia('(min-width:1024px)').matches) setAiSide(true); else { setAiSide(false); setTab('ai'); }
+    if (window.matchMedia('(min-width:768px)').matches) setAiOpen(true); else setTab('ai');
   };
-  const assistant = side => <Assistant side={side} onClose={() => setAiSide(false)} chats={chats} setChats={setChats} curId={chatCur} setCurId={setChatCur}
+  // запит до Помічника з будь-якого розділу: на iPad — права панель (розділ лишається на місці), на телефоні — вкладка
+  const toAI = pend => {
+    if (pend) setAiPend(pend);
+    if (tab !== 'ai' && window.matchMedia('(min-width:768px)').matches) setAiOpen(true); else setTab('ai');
+  };
+  // контекст розділу для панелі: відкрита папка, вибраний набір (План і Налаштування — без контексту)
+  const secCtx = (() => {
+    if (tab === 'folders' && edDoc) return { k: 'doc', id: edDoc.id, title: edDoc.title, type: edDoc.type, pages: [edDoc.page || 1] };
+    if (tab === 'folders' && typeof fview === 'number') { const fo = folders.find(x => x.id === fview); return fo ? { k: 'folder', id: fo.id, title: fo.name } : null; }
+    if (tab === 'cards' && deckV && !deckV.isNew) return { k: 'deck', id: deckV.name || '', title: deckV.name || tr("Без набору") };
+    return null;
+  })();
+  const assistant = side => <Assistant side={side} wide={!side && (rc === 'l' || rc === 'xl')} secCtx={side ? secCtx : null} onClose={() => setAiOpen(false)} chats={chats} setChats={setChats} curId={chatCur} setCurId={setChatCur}
     call={callAI} buildState={buildState} apply={applyAI} undo={doUndo} items={items} notes={notes} cards={cards} folders={folders} lastMat={lastMat}
     pending={aiPend} clearPending={() => setAiPend(null)} onReview={() => { setTab('cards'); setDeckV(null); startRev(null); }} onOpenRef={openRef}
     rev={{ n: revQ.list.length, decks: [...new Set(revQ.list.map(c => c.deck || ''))] }} exam={nextExam ? { t: nextExam.t, days: daysTo(nextExam.due, today) } : null} onExamPlan={() => nextExam && planExam(nextExam)}
-    on401={() => { setAiSide(false); setTab('set'); }} />;
+    on401={() => { setAiOpen(false); setTab('set'); }} />;
+  // кнопка «Помічник» у шапці розділу (лише вікно ≥768; на телефоні Помічник — вкладка)
+  const aiBtn = <button className={'hd-ai' + (aiOpen ? ' on' : '')} onClick={() => setAiOpen(!aiOpen)} aria-pressed={aiOpen} aria-label={tr("Помічник")} title={tr("Помічник")}>
+    <Icon n="ai1" s={20} /><span className="hd-ai-l">{tr("Помічник")}</span></button>;
 
   // Швидкий ввід: спершу ШІ (mode: parse); якщо ШІ недоступний (немає ключа, 401, 502, офлайн, мережа) —
   // локальний розбір qparse.js і те саме превʼю з позначкою «Розібрано без ШІ — перевірте». Технічні деталі — лише в консоль.
@@ -655,10 +761,13 @@ export default function Home() {
       <span className="exr-b"><span className="exr-t">{tr("Іспит")}: {i.t}</span><span className="exr-m">{cap1(new Date(i.due + 'T00:00:00').toLocaleDateString(loc(), { weekday: 'short', day: 'numeric', month: 'short' }))}{i.time ? ', ' + i.time : ''} · {exWhen(i)}</span></span>
       <Icon n="chevR" s={18} />
     </button>);
+  // «Усі» на iPad l/xl — список + деталь: рядок вибирає запис замість аркуша правки
+  const mdAll = pv === 'all' && win !== 'c' && (rc === 'l' || rc === 'xl');
+  const editRow = i => (mdAll ? pickAll(i) : openEdit(i));
   const row = i => isExam(i) ? exRow(i) : (
-    <div className={'it' + (i.done ? ' done' : '')} key={i.id}>
+    <div className={'it' + (i.done ? ' done' : '') + (mdAll && allSel === i.id ? ' it-on' : '')} key={i.id}>
       {isEv(i) ? <span className="evd" /> : <Ck label={i.t} checked={isRep(i) ? (i.doneDates || []).includes(today) : !!i.done} onChange={() => tog(i.id, today)} />}
-      <div className="b" role="button" tabIndex={0} onClick={() => openEdit(i)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(i); } }}><div className="t">{i.t}</div>
+      <div className="b" role="button" tabIndex={0} aria-current={mdAll && allSel === i.id ? 'true' : undefined} onClick={() => editRow(i)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); editRow(i); } }}><div className="t">{i.t}</div>
         <div className="meta"><span className={'tag ' + i.area}>{tr(AREA[i.area])}</span>
           {isEv(i) ? <span>{i.due && !isRep(i) ? dm(i.due) + ' ' : ''}{i.time}</span> : <span>{i.h} {tr(" год")}</span>}
           {!isEv(i) && !isRep(i) && i.due && <span className={!i.done && i.due < today ? 'late' : ''}>{tr("до ")}{dm(i.due)}</span>}
@@ -712,7 +821,7 @@ export default function Home() {
   const planExam = e => {
     const n = daysTo(e.due, today), fo = folders.find(x => x.id === e.folder);
     const text = tr("Склади план підготовки до іспиту") + ' «' + e.t + '» (' + dm(e.due) + (e.time ? ' ' + e.time : '') + ', ' + exWhen(e) + '). ' + tr("Розподіли підготовку по днях до іспиту з урахуванням моїх годин на день і вже запланованих задач; останній день перед іспитом — повторення.");
-    setExV(null); setTab('ai'); setAiPend({ text, send: true, ctx: fo ? { k: 'folder', id: fo.id, title: fo.name } : null });
+    setExV(null); toAI({ text, send: true, ctx: fo ? { k: 'folder', id: fo.id, title: fo.name } : null });
   };
   const nCards = n => n + ' ' + plural(n, "картка", "картки", "карток");
   const nQs = n => n + ' ' + plural(n, "питання", "питання", "питань");
@@ -738,6 +847,16 @@ export default function Home() {
   const planDays = {}; plan.days.forEach(d => { if (d.blocks.length) planDays[d.date] = true; });
   const hasDot = d => planDays[d] || evOn(d).length > 0 || open.some(i => i.due === d);
   const hasEx = d => exOn(d).length > 0;
+  // Місяць на iPad: скільки назв уміщається в клітинку за класом області (s — крапки, як на телефоні)
+  const wideCal = win !== 'c';
+  const mCnt = rc === 'xl' ? 3 : rc === 'l' ? 2 : rc === 'm' ? 1 : 0;
+  // задачі дня: разові з терміном цього дня + повторювані, що припадають на нього
+  const dayTasksOn = d => items.filter(i => !isEv(i) && (isRep(i) ? occurs(i, d) : i.due === d)).sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+  const dayEntries = d => [
+    ...exOn(d).map(e => ({ k: 'exam', id: 'x' + e.id, t: e.t, time: e.time || '' })),
+    ...evOn(d).map(e => ({ k: 'ev', id: 'e' + e.id, t: e.t, time: e.time || '', area: e.area })),
+    ...dayTasksOn(d).filter(i => !(isRep(i) ? (i.doneDates || []).includes(d) : i.done)).map(i => ({ k: 'task', id: 't' + i.id, t: i.t, area: i.area }))
+  ];
   const monthRaw = new Date(cy, cmo, 1).toLocaleDateString(loc(), { month: 'long', year: 'numeric' });
   const monthName = monthRaw.charAt(0).toUpperCase() + monthRaw.slice(1); // «Листопад 2026 р.»: велика лише перша літера
   const tt = tests.find(t => t.id === tview);
@@ -774,7 +893,8 @@ export default function Home() {
   })();
   const nowMin = now.getHours() * 60 + now.getMinutes();
   // для сьогодні шкала містить поточну годину (з 6:00 до 24:00), щоб лінія «зараз» була видна; уночі шкала не розтягується
-  const tlH0 = Math.max(0, Math.min(start, ...(isToday && now.getHours() >= 6 ? [now.getHours()] : []), ...tlItems.map(b => Math.floor(b.s / 60))));
+  // порожня шкала: робочі години 8:00–22:00 (події поза ними розширюють шкалу як і раніше)
+  const tlH0 = Math.max(0, Math.min(tlItems.length ? start : 8, ...(isToday && now.getHours() >= 6 ? [now.getHours()] : []), ...tlItems.map(b => Math.floor(b.s / 60))));
   const tlH1 = Math.min(24, Math.max(22, tlH0 + 1, ...(isToday ? [now.getHours() + 1] : []), ...tlItems.map(b => Math.ceil(b.e / 60))));
   const showNow = isToday && nowMin >= tlH0 * 60 && nowMin <= tlH1 * 60;
   const hhPos = m => 'calc(var(--hh) * ' + ((m - tlH0 * 60) / 60).toFixed(4) + ')';
@@ -813,6 +933,142 @@ export default function Home() {
   ];
   const doneSorted = [...doneList].sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || ''));
 
+  // ===== Форма запису на iPad (вікно ≥768): видимі підписи «підпис зліва 160 — поле справа» (ipad-layout-spec 10, I19) =====
+  // fv/setFv — стан форми (аркуш: f; деталь «Усі»: af). Телефон використовує колишню форму без змін.
+  const formRows = (fv, setFv, idp, focus) => {
+    const fe = fv.kind === 'event', fx = fv.kind === 'exam', set = p => setFv({ ...fv, ...p });
+    const d0 = fv.due || selDate, badU = fv.repeat !== 'none' && isDate(fv.until) && fv.until < d0;
+    const R = (id, label, field, hint) => <div className="frow" key={id}><label className="frow-l" htmlFor={idp + id}>{label}</label><div className="frow-f">{field}{hint}</div></div>;
+    return <div className="fform">
+      <div className="frow"><span className="frow-l" id={idp + 'kind'}>{tr("Тип")}</span><div className="frow-f"><div className="seg" role="group" aria-labelledby={idp + 'kind'}>
+        {[['task', tr("Задача")], ['event', tr("Подія")], ['exam', tr("Іспит")]].map(([k, n]) => <button key={k} className={fv.kind === k ? 'on' : ''} aria-pressed={fv.kind === k} onClick={() => set({ kind: k })}>{n}</button>)}</div></div></div>
+      {R('t', fx ? tr("Предмет") : tr("Назва"), <input id={idp + 't'} autoFocus={focus} aria-invalid={idp === 'af-' && !fv.t.trim() ? true : undefined} aria-describedby={idp === 'af-' && !fv.t.trim() ? idp + 't-e' : undefined} placeholder={fx ? tr("Наприклад: Анатомія") : fe ? tr("Наприклад: стоматолог") : tr("Що потрібно зробити або вивчити")} value={fv.t} onChange={e => set({ t: e.target.value })} />, idp === 'af-' && !fv.t.trim() ? <p className="hint err" id={idp + 't-e'} role="alert">{fx ? tr("Предмет не може бути порожнім — зміни не збережено.") : tr("Назва не може бути порожньою — зміни не збережено.")}</p> : null)}
+      {!fx && R('area', tr("Категорія"), <select id={idp + 'area'} value={fv.area} onChange={e => set({ area: e.target.value })}>{Object.entries(AREA).map(([k, v]) => <option key={k} value={k}>{tr(v)}</option>)}</select>)}
+      {R('due', tr("Дата"), <input id={idp + 'due'} type="date" value={fv.due} aria-invalid={fx && !isDate(fv.due) ? true : undefined} aria-describedby={fx && !isDate(fv.due) ? idp + 'due-h' : undefined} onChange={e => set({ due: e.target.value })} />, fx && !isDate(fv.due) ? <p className={'hint' + (idp === 'af-' ? ' err' : '')} id={idp + 'due-h'}>{tr("Вкажіть дату іспиту.")}{idp === 'af-' ? ' ' + tr("Без дати зміни не зберігаються.") : ''}</p> : null)}
+      {R('time', fe ? tr("Час") : tr("Час (необов’язково)"), <input id={idp + 'time'} type="time" value={fv.time} onChange={e => set({ time: e.target.value })} />)}
+      {!fx && R('h', fe ? tr("Тривалість") : tr("Потрібно часу"), <span className="fsuf"><input id={idp + 'h'} type="number" min="0.5" step="0.5" value={fv.h} onChange={e => set({ h: e.target.value })} /><span>{tr(" год").trim()}</span></span>)}
+      {!fe && !fx && R('pri', tr("Важливість"), <select id={idp + 'pri'} value={fv.pri} onChange={e => set({ pri: e.target.value })}><option value={1}>{tr("Звичайна")}</option><option value={2}>{tr("Важлива")}</option></select>)}
+      {!fx && R('rep', tr("Повтор"), <select id={idp + 'rep'} value={fv.repeat} onChange={e => set({ repeat: e.target.value })}>{Object.entries(REP).map(([k, v]) => <option key={k} value={k}>{tr(v)}</option>)}</select>)}
+      {!fx && fv.repeat !== 'none' && R('until', tr("До дати"), <input id={idp + 'until'} type="date" min={d0} value={fv.until || ''} onChange={e => set({ until: e.target.value })} aria-describedby={idp + 'until-h'} aria-invalid={badU || undefined} />,
+        <p className={'hint' + (badU ? ' err' : '')} id={idp + 'until-h'}>{badU ? tr("Дата закінчення раніше за початок повтору.") : tr("Після цієї дати запис не показується й не планується.")}</p>)}
+      {folders.length > 0 && R('fold', tr("Папка"), <select id={idp + 'fold'} value={fv.folder} onChange={e => set({ folder: e.target.value })}><option value="">{tr("Без папки")}</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{folderPath(folders, fo.id)}</option>)}</select>)}
+      {R('note', tr("Нотатка"), <textarea id={idp + 'note'} rows={2} placeholder={fx ? tr("Наприклад: аудиторія, що взяти з собою") : tr("Необов’язково")} value={fv.note} onChange={e => set({ note: e.target.value })} />)}
+    </div>;
+  };
+  // шапка форми на iPad: «Скасувати — заголовок — Готово» (I15): основна дія завжди над клавіатурою
+  const formHead = (id, title, onCancel, doneLabel, onDone, canDone) => <div className="fhd">
+    <button className="fhd-b" onClick={onCancel}>{tr("Скасувати")}</button>
+    <h2 id={id}>{title}</h2>
+    <button className="fhd-b pri" onClick={onDone} disabled={!canDone}>{doneLabel}</button></div>;
+
+  // ===== Нова подія з часом (тап по слоту шкали, ⌘N у Плані): початок — min (хв від 00:00), тривалість 1 год, не далі 24:00 =====
+  const openEventAt = (date, min, fromSlot) => {
+    sheetPrev.current = document.activeElement;
+    const dur = Math.min(60, 24 * 60 - min);
+    setF({ ...EMPTY, kind: 'event', due: date, time: hm(min), h: String(dur / 60) });
+    setMore(true); setSheet('new'); slotNew.current = !!fromSlot;
+  };
+  // ⌘N у Плані: найближче наступне півгодини для сьогодні, 9:00 для інших днів
+  const newEventNow = () => openEventAt(selDate, isToday ? Math.min(23 * 60 + 30, Math.ceil((nowMin + 1) / 30) * 30) : 9 * 60, false);
+
+  // ===== Шкала дня: тап по порожньому місцю → «Нова подія» (ipad-interactions 4) =====
+  // Округлення вниз до 30 хв (36 px на iPad — надійне влучання пальцем). Не під час інерційної прокрутки (scroll за 100 мс),
+  // тап — зсув < 10 px і < 500 мс; pointercancel (браузер забрав жест під прокрутку) — без дії. touch-action не чіпаємо.
+  const slotMin = e => {
+    const el = tlRef.current; if (!el) return null;
+    const r = el.getBoundingClientRect(), hh = parseFloat(getComputedStyle(el).getPropertyValue('--hh')) || 64;
+    const m = tlH0 * 60 + Math.floor(((e.clientY - r.top) / hh) * 2) * 30;
+    return Math.max(tlH0 * 60, Math.min(tlH1 * 60 - 30, m));
+  };
+  const onSlotBlock = e => !!(e.target.closest && e.target.closest('.tlb, button, a, input, label'));
+  const tlDown = e => {
+    if (onSlotBlock(e) || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (performance.now() - lastScroll.current < 100) return; // дотик лише зупиняє інерційну прокрутку
+    const min = slotMin(e); if (min == null) return;
+    const p = { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp, min };
+    p.show = setTimeout(() => { if (press.current === p) setGhost({ min, st: 'pressed' }); }, 100); // без мерехтіння під час прокрутки
+    press.current = p;
+  };
+  const cancelPress = () => { const p = press.current; if (!p) return; clearTimeout(p.show); press.current = null; setGhost(g => (g && g.st === 'pressed' ? null : g)); };
+  const tlMove = e => {
+    const p = press.current;
+    if (p && p.id === e.pointerId) { if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > 10) cancelPress(); return; }
+    // hover трекпадом або пером: призрак 30 хв із підписом «+ 14:30»
+    if ((e.pointerType === 'mouse' || e.pointerType === 'pen') && e.buttons === 0) {
+      if (onSlotBlock(e)) { setGhost(g => (g && g.st === 'hover' ? null : g)); return; }
+      const min = slotMin(e); setGhost(g => (g && g.st !== 'hover' ? g : g && g.min === min ? g : { min, st: 'hover' }));
+    }
+  };
+  const tlUp = e => {
+    const p = press.current; if (!p || p.id !== e.pointerId) return;
+    clearTimeout(p.show); press.current = null;
+    if (e.timeStamp - p.t > 500 || slotMin(e) !== p.min) { setGhost(null); return; }
+    setGhost({ min: p.min, st: 'opening' });
+    openEventAt(selDate, p.min, true);
+  };
+  const tlLeave = e => { if (e.pointerType !== 'touch') setGhost(g => (g && g.st === 'hover' ? null : g)); };
+
+  // ===== Глобальні скорочення й План (реєстр shortcuts.js; клавіші — за e.code) =====
+  // Поверх шару (аркуш .ov, поповер, редактор / нотатка / сесія .nv) загальні скорочення не працюють, крім ⌘J і ⌘/ над .nv:
+  // інакше ⌘1 закрив би редактор разом із незбереженими штрихами.
+  const wideKb = win !== 'c';
+  const openKb = () => { kbPrev.current = document.activeElement; setKbOpen(true); };
+  // список скорочень за групами; у шпаргалці група поточного розділу (План) — першою
+  const kbList = sheetMode => {
+    const edOpen = sheetMode && typeof document !== 'undefined' && !!document.querySelector('.nv.ed');
+    const first = !sheetMode ? [] : edOpen ? ['ed', 'lasso'] : rev ? ['learn'] : tab === 'today' ? ['plan'] : tab === 'cards' ? ['learn'] : [];
+    const gs = [...first.map(k => SC_GROUPS.find(g => g[0] === k)).filter(Boolean), ...SC_GROUPS.filter(g => !first.includes(g[0]))];
+    return <div className={'kbl' + (sheetMode ? ' two' : '')}>{gs.map(([g, n]) => <section key={g} className="kbg" aria-labelledby={'kbg-' + g + (sheetMode ? 's' : '')}>
+      <h3 className="kbg-t" id={'kbg-' + g + (sheetMode ? 's' : '')}>{tr(n)}</h3>
+      <dl>{SC.filter(x => x.g === g).map(x => <div key={x.id} className={'kbr' + (x.one && !oneKeys ? ' off' : '')}><dt>{x.k.map((k, i) => <Fragment key={k}>{i > 0 && <span className="kbor"> {tr("або")} </span>}<kbd>{keyLabel(k, tr("Пробіл"))}</kbd></Fragment>)}</dt><dd>{tr(x.n)}{x.one && !oneKeys ? ' · ' + tr("вимкнено") : ''}</dd></div>)}</dl>
+    </section>)}</div>;
+  };
+  const closeKb = () => { setKbOpen(false); const p = kbPrev.current; kbPrev.current = null; if (p && document.contains(p) && p.focus) setTimeout(() => p.focus(), 0); };
+  keyRef.current = e => {
+    if (e.defaultPrevented || composing(e)) return;
+    if (kbOpen) { if (e.code === 'Escape' || ((e.metaKey || e.ctrlKey) && e.code === 'Slash')) { e.preventDefault(); closeKb(); } return; }
+    const fld = inField(e.target), modal = document.querySelector('.ov, .popback, .mpop'), layer = document.querySelector('.nv');
+    // «?» без модифікатора — теж шпаргалка (за e.key: на різних розкладках це різні клавіші)
+    if (e.key === '?' && !e.metaKey && !e.ctrlKey && !fld && !modal && wideKb && oneKeys) { e.preventDefault(); openKb(); return; }
+    const sc = scFind(e, ['gen', 'plan']); if (!sc) return;
+    // фокус у панелі Помічника: діють лише ⌘J і ⌘/ (←/→ не гортають день, a11y #12)
+    if (e.target && e.target.closest && e.target.closest('.aip') && sc.id !== 'ai' && sc.id !== 'keys') return;
+    if (fld && !sc.field) return;
+    if (e.repeat && !sc.rep) return;
+    if (sc.one && (!oneKeys || !wideKb)) return;
+    const run = f => { e.preventDefault(); f(); };
+    if (sc.id === 'ai') { if (modal || (layer && win === 'c')) return; run(() => { if (win !== 'c') setAiOpen(!aiOpen); else goTab('ai'); }); return; }
+    if (sc.id === 'keys') { if (modal) return; run(openKb); return; }
+    if (modal || layer) return;
+    if (fld) return;
+    switch (sc.id) {
+      case 'tab1': case 'tab2': case 'tab3': case 'tab4': run(() => goTab(TABS[Number(sc.id.slice(3)) - 1][0])); return;
+      case 'settings': run(() => setTab('set')); return;
+      case 'search': run(() => { if (tab !== 'folders') setTab('folders'); setTimeout(() => window.dispatchEvent(new CustomEvent('helper-cmd', { detail: 'search' })), tab !== 'folders' ? 120 : 0); }); return;
+      case 'new':
+        if (tab === 'today') run(newEventNow);
+        else if (tab === 'folders') run(() => window.dispatchEvent(new CustomEvent('helper-cmd', { detail: 'new' })));
+        else if (tab === 'cards') run(() => { if (deckV && !deckV.isNew) { const el = document.getElementById('dk-q'); if (el) el.focus(); } else newDeck(); });
+        return;
+      case 'prev': case 'next': if (tab !== 'today' || pv === 'all') return;
+        run(() => { const n = sc.id === 'next' ? 1 : -1; if (pv === 'month') setCalM(cm + n); else shiftDay(n); }); return;
+      case 'today': if (tab !== 'today' || pv === 'all') return; run(() => { setSel(''); setCalM(null); }); return;
+      default:
+    }
+  };
+  // перший ⌘ на iPad означає, що є клавіатура: одноразова підказка про шпаргалку
+  const kbHintSeen = () => { try { return localStorage.getItem('helper-kbhint') === '1'; } catch (e) { return true; } };
+  if (wideKb && !kbOpen && typeof window !== 'undefined' && !kbHintSeen()) {
+    const prevKey = keyRef.current;
+    keyRef.current = e => {
+      prevKey(e);
+      if ((e.metaKey || e.ctrlKey) && !['MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight'].includes(e.code)) {
+        try { localStorage.setItem('helper-kbhint', '1'); } catch (er) {}
+        setToast({ text: tr("Натисніть ⌘/, щоб побачити скорочення") });
+      }
+    };
+  }
+
   // ===== шапка Плану: заголовок, перемикач видів, навігація датами =====
   const curMonth = now.getFullYear() * 12 + now.getMonth();
   const planHead = (
@@ -838,6 +1094,7 @@ export default function Home() {
           <button className="ibtn" onClick={() => setCalM(cm + 1)} aria-label={tr("Наступний місяць")} title={tr("Наступний місяць")}><Icon n="chevR" s={20} /></button>
         </div>}
       </div>
+      {aiBtn}
     </header>);
 
   // local: розібрано без ШІ (qparse.js) — та сама картка з позначкою й кнопкою «Змінити» (повна форма з підставленими полями)
@@ -849,12 +1106,12 @@ export default function Home() {
       <div className="row"><button className="btn" onClick={() => { confirmPreview(); if (inSheet) closeSheet(); }}>{tr("Додати")}</button>
         {preview.local && <button className="btn alt" onClick={() => editPreview(preview.actions[0])}>{tr("Змінити")}</button>}
         <button className="btn alt" onClick={() => setPreview(null)}>{tr("Скасувати")}</button></div></div>);
-  const quickInput = (id, inSheet) => (
+  const quickInput = (id, inSheet, noBtn) => (
     <div className={'qrow' + (inSheet ? '' : ' wide-only')}>
       <div className="qbar">
         <label className="vh" htmlFor={id}>{tr("Швидко додати")}</label>
         <input id={id} autoFocus={inSheet && !more} placeholder={tr("Швидко додати: стоматолог у пʼятницю о 13:00")} value={qa} onChange={e => setQa(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); quickAdd(); } }} />
-        <button className="qgo" disabled={qaBusy} onClick={() => { if (qa.trim()) quickAdd(); else if (inSheet) setMore(true); else openNew(true); }}>{qaBusy ? '…' : tr("Додати")}</button>
+        {!noBtn && <button className="qgo" disabled={qaBusy} onClick={() => { if (qa.trim()) quickAdd(); else if (inSheet) setMore(true); else openNew(true); }}>{qaBusy ? '…' : tr("Додати")}</button>}
       </div>
       {/* iPad: видимий шлях до повної форми (задача / подія / іспит) замість прихованого «Додати» при порожньому рядку */}
       {!inSheet && <button className="btn2 qfull" onClick={() => openNew(true)} title={tr("Нова задача, подія або іспит")} aria-label={tr("Новий запис: задача, подія або іспит")}><Icon n="plus" s={18} />{tr("Запис")}</button>}
@@ -938,6 +1195,9 @@ export default function Home() {
     <div className={'wrap' + (tab === 'ai' ? ' t-ai' : '')}>
       <button className={'me' + syncCls + (tab === 'set' ? ' cur' : '')} onClick={() => setTab('set')} aria-label={tr("Налаштування") + '. ' + syncTxt} title={tr("Налаштування") + ' · ' + syncTxt} aria-current={tab === 'set' ? 'page' : undefined}>{meLetter}<i aria-hidden="true" /></button>
 
+      {/* .region — область контенту між рейкою і панеллю Помічника: контейнер @container region (ipad-layout-spec 1.2, 3).
+          Усе position:fixed (аркуші, шари .nv, FAB, тост, рейка) — поза нею. */}
+      <div className="region" ref={regRef}><div className="reg-in">
       {tab === 'today' && <>
         {planHead}
         {nextExam && <button className={'exb' + (daysTo(nextExam.due, today) <= 7 ? ' soon' : '')} onClick={() => setExV(nextExam.id)}>
@@ -984,10 +1244,14 @@ export default function Home() {
                   {lateList.map(l => lateRow(l.it, l.left))}</section>}
               </div>}
               <div className="daymain">
-                {dayEmpty
-                  ? <div className="emptyday"><p>{selDate < today ? tr("Минулий день.") : tr("На цей день нічого немає.")}</p>
-                    {selDate >= today && <button className="btn2" onClick={() => { setTab('ai'); setAiPend({ text: tr("Що мені краще зробити сьогодні і в якому порядку?"), send: true }); }}>{tr("Скласти план із ШІ")}</button>}</div>
-                  : tlItems.length > 0 && <section className="tl" aria-label={tr("Шкала дня")} style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 8px)' }}>
+                {dayEmpty && <div className="emptyday"><p>{selDate < today ? tr("Минулий день.") : tr("На цей день нічого немає.")}</p>
+                    {selDate >= today && <button className="btn2" onClick={() => toAI({ text: tr("Що мені краще зробити сьогодні і в якому порядку?"), send: true })}>{tr("Скласти план із ШІ")}</button>}</div>}
+                {/* шкала видна й у порожній день (там створення події найпотрібніше); на телефоні — як раніше, крім порожнього дня */}
+                {(tlItems.length > 0 || dayEmpty || win !== 'c') && <section className="tl" ref={tlRef} aria-label={tr("Шкала дня")} style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 8px)' }}
+                    onPointerDown={tlDown} onPointerMove={tlMove} onPointerUp={tlUp} onPointerCancel={cancelPress} onPointerLeave={tlLeave}>
+                    {ghost && <div className={'tl-ghost ' + ghost.st + (selDate < today || (isToday && ghost.min + 30 <= nowMin) ? ' past' : '')} aria-hidden="true"
+                      style={{ top: hhPos(ghost.min), height: 'calc(var(--hh) * ' + (ghost.st === 'hover' ? 0.5 : Math.min(60, 1440 - ghost.min) / 60) + ' - 4px)' }}>
+                      <span>+ {hm(ghost.min)}{ghost.st !== 'hover' ? '–' + (ghost.min + 60 >= 1440 ? '24:00' : hm(ghost.min + 60)) : ''}</span></div>}
                     {Array.from({ length: tlH1 - tlH0 + 1 }, (_, k) => <span key={k} className="tl-h" aria-hidden="true" style={{ top: 'calc(var(--hh) * ' + k + ')' }}>{pad((tlH0 + k) % 24 === 0 && k > 0 ? 24 : tlH0 + k)}:00</span>)}
                     <div className="tl-g" aria-hidden="true" style={{ height: 'calc(var(--hh) * ' + (tlH1 - tlH0) + ' + 1px)' }} />
                     {tlItems.map(b => {
@@ -1008,7 +1272,7 @@ export default function Home() {
           })()}
         </>}
 
-        {pv === 'month' && <div className="monthv">
+        {pv === 'month' && !wideCal && <div className="monthv">
           <div className="cal">
             {[tr("Пн"), tr("Вт"), tr("Ср"), tr("Чт"), tr("Пт"), tr("Сб"), tr("Нд")].map(w => <div className="cw" key={w} aria-hidden="true">{w}</div>)}
             {cells.map((d, i) => d
@@ -1020,11 +1284,77 @@ export default function Home() {
           <p className="sub" style={{ marginTop: 14 }}>{tr("Торкніться дня, щоб відкрити його план.")}</p>
         </div>}
 
-        {pv === 'all' && <div className="allv">
-          {!recs.length && !repList.length && !exams.length && <div className="card"><div className="empty">{tr("Відкритих задач немає.")}</div></div>}
-          {allGroups.map(([title, list, warn]) => list.length > 0 && <div className={'card' + (warn ? ' warn' : '')} key={title}><div className="sec">{title}<span className="cnt">{list.length}</span></div>{list.map(row)}</div>)}
-          {doneSorted.length > 0 && <details className="card grp"><summary><span>{tr("Виконані")}<span className="cnt">{doneSorted.length}</span></span><Icon n="chevD" s={20} /></summary>{doneSorted.map(row)}</details>}
+        {/* iPad (вікно ≥768): назви подій у клітинці (m — 1, l — 2, xl — 3) + «+N», сьогодні — коло на числі, вибраний день — рамка;
+            тап вибирає день, список дня праворуч (xl) або знизу; «Відкрити день» / подвійний тап — перехід у «День» (ipad-layout-spec 5.2, I6) */}
+        {pv === 'month' && wideCal && <div className="monthv mw">
+          <div className="cal" role="group" aria-label={monthName}>
+            {[tr("Пн"), tr("Вт"), tr("Ср"), tr("Чт"), tr("Пт"), tr("Сб"), tr("Нд")].map(w => <div className="cw" key={w} aria-hidden="true">{w}</div>)}
+            {cells.map((d, i) => {
+              if (!d) return <div key={i} className="cd-pad" />;
+              const ents = dayEntries(d), on = d === selDate, n = Math.min(mCnt, ents.length);
+              const shown = ents.length > mCnt ? Math.max(0, mCnt - 1) : n; // «+N» займає останній рядок, щоб висота клітинки не росла
+              return <button key={i} className={'cd' + (d === today ? ' td' : '') + (on ? ' sel' : '') + (hasEx(d) ? ' ex' : '')} aria-current={d === today ? 'date' : undefined} aria-pressed={on}
+                aria-label={new Date(d + 'T00:00:00').toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' }) + (ents.length ? ': ' + ents.map(e => (e.k === 'exam' ? tr("іспит") + ': ' : '') + (e.time ? e.time + ' ' : '') + e.t).join(', ') : hasDot(d) ? ', ' + tr("є записи") : '')}
+                onClick={() => setSel(d === today ? '' : d)} onDoubleClick={() => { setSel(d === today ? '' : d); setPlanView('day'); }}>
+                <span className="cd-top"><span className="cd-n">{+d.slice(8)}</span>{hasEx(d) && <span className="exm" aria-hidden="true"><Icon n="flag" s={12} /></span>}</span>
+                {mCnt === 0 && hasDot(d) && <i className="dot" aria-hidden="true" />}
+                {ents.slice(0, shown).map(e => e.k === 'task'
+                  ? <span key={e.id} className="cd-tk" aria-hidden="true"><i className={'sq ' + e.area} /><span>{e.t}</span></span>
+                  : <span key={e.id} className={'cd-ev ' + (e.k === 'exam' ? 'exam' : e.area)} aria-hidden="true">{e.time && <b>{e.time}</b>}<span>{e.t}</span></span>)}
+                {mCnt > 0 && ents.length > shown && <span className="cd-more" aria-hidden="true">+{ents.length - shown}</span>}
+              </button>;
+            })}
+          </div>
+          {(() => {
+            const evs = evOn(selDate), exs = exOn(selDate), tks = dayTasksOn(selDate);
+            const nEv = evs.length + exs.length;
+            const sum = [nEv ? nEv + ' ' + plural(nEv, "подія", "події", "подій") : '', tks.length ? tks.length + ' ' + plural(tks.length, "задача", "задачі", "задач") : ''].filter(Boolean).join(' · ');
+            return <section className="agd" aria-labelledby="agd-t">
+              <div className="agd-h">
+                <div className="agd-tt"><h2 id="agd-t">{cap1(selObj.toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' }))}</h2>{sum && <p className="agd-s">{sum}</p>}</div>
+                <button className="btn2" onClick={() => setPlanView('day')}>{tr("Відкрити день")}</button>
+              </div>
+              {!nEv && !tks.length ? <div className="agd-e"><p>{tr("На цей день нічого немає")}</p><button className="btn2" onClick={() => openNew(true, 'event')}><Icon n="plus" s={18} />{tr("Додати подію")}</button></div>
+                : <ul className="agd-l">
+                  {exs.map(e => <li key={'x' + e.id}><button className="agr" onClick={() => setExV(e.id)}>
+                    <span className="agr-tm">{e.time || '—'}</span><i className="agr-bar exam" aria-hidden="true" />
+                    <span className="agr-b"><span className="agr-n"><Icon n="flag" s={14} /> {tr("Іспит")}: {e.t}</span><span className="agr-m">{exWhen(e)}</span></span></button></li>)}
+                  {evs.map(e => <li key={'e' + e.id}><button className="agr" onClick={() => openEdit(e)}>
+                    <span className="agr-tm">{e.time || '—'}</span><i className={'agr-bar ' + e.area} aria-hidden="true" />
+                    <span className="agr-b"><span className="agr-n">{e.t}</span><span className="agr-m">{tr(AREA[e.area])}{Number(e.h) ? ' · ' + r1(Number(e.h)) + tr(" год") : ''}{isRep(e) ? ' · ' + tr(REPS[e.repeat]) : ''}</span></span></button></li>)}
+                  {tks.map(i => { const dn = isRep(i) ? (i.doneDates || []).includes(selDate) : !!i.done; return <li key={'t' + i.id} className={'agt' + (dn ? ' done' : '')}>
+                    <Ck label={i.t} checked={dn} onChange={() => tog(i.id, selDate)} />
+                    <button className="agr" onClick={() => openEdit(i)}><span className="agr-b"><span className="agr-n">{i.t}</span><span className="agr-m">{tr(AREA[i.area])}{i.time ? ' · ' + i.time : ''}</span></span></button></li>; })}
+                </ul>}
+            </section>; })()}
         </div>}
+
+        {pv === 'all' && (() => {
+          const lst = <>
+            {!recs.length && !repList.length && !exams.length && <div className="card"><div className="empty">{tr("Відкритих задач немає.")}</div></div>}
+            {allGroups.map(([title, list, warn]) => list.length > 0 && <div className={'card' + (warn ? ' warn' : '')} key={title}><div className="sec">{title}<span className="cnt">{list.length}</span></div>{list.map(row)}</div>)}
+            {doneSorted.length > 0 && <details className="card grp"><summary><span>{tr("Виконані")}<span className="cnt">{doneSorted.length}</span></span><Icon n="chevD" s={20} /></summary>{doneSorted.map(row)}</details>}
+          </>;
+          if (!mdAll) return <div className="allv">{lst}</div>;
+          const cur = allSel != null && af ? items.find(i => i.id === allSel) : null;
+          return <div className="allv md">
+            <div className="md-l">{lst}</div>
+            <section className="md-d mdfade" key={'md-' + allSel} aria-label={tr("Деталі запису")}>
+              {cur ? <>
+                <h2 className="md-t">{af.kind === 'exam' ? tr("Іспит") : af.kind === 'event' ? tr("Подія") : tr("Задача")}</h2>
+                <p className="md-s">{tr("Зміни зберігаються одразу.")}</p>
+                {formRows(af, setAf, 'af-', false)}
+                <div className="fdel"><button className="btn2 wn" onClick={() => {
+                  const RS = '.md-l .b[role="button"], .md-l .exr', rows = [...document.querySelectorAll(RS)], cur0 = document.querySelector('.md-l .it-on .b'), idx = Math.max(0, rows.indexOf(cur0));
+                  const gone = items.find(i => i.id === allSel);
+                  setItems(items.filter(i => i.id !== allSel)); setAllSel(null); setAfS(null);
+                  if (gone) setToast({ text: tr("Видалено") + ': ' + gone.t, undo: () => setItems(its => (its.some(x => x.id === gone.id) ? its : [...its, gone])) });
+                  setTimeout(() => { const r2 = [...document.querySelectorAll(RS)], t = r2[Math.min(idx, r2.length - 1)]; if (t) t.focus(); else { const h = document.querySelector('.region h1'); if (h) { h.setAttribute('tabindex', '-1'); h.focus(); } } }, 0);
+                }}>{tr("Видалити")}</button></div>
+              </> : <p className="md-e">{tr("Виберіть задачу зліва")}</p>}
+            </section>
+          </div>;
+        })()}
       </>}
 
       {tab === 'folders' && <Materials folders={folders} notes={notes} fview={fview} setFview={setFview}
@@ -1032,7 +1362,7 @@ export default function Home() {
         onNoteFav={id => setNotes(notes.map(n => n.id === id ? { ...n, fav: !n.fav } : n))}
         onNoteMove={(id, folder) => setNotes(notes.map(n => n.id === id ? { ...n, folder } : n))}
         onNoteDel={id => setNotes(notes.filter(n => n.id !== id))}
-        onAsk={askFromEditor} aiSide={aiSide} openReq={openReq} onOpenReqDone={() => setOpenReq(null)} onOpened={m => setLastMat(m)} onEdClose={() => setAiSide(false)} />}
+        onAsk={askFromEditor} aiOn={aiOpen && win !== 'c'} onAiClose={() => setAiOpen(false)} aiBtn={aiBtn} openReq={openReq} onOpenReqDone={() => setOpenReq(null)} onOpened={m => { setLastMat(m); setEdDoc(m); }} onEdClose={() => setEdDoc(null)} />}
 
       {tab === 'cards' && !deckV && (() => {
         const testsList = idp => tests.length > 0 && <section className="lsec" aria-labelledby={idp + '-h'}>
@@ -1052,9 +1382,9 @@ export default function Home() {
           ['deck', tr("З набору карток"), !decks.length ? tr("Карток ще немає") : tcfg.deck != null && decks.some(d => d.name === tcfg.deck) ? deckName(tcfg.deck) : tr("Оберіть набір"), decks.length > 0]
         ];
         const n = Number(tcfg.n) || 10;
-        return <div className="lrn">
+        return <><header className="lh lh-top"><h1>{tr("Навчання")}</h1>{aiBtn}</header>
+        <div className="lrn">
           <div className="lrn-l">
-            <header className="lh"><h1>{tr("Навчання")}</h1></header>
             <section className="rv" aria-labelledby="rv-h">
               {revQ.list.length ? <>
                 <h2 className="rv-l" id="rv-h">{tr("Сьогодні повторити")}</h2>
@@ -1123,7 +1453,7 @@ export default function Home() {
             </section>
             <div className="phone-only">{testsList('tl-p')}</div>
           </div>
-        </div>;
+        </div></>;
       })()}
 
       {tab === 'cards' && deckV && (() => {
@@ -1135,6 +1465,7 @@ export default function Home() {
         const add = () => { if (deckV.isNew && !dn) return; if (addCard(dn) && deckV.isNew) setDeckV({ name: dn }); };
         return <div className="dkv">
           <header className="lh">
+            {aiBtn}
             <nav className="crumbs" aria-label={tr("Шлях")}><button onClick={() => setDeckV(null)}>{tr("Навчання")}</button><span aria-hidden="true">›</span></nav>
             {deckV.isNew ? <><h1 className="vh">{tr("Новий набір")}</h1><label className="vh" htmlFor="dk-name">{tr("Назва набору")}</label><input id="dk-name" className="dk-name" autoFocus placeholder={tr("Назва набору")} value={deckV.draft} onChange={e => setDeckV({ ...deckV, draft: e.target.value })} /></>
               : <h1>{deckName(dn)}</h1>}
@@ -1170,57 +1501,109 @@ export default function Home() {
       })()}
 
       {tab === 'ai' && assistant(false)}
-      {tab === 'folders' && aiSide && <aside className="a-side" aria-label={tr("Помічник")}>{assistant(true)}</aside>}
 
-      {tab === 'set' && <>
-        <div className="top"><h1>{tr("Налаштування")}</h1></div>
-        <div className="card"><div className="sec">Мова / Sprache</div><div className="seg">{[['uk', 'Українська'], ['de', 'Deutsch']].map(([k, n]) => <button key={k} className={ui.lang === k ? 'on' : ''} onClick={() => setUi({ ...ui, lang: k })}>{n}</button>)}</div></div>
-        <div className="card"><div className="sec">{tr("Акаунт")}</div>
+      {tab === 'set' && (() => {
+        const cLang = <div className="card"><div className="sec">Мова / Sprache</div><div className="seg" role="group" aria-label="Мова / Sprache">{[['uk', 'Українська'], ['de', 'Deutsch']].map(([k, n]) => <button key={k} lang={k} className={ui.lang === k ? 'on' : ''} aria-pressed={ui.lang === k} onClick={() => setUi({ ...ui, lang: k })}>{n}</button>)}</div></div>;
+        const cAcc = <div className="card"><div className="sec">{tr("Акаунт")}</div>
           <div className="sub" style={{ marginBottom: 10 }}>{activeAccount() ? tr("Вхід виконано як") + ': ' + activeAccount().name : tr("Локальний профіль (без акаунта)")}</div>
           {(listAccounts().length > 0) && <div className="prow">{listAccounts().map(a => <button key={a.id} className={'chip' + (a.id === getActiveId() ? ' on' : '')} style={{ margin: 0 }} onClick={() => switchAcc(a.id)}>{a.name}</button>)}{getActiveId() && <button className="chip" style={{ margin: 0 }} onClick={() => switchAcc('')}>{tr("Локальний профіль")}</button>}</div>}
           <div className="sec" style={{ marginTop: 14 }}>{tr("Створити акаунт або увійти")}</div>
-          <input placeholder={tr("Ім’я акаунта")} value={acf.name} autoCapitalize="none" autoCorrect="off" onChange={e => setAcf({ ...acf, name: e.target.value })} />
-          <input type="password" style={{ marginTop: 8 }} placeholder={tr("Пароль акаунта (від 6 символів)")} value={acf.pass} onChange={e => setAcf({ ...acf, pass: e.target.value })} />
-          {acf.err && <div className="sub" style={{ color: 'var(--wn)', marginTop: 8 }}>{acf.err}</div>}
+          <label className="flab" htmlFor="acc-name">{tr("Ім’я акаунта")}</label>
+          <input id="acc-name" style={{ marginTop: 6 }} autoComplete="username" value={acf.name} autoCapitalize="none" autoCorrect="off" spellCheck={false} aria-invalid={acf.err && acf.errF === 'name' ? true : undefined} aria-describedby={acf.err ? 'acc-err' : undefined} onChange={e => setAcf({ ...acf, name: e.target.value })} />
+          <label className="flab" htmlFor="acc-pass" style={{ display: 'block', marginTop: 12 }}>{tr("Пароль акаунта (від 6 символів)")}</label>
+          <input id="acc-pass" type="password" style={{ marginTop: 6 }} autoComplete="current-password" value={acf.pass} aria-invalid={acf.err && acf.errF === 'pass' ? true : undefined} aria-describedby={acf.err ? 'acc-err' : undefined} onChange={e => setAcf({ ...acf, pass: e.target.value })} />
+          {acf.err && <div className="sub" id="acc-err" role="alert" style={{ color: 'var(--wn)', marginTop: 8 }}>{acf.err}</div>}
           <button className="btn" style={{ marginTop: 12 }} onClick={enterAcc} disabled={acf.busy}>{acf.busy ? tr("Зачекайте…") : tr("Увійти або створити")}</button>
-          <div className="sub" style={{ marginTop: 10 }}>{tr("Той самий акаунт на іншому пристрої: введіть те саме ім’я та пароль.")}</div></div>
-        <div className="card"><div className="sec">{tr("Синхронізація")}</div>
+          <div className="sub" style={{ marginTop: 10 }}>{tr("Той самий акаунт на іншому пристрої: введіть те саме ім’я та пароль.")}</div></div>;
+        const cSync = <div className="card"><div className="sec">{tr("Синхронізація")}</div>
           <div className="sub" style={{ marginBottom: 10 }}>{sy.on ? tr("Увімкнено") : tr("Вимкнено")}{sy.last ? ', ' + tr("остання синхронізація") + ': ' + new Date(sy.last).toLocaleString(loc(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</div>
-          {sy.msg && <div className="sub" style={{ color: 'var(--wn)', marginBottom: 10 }}>{sy.msg}</div>}
+          {sy.msg && <div className="sub" role="alert" style={{ color: 'var(--wn)', marginBottom: 10 }}>{sy.msg}</div>}
           <button className="btn" onClick={() => { if (sy.on) runSync(); else toggleSync(); }} disabled={sy.state === 'syncing'}>{sy.state === 'syncing' ? tr("Синхронізую…") : tr("Синхронізувати зараз")}</button>
-          <button className={'tg' + (sy.on ? ' on' : '')} onClick={toggleSync}><span>{tr("Автосинхронізація")}</span><b>{sy.on ? '✓' : ''}</b></button></div>
-        {/* резервна копія: один JSON-файл (записи, картки, тести, папки, нотатки, розмови, налаштування, документи зі сторінками) */}
-        <section className="card bkc" aria-labelledby="bk-h"><h2 className="sec" id="bk-h">{tr("Дані")}</h2>
+          <button className={'tg' + (sy.on ? ' on' : '')} aria-pressed={sy.on} onClick={toggleSync}><span>{tr("Автосинхронізація")}</span><b>{sy.on ? '✓' : ''}</b></button></div>;
+        /* резервна копія: один JSON-файл (записи, картки, тести, папки, нотатки, розмови, налаштування, документи зі сторінками) */
+        const cData = <section className="card bkc" aria-labelledby="bk-h"><h2 className="sec" id="bk-h">{tr("Дані")}</h2>
           <p className="sub" style={{ margin: '0 0 4px' }}>{bkm.last ? tr("Остання копія") + ': ' + bkWhen : tr("Резервних копій ще не було.")}</p>
           <p className="hint" style={{ margin: '0 0 12px' }}>{sy.on ? tr("Синхронізацію ввімкнено, але копія не завадить: файл можна зберегти в iCloud Drive, Google Drive або на комп’ютер.") : tr("Дані зберігаються лише на цьому пристрої. Копія — файл, з якого можна все відновити на цьому або іншому пристрої.")}</p>
           <div className="bkc-a"><button className="btn-a" onClick={saveBackup} disabled={bkBusy}>{bkBusy ? tr("Зберігаю…") : tr("Зберегти резервну копію")}</button>
             <button className="btn2" onClick={() => { sheetPrev.current = document.activeElement; const el = document.getElementById('bk-file'); if (el) el.click(); }}>{tr("Відновити з копії")}</button>
             <input id="bk-file" type="file" accept="application/json,.json" className="hidefile" tabIndex={-1} aria-hidden="true" onChange={e => { pickBackup(e.target.files && e.target.files[0]); e.target.value = ''; }} /></div>
-        </section>
-        <div className="card"><div className="sec">{tr("Тема")}</div><div className="seg">{[['dark', tr("Темна")], ['light', tr("Світла")], ['auto', tr("Авто")]].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>
-        {/* варіант B: налаштування говорять про навчання; події з часом віднімаються від цих годин (plan.js) */}
-        <div className="card"><label className="sec" htmlFor="set-start">{tr("О котрій зазвичай починаєте навчання")}</label>
+        </section>;
+        const cTheme = <div className="card"><div className="sec">{tr("Тема")}</div><div className="seg" role="group" aria-label={tr("Тема")}>{[['dark', tr("Темна")], ['light', tr("Світла")], ['auto', tr("Авто")]].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} aria-pressed={ui.theme === k} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>;
+        /* варіант B: налаштування говорять про навчання; події з часом віднімаються від цих годин (plan.js) */
+        const cStart = <div className="card"><label className="sec" htmlFor="set-start">{tr("О котрій зазвичай починаєте навчання")}</label>
           <input id="set-start" type="number" min="0" max="23" value={start} aria-describedby="set-start-h" onChange={e => setStart(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))} />
-          <p className="hint" id="set-start-h" style={{ marginTop: 8 }}>{tr("Година від 0 до 23. З неї План розставляє задачі на шкалі дня.")}</p></div>
-        <div className="card"><h2 className="sec" id="set-cap">{tr("Годин на навчання й справи на день")}</h2>
+          <p className="hint" id="set-start-h" style={{ marginTop: 8 }}>{tr("Година від 0 до 23. З неї План розставляє задачі на шкалі дня.")}</p></div>;
+        const cCap = <div className="card"><h2 className="sec" id="set-cap">{tr("Годин на навчання й справи на день")}</h2>
           <p className="hint" id="set-cap-h" style={{ margin: '0 0 6px' }}>{tr("Події з часом віднімаються від цих годин автоматично.")}</p>
           <div role="group" aria-labelledby="set-cap" aria-describedby="set-cap-h">
           {[1, 2, 3, 4, 5, 6, 0].map(i => <div className="row" style={{ alignItems: 'center' }} key={i}><label htmlFor={'cap-' + i} style={{ width: 36 }}>{tr(DN[i])}</label>
-            <input id={'cap-' + i} type="number" min="0" max="16" step="0.5" value={cap[i]} onChange={e => setCap(cap.map((c, j) => j === i ? Math.max(0, parseFloat(e.target.value) || 0) : c))} /></div>)}</div></div>
-        <div className="card"><label className="sec" htmlFor="set-new">{tr("Нових карток на день")}</label>
+            <input id={'cap-' + i} type="number" min="0" max="16" step="0.5" value={cap[i]} onChange={e => setCap(cap.map((c, j) => j === i ? Math.max(0, parseFloat(e.target.value) || 0) : c))} /></div>)}</div></div>;
+        const cNew = <div className="card"><label className="sec" htmlFor="set-new">{tr("Нових карток на день")}</label>
           <input id="set-new" type="number" min="0" max="200" step="1" value={newLim} aria-describedby="set-new-h" onChange={e => setUi({ ...ui, newPerDay: Math.min(200, Math.max(0, parseInt(e.target.value, 10) || 0)) })} />
-          <p className="hint" id="set-new-h" style={{ marginTop: 8 }}>{tr("Скільки нових карток додавати до щоденного повторення. Картки, які вже вчите, показуються завжди, коли настає їхній час.")}</p></div>
-        <div className="card"><div className="sec" id="pass-title">{tr("Пароль доступу до ШІ та синхронізації")}</div>
+          <p className="hint" id="set-new-h" style={{ marginTop: 8 }}>{tr("Скільки нових карток додавати до щоденного повторення. Картки, які вже вчите, показуються завжди, коли настає їхній час.")}</p></div>;
+        const cPass = <div className="card"><div className="sec" id="pass-title">{tr("Пароль доступу до ШІ та синхронізації")}</div>
           <div className="sub" id="pass-hint" style={{ marginBottom: 10 }}>{tr("Потрібен, якщо власник застосунку встановив пароль. Без нього ШІ та синхронізація не працюватимуть.")}</div>
-          <input type="password" placeholder={tr("Пароль")} aria-labelledby="pass-title" aria-describedby="pass-hint" defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>
-        <button className="btn alt" onClick={() => setTab('today')}>{tr("Назад")}</button>
-      </>}
+          <input type="password" placeholder={tr("Пароль")} aria-labelledby="pass-title" aria-describedby="pass-hint" defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>;
+        // Клавіатурні скорочення (iPad): вимикач однолітерних (WCAG 2.1.4) і список із того ж реєстру, що й обробники
+        const cKeys = <div className="card kbc">
+          <button className={'tg' + (oneKeys ? ' on' : '')} aria-pressed={oneKeys} onClick={() => { const v = !oneKeys; setOneKeysS(v); setOneKeys(v); }}>
+            <span>{tr("Однолітерні скорочення")}<small className="tgsub">{tr("Клавіші без ⌘ у редакторі й Плані: P — ручка, E — гумка, T — сьогодні. Вимкніть, якщо натискаєте їх випадково.")}</small></span><b>{oneKeys ? '✓' : ''}</b></button>
+          <button className="btn2 kbc-all" onClick={openKb}>{tr("Показати всі скорочення")} · ⌘/</button>
+          {kbList(false)}</div>;
+        const back = <button className="btn alt" onClick={() => setTab('today')}>{tr("Назад")}</button>;
+        const head = <div className="top"><h1>{tr("Налаштування")}</h1>{aiBtn}</div>;
+        // телефон і клас s: як було (картки підряд, «Назад»)
+        if (win === 'c') return <>{head}{cLang}{cAcc}{cSync}{cData}{cTheme}{cStart}{cCap}{cNew}{cPass}{back}</>;
+        if (rc === 's') return <>{head}{cLang}{cAcc}{cSync}{cData}{cTheme}{cStart}{cCap}{cNew}{cPass}<h2 className="sec kbc-h">{tr("Клавіатурні скорочення")}</h2>{cKeys}{back}</>;
+        // iPad: розділи (ipad-layout-spec 9, I7). m — одна колонка 640 з розділами підряд; l/xl — список розділів + деталі ≤560
+        const passSet = (() => { try { return !!localStorage.getItem('helper-pass'); } catch (e) { return false; } })();
+        const SECS = [
+          ['gen', tr("Загальні"), 'set', (ui.lang === 'de' ? 'Deutsch' : 'Українська'), tr("Мова інтерфейсу й тема."), <>{cLang}{cTheme}</>],
+          ['acc', tr("Акаунт"), 'user', activeAccount() ? activeAccount().name : tr("Локальний"), tr("Один акаунт на кількох пристроях."), cAcc],
+          ['sync', tr("Синхронізація"), 'sync', sy.on ? tr("Увімкнено") : tr("Вимкнено"), tr("Обмін даними між пристроями цього акаунта."), cSync],
+          ['data', tr("Дані"), 'data', bkm.last ? new Date(bkm.last).toLocaleDateString(loc(), { day: 'numeric', month: 'short' }) : '', tr("Резервна копія у файл і відновлення з неї."), cData],
+          ['learn', tr("Навчання"), 'cards', '', tr("Початок навчання, години на день і нові картки."), <>{cStart}{cCap}{cNew}</>],
+          ['ai', tr("Доступ до ШІ"), 'key', passSet ? tr("Пароль задано") : '', tr("Пароль для Помічника й синхронізації."), cPass],
+          ['keys', tr("Клавіатурні скорочення"), 'kbd', '⌘/', tr("Для Magic Keyboard або іншої клавіатури. Замість ⌘ працює Ctrl."), cKeys]
+        ];
+        if (rc === 'm') return <div className="setw one">{head}{SECS.map(([k, n, , , d, body]) => <section key={k} className="setd" aria-labelledby={'sd-' + k}><h2 className="setd-t" id={'sd-' + k}>{n}</h2><p className="setd-s">{d}</p>{body}</section>)}</div>;
+        const cur = SECS.find(s => s[0] === setSec) || SECS[0];
+        return <>{head}<div className="setw two">
+          <nav className="setn" aria-label={tr("Розділи налаштувань")}>
+            {SECS.map(([k, n, ic, v]) => <button key={k} className="setn-i" aria-current={cur[0] === k ? 'true' : undefined} onClick={() => setSetSec(k)}>
+              <span className="setn-ic" aria-hidden="true"><Icon n={ic} s={20} /></span><span className="setn-n">{n}</span>{v && <span className="setn-v">{v}</span>}</button>)}
+          </nav>
+          <section className="setd mdfade" key={'sd-' + cur[0]} aria-labelledby="sd-cur"><h2 className="setd-t" id="sd-cur">{cur[1]}</h2><p className="setd-s">{cur[4]}</p>{cur[5]}</section>
+        </div></>;
+      })()}
+      </div></div>
+      {/* шари з порталу (редактор, аркуші Матеріалів) — тут, перед панеллю Помічника: порядок фокуса «шар → панель» (a11y #2) */}
+      <div id="layers" />
+      <div id="app-live" className="vh" role="status" aria-live="polite" />
 
       {/* один «+» на екран: План — FAB лише на телефоні (на iPad — рядок швидкого вводу); Матеріали — нова папка */}
       {/* один «+» на екран: План — FAB лише на телефоні (на iPad — рядок швидкого вводу); Матеріали — FAB/«Створити» всередині Materials */}
       {tab === 'today' && <button className="fab phone-only" onClick={() => openNew(false)} aria-label={tr("Додати задачу або подію")} title={tr("Додати задачу або подію")}><Icon n="plus" s={26} /></button>}
 
-      {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onClick={e => e.stopPropagation()}>
+      {sheet && win !== 'c' && (() => {
+        const ttl = sheet === 'new' ? (!more ? tr("Новий запис") : exm ? tr("Новий іспит") : ev ? tr("Нова подія") : tr("Нова задача")) : (exm ? tr("Змінити іспит") : ev ? tr("Змінити подію") : tr("Змінити задачу"));
+        return <div className="ov ovt" onClick={closeSheet}><div className="sheet fsh wide" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onClick={e => e.stopPropagation()}>
+          {/* D10: одна основна кнопка в шапці. Швидкий ввід (повна форма згорнута) — «Розпізнати» (розбір рядка), повна форма — «Додати».
+              Рядок швидкого вводу без власної кнопки й ховається, коли відкрито «Більше параметрів». */}
+          {sheet === 'new' && !more ? formHead('sheet-title', ttl, closeSheet, qaBusy ? tr("Розпізнаю…") : tr("Розпізнати"), quickAdd, !!qa.trim() && !qaBusy)
+            : formHead('sheet-title', ttl, closeSheet, sheet === 'new' ? tr("Додати") : tr("Готово"), saveTask, !!buildItem(f))}
+          <div className="fbody">
+            {sheet === 'new' && <>
+              {!more && quickInput('qa-sheet', true, true)}
+              {qaMsg && <div className="sub qmsg" role="status">{qaMsg}</div>}
+              {previewCard(true)}
+              <button className="more" aria-expanded={more} aria-controls="full-form" onClick={() => setMore(!more)}><span>{tr("Більше параметрів")}</span><Icon n="chevD" s={20} /></button>
+            </>}
+            {(sheet !== 'new' || more) && <div id="full-form">{formRows(f, setF, 'sf-', sheet !== 'new' || more)}</div>}
+            {sheet !== 'new' && <div className="fdel"><button className="btn2 wn" onClick={() => del(sheet)}>{exm ? tr("Видалити іспит") : tr("Видалити")}</button></div>}
+          </div>
+        </div></div>; })()}
+      {sheet && win === 'c' && <div className="ov" onClick={closeSheet}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onClick={e => e.stopPropagation()}>
         <div className="shd"><h2 id="sheet-title">{sheet === 'new' ? (!more ? tr("Новий запис") : exm ? tr("Новий іспит") : ev ? tr("Нова подія") : tr("Нова задача")) : (exm ? tr("Змінити іспит") : ev ? tr("Змінити подію") : tr("Змінити задачу"))}</h2>
           <button className="ib" onClick={closeSheet} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>
         {sheet === 'new' && <>
@@ -1279,8 +1662,12 @@ export default function Home() {
           try { const c = await shrink(file, 256, 0.75); setFform(p => (p ? { ...p, cover: c, busy: false } : p)); }
           catch (e) { setFform(p => (p ? { ...p, busy: false, err: tr("Не вдалося обробити зображення.") } : p)); }
         };
-        return <div className="ov" onClick={() => setFform(null)} onKeyDown={e => { if (e.key === 'Escape') setFform(null); }}><div className={'sheet' + (full ? ' ffe' : '')} role="dialog" aria-modal="true" aria-labelledby="ff-title" onClick={e => e.stopPropagation()}>
-          <div className="shd"><h2 id="ff-title">{ttl}</h2><button className="ib" onClick={() => setFform(null)} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>
+        // iPad: форма — зверху з шапкою «Скасувати — назва — Створити/Зберегти»; видалення — підтвердження 420 по центру
+        const wideF = win !== 'c', headF = wideF && mode !== 'delete';
+        return <div className={'ov' + (headF ? ' ovt' : '')} onClick={() => setFform(null)} onKeyDown={e => { if (e.key === 'Escape') setFform(null); }}><div className={'sheet' + (full ? ' ffe' : '') + (headF ? ' fsh' : '') + (wideF && mode === 'delete' ? ' conf' : '')} role="dialog" aria-modal="true" aria-labelledby="ff-title" onClick={e => e.stopPropagation()}>
+          {headF ? formHead('ff-title', ttl, () => setFform(null), mode === 'new' ? tr("Створити") : tr("Зберегти"), saveFolder, !!fform.name.trim())
+            : <div className="shd"><h2 id="ff-title">{ttl}</h2><button className="ib" onClick={() => setFform(null)} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>}
+          <div className={headF ? 'fbody' : undefined} style={headF ? undefined : { display: 'contents' }}>
           {full && <div className="ffe-prev" aria-hidden="true"><FolderGlyph color={fform.color} ico={fform.ico} emoji={fform.icon} cover={fform.cover} size={96} /><span>{fform.name.trim() || tr("Нова папка")}</span></div>}
           {(full || mode === 'name') && <><label className="flab" htmlFor="ff-name">{tr("Назва папки")}</label>
             <input id="ff-name" style={{ marginTop: 6 }} autoFocus={mode !== 'look'} value={fform.name} maxLength={40} onChange={e => setFform({ ...fform, name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') saveFolder(); }} /></>}
@@ -1306,9 +1693,10 @@ export default function Home() {
             <select id="ff-par" style={{ marginTop: 6 }} autoFocus value={fform.parent == null ? '' : fform.parent} onChange={e => setFform({ ...fform, parent: e.target.value === '' ? '' : Number(e.target.value) })}>
               <option value="">{tr("Головний рівень")}</option>{folders.filter(x => x.id !== fform.id && (!fform.id || canMoveFolder(folders, fform.id, x.id))).map(x => <option key={x.id} value={x.id}>{folderPath(folders, x.id)}</option>)}</select></>}
           {mode === 'delete' && <p className="ff-p">{tr("Папку «")}{fform.name}{tr("» буде видалено. Її матеріали, задачі й підпапки не зникнуть: вони перейдуть у ")}{up ? '«' + up.name + '»' : tr("«Матеріали» (без папки)")}.</p>}
-          <div className="row" style={{ marginTop: 16 }}>{mode === 'delete'
+          {!headF && <div className="row" style={{ marginTop: 16 }}>{mode === 'delete'
             ? <><button className="btn danger" autoFocus onClick={delFolder}>{tr("Видалити папку")}</button><button className="btn alt" onClick={() => setFform(null)}>{tr("Скасувати")}</button></>
-            : <button className="btn" onClick={saveFolder} disabled={!fform.name.trim()}>{mode === 'new' ? tr("Створити") : tr("Зберегти")}</button>}</div>
+            : <button className="btn" onClick={saveFolder} disabled={!fform.name.trim()}>{mode === 'new' ? tr("Створити") : tr("Зберегти")}</button>}</div>}
+          </div>
         </div></div>;
       })()}
 
@@ -1331,35 +1719,45 @@ export default function Home() {
         const go = d => { setRev(r => ({ ...r, i: Math.max(0, Math.min(all.length - 1, r.i + d)) })); setShow(false); };
         revKey.current = e => {
           if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+          if (e.target && e.target.closest && e.target.closest('.aip')) return; // фокус у панелі Помічника — клавіші сесії не діють
           if (e.key === 'Escape') { end(); return; }
           if (!c) return;
           if (e.key === ' ' && !(e.target && e.target.tagName === 'BUTTON' && !(e.target.classList && e.target.classList.contains('flip')))) { e.preventDefault(); if (!e.repeat) reveal(); return; }
           if (browse) { if (e.key === 'ArrowRight') go(1); if (e.key === 'ArrowLeft') go(-1); return; }
-          if (pv && e.key === '1') grade('again'); else if (pv && e.key === '2') grade('good'); else if (pv && e.key === '3') grade('easy');
+          // 1/2/3 — однолітерні (WCAG 2.1.4): лише з увімкненим вимикачем і без модифікаторів (реєстр shortcuts.js, група «Навчання»)
+          const gk = pv && scFind(e, ['learn']);
+          if (gk && gk.one && oneKeysOn()) { e.preventDefault(); grade(gk.id === 'g1' ? 'again' : gk.id === 'g2' ? 'good' : 'easy'); }
         };
         const isNewC = c && normCard(c, tNow).state === 0;
         const title = (rev.deck == null ? tr("Повторення") : deckName(rev.deck)) + (browse ? ' · ' + tr("перегляд") : '');
-        return <div className="nv rvs" role="dialog" aria-modal="true" aria-labelledby="rvs-t">
-          <div className="nvbar"><button className="chip" onClick={end}>{tr("Завершити")}</button><span className="sub" id="rvs-t">{title}{c ? ' · ' + (browse ? (rev.i + 1) + tr(" з ") + all.length : tr("залишилось") + ' ' + qd.length) : ''}</span><span style={{ width: 44 }} /></div>
+        // iPad (вікно ≥768): шапка «Завершити — назва — Помічник», смуга прогресу, колонка 680 по центру (ipad-layout-spec 8.2).
+        // Панель Помічника в сесії — звичайна (поруч / поверх), тому шар не модальний, поки вона відкрита.
+        const wideS = win !== 'c', pgDone = browse ? rev.i + 1 : rev.n, pgAll = browse ? all.length : rev.n + qd.length;
+        return <div className={'nv rvs' + (wideS ? ' nvw' : '')} role="dialog" aria-modal={wideS && aiOpen ? undefined : 'true'} aria-labelledby="rvs-t">
+          <div className="nvbar"><button className="chip" onClick={end}>{tr("Завершити")}</button><span className="sub" id="rvs-t">{title}{c ? ' · ' + (browse ? (rev.i + 1) + tr(" з ") + all.length : tr("залишилось") + ' ' + qd.length) : ''}</span>{wideS ? aiBtn : <span style={{ width: 44 }} />}</div>
+          {wideS && pgAll > 0 && <div className="nvpg" role="progressbar" aria-label={tr("Прогрес")} aria-valuemin={0} aria-valuemax={pgAll} aria-valuenow={pgDone}><i style={{ width: (100 * pgDone / pgAll) + '%' }} /></div>}
           <div className="vh" aria-live="polite" role="status">{rev.said || ''}</div>
+          <div className="nvcol">
           {c ? <>
             <button className="flip" autoFocus key={c.id + (browse ? ':' + rev.i : '')} onClick={reveal} onKeyUp={e => { if (e.key === ' ') e.preventDefault(); }} aria-describedby="rvs-hint">
               <span className="sub">{show ? tr("Відповідь") : (c.deck ? c.deck : tr("Питання"))}{!browse && isNewC && !show ? ' · ' + tr("нова") : ''}</span>
-              <span className="fq" aria-live="polite">{show ? c.a : c.q}</span>
-              {show && <span className="fqq">{c.q}</span>}
+              {wideS ? <><span className="fq">{c.q}</span>{show && <><span className="fdiv" aria-hidden="true" /><span className="fa" aria-live="polite">{c.a}</span></>}</>
+                : <><span className="fq" aria-live="polite">{show ? c.a : c.q}</span>
+                {show && <span className="fqq">{c.q}</span>}</>}
               <span className="sub" id="rvs-hint">{show ? (browse ? tr("Торкніться, щоб знову побачити питання") : tr("Оцініть, чи пам’ятали відповідь")) : tr("Торкніться або натисніть пробіл, щоб побачити відповідь")}</span>
             </button>
             {!browse && !show && <div className="rvs-a"><button className="btn-a big" onClick={reveal}>{tr("Показати відповідь")}</button></div>}
             {!browse && pv && <div className="rvs-g" role="group" aria-label={tr("Оцінка")}>
-              <button className="rg again" onClick={() => grade('again')} aria-keyshortcuts="1"><span className="rg-t">{tr("Не пам’ятаю")}</span><span className="rg-s">{ivLabel(pv.again.due - tNow)}</span></button>
-              <button className="rg good" onClick={() => grade('good')} aria-keyshortcuts="2"><span className="rg-t">{tr("Пам’ятаю")}</span><span className="rg-s">{ivLabel(pv.good.due - tNow)}</span></button>
-              <button className="rg easy" onClick={() => grade('easy')} aria-keyshortcuts="3"><span className="rg-t">{tr("Легко")}</span><span className="rg-s">{ivLabel(pv.easy.due - tNow)}</span></button>
+              <button className="rg again" onClick={() => grade('again')} aria-keyshortcuts={oneKeys ? '1' : undefined}><span className="rg-t">{tr("Не пам’ятаю")}</span><span className="rg-s">{ivLabel(pv.again.due - tNow)}</span></button>
+              <button className="rg good" onClick={() => grade('good')} aria-keyshortcuts={oneKeys ? '2' : undefined}><span className="rg-t">{tr("Пам’ятаю")}</span><span className="rg-s">{ivLabel(pv.good.due - tNow)}</span></button>
+              <button className="rg easy" onClick={() => grade('easy')} aria-keyshortcuts={oneKeys ? '3' : undefined}><span className="rg-t">{tr("Легко")}</span><span className="rg-s">{ivLabel(pv.easy.due - tNow)}</span></button>
             </div>}
-            {!browse && <p className="hint rvs-k wide-only">{show ? tr("Клавіші: 1 — не пам’ятаю, 2 — пам’ятаю, 3 — легко") : tr("Пробіл — показати відповідь")}</p>}
+            {!browse && <p className="hint rvs-k wide-only">{show ? (oneKeys ? tr("Клавіші: 1 — не пам’ятаю, 2 — пам’ятаю, 3 — легко") : '') : tr("Пробіл — показати відповідь")}</p>}
             {browse && <div className="row rvs-a"><button className="btn alt" disabled={rev.i <= 0} onClick={() => go(-1)}>{tr("Назад")}</button><button className="btn" disabled={rev.i >= all.length - 1} onClick={() => go(1)}>{tr("Далі")}</button></div>}
           </> : <div className="rv-done"><h2>{tr("На сьогодні все.")}</h2>
             <p className="sub">{rev.n ? tr("Повторено") + ': ' + nCards(rev.n) + '. ' : ''}{nextStr(nextUp(cards, { deck: rev.deck, now: tNow, limit: newLim }))}</p>
             <button className="btn" autoFocus onClick={end}>{tr("Готово")}</button></div>}
+          </div>
         </div>;
       })()}
       {nview != null && <div className="nv">
@@ -1376,14 +1774,15 @@ export default function Home() {
           <button className="chip" onClick={delNote}>{tr("Видалити нотатку")}</button></>}
       </div>}
 
-      {tt && <div className="nv">
-        <div className="nvbar"><button className="chip" onClick={() => setTview(null)}>{tr("Закрити")}</button><span className="sub">{tt.done ? tr("Результат") : (qi + 1) + tr(" з ") + tt.qs.length}</span><span /></div>
+      {tt && <div className={'nv' + (win !== 'c' ? ' nvw tst' : '')}>
+        <div className="nvbar"><button className="chip" onClick={() => setTview(null)}>{tr("Закрити")}</button><span className="sub">{tt.done ? tr("Результат") : (qi + 1) + tr(" з ") + tt.qs.length}</span>{win !== 'c' ? aiBtn : <span />}</div>
+        {win !== 'c' && !tt.done && <div className="nvpg" role="progressbar" aria-label={tr("Прогрес")} aria-valuemin={0} aria-valuemax={tt.qs.length} aria-valuenow={qi + 1}><i style={{ width: (100 * (qi + 1) / tt.qs.length) + '%' }} /></div>}
         {!tt.done ? (() => { const q = tt.qs[qi]; return (
           <div className="quiz">
             <div className="qq">{q.q}</div>
-            {q.type === 'choice' ? q.options.map((o, j) => <button key={j} className={'opt' + (tt.ans[qi] === j ? ' on' : '')} onClick={() => setAns(tt, qi, j)}>{o}</button>)
+            {q.type === 'choice' ? q.options.map((o, j) => <button key={j} className={'opt' + (tt.ans[qi] === j ? ' on' : '')} aria-pressed={win !== 'c' ? tt.ans[qi] === j : undefined} onClick={() => setAns(tt, qi, j)}>{win !== 'c' ? <><span className="opt-k" aria-hidden="true">{String.fromCharCode(65 + j)}</span><span className="opt-t">{o}</span></> : o}</button>)
               : <textarea rows={6} value={tt.ans[qi] || ''} onChange={e => setAns(tt, qi, e.target.value)} placeholder={tr("Ваша відповідь")} />}
-            <div className="row" style={{ marginTop: 16 }}>{qi > 0 && <button className="btn alt" onClick={() => setQi(qi - 1)}>{tr("Назад")}</button>}
+            <div className={'row' + (win !== 'c' ? ' qnav' : '')} style={{ marginTop: 16 }}>{qi > 0 && <button className="btn alt" onClick={() => setQi(qi - 1)}>{tr("Назад")}</button>}
               {qi < tt.qs.length - 1 ? <button className="btn" onClick={() => setQi(qi + 1)}>{tr("Далі")}</button> : <button className="btn" onClick={() => patchTest(tt.id, { done: true })}>{tr("Завершити")}</button>}</div>
           </div>); })() : (
           <div className="quiz">
@@ -1482,10 +1881,15 @@ export default function Home() {
         </div></div>;
       })()}
 
-      {toast && <div className="toast" role="status" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}>
+      {kbOpen && <div className="ov kbov" onClick={closeKb}><div className="sheet kbs" role="dialog" aria-modal="true" aria-labelledby="kb-title" onClick={e => e.stopPropagation()}>
+        <div className="shd"><h2 id="kb-title">{tr("Клавіатурні скорочення")}</h2><button className="ibtn" autoFocus onClick={closeKb} aria-label={tr("Закрити")} title={tr("Закрити") + ' · Esc'}><Icon n="close" s={20} /></button></div>
+        <p className="hint">{tr("⌘ — Command; на інших клавіатурах — Ctrl.")}</p>
+        {kbList(true)}</div></div>}
+      {toast && <div className="toast" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7" /></svg>
-        <span>{toast.text}</span>{toast.undo && <button className="a-tl" onClick={() => { toast.undo(); setToast({ text: tr("Скасовано") }); }}>{tr("@undo:Скасувати")}</button>}</div>}
+        <span>{toast.text}</span>{toast.undo && <button className="a-tl" onClick={() => { toast.undo(); setToast({ text: tr("Скасовано") }); const t = lastOut.current; if (t && document.contains(t)) t.focus(); }}>{tr("@undo:Скасувати")}</button>}</div>}
 
+      {win !== 'c' && tab !== 'ai' && <AiPanel open={aiOpen} mode={win === 'm' ? 'over' : 'dock'} large={win === 'l'} onClose={() => setAiOpen(false)}>{assistant(true)}</AiPanel>}
       <nav className="nav" aria-label={tr("Розділи")}>{TABS.map(([k, n, ic]) => <button key={k} onClick={() => goTab(k)} aria-current={k === tab ? 'page' : undefined}><Icon n={ic} s={24} /><span className="lbl">{tr(n)}</span></button>)}</nav>
     </div>
   );

@@ -3,7 +3,7 @@
 // контекст (матеріал / набір / фото), посилання [с. N], голосовий ввід. Дії застосовує page.js (applyActions) через apply().
 import { useState, useEffect, useRef } from 'react';
 import { t as tr, loc, getLang, plural } from './i18n';
-import { listDocs, getDocFull, docMaterial, materialOf, TEXT_PAGES, shrink } from './docs';
+import { listDocs, getDocFull, docMaterial, materialOf, TEXT_PAGES, shrink, Layer } from './docs';
 import { noDateTasks } from './plan';
 
 const P = {
@@ -97,7 +97,8 @@ function AText({ text, refDoc, onRef }) {
 const SR = () => (typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null);
 
 export default function Assistant(props) {
-  const { side, onClose, chats, setChats, curId, setCurId, call, buildState, apply, undo, items, notes, cards, folders, lastMat, pending, clearPending, onReview, onOpenRef, on401, rev, exam, onExamPlan } = props;
+  // side — права панель (iPad, вікно ≥768); wide — вкладка на області l/xl (колонка історії + чат); secCtx — контекст розділу
+  const { side, wide, secCtx, onClose, chats, setChats, curId, setCurId, call, buildState, apply, undo, items, notes, cards, folders, lastMat, pending, clearPending, onReview, onOpenRef, on401, rev, exam, onExamPlan } = props;
   const [draft, setDraft] = useState({ mode: 'chat', ctx: null });
   const [view, setView] = useState('chat'); // chat | history
   const [inp, setInp] = useState('');
@@ -114,6 +115,7 @@ export default function Assistant(props) {
   const [voiceErr, setVoiceErr] = useState('');
   const [hasSR, setHasSR] = useState(false);
   const [delAsk, setDelAsk] = useState(null);
+  const [hq, setHq] = useState(''); // пошук в історії (панель і широка вкладка)
   const taRef = useRef(null), endRef = useRef(null), abortRef = useRef(null), plusRef = useRef(null), menuRef = useRef(null), histBtn = useRef(null), histH = useRef(null), recRef = useRef(null), fileRef = useRef(null), lastPics = useRef([]), pickRet = useRef(null);
 
   const saved = chats.find(c => c.id === curId) || null;
@@ -170,6 +172,12 @@ export default function Assistant(props) {
     document.addEventListener('keydown', key); return () => document.removeEventListener('keydown', key);
   }, [pick]);
   useEffect(() => { if (view === 'history' && histH.current) histH.current.focus(); }, [view]);
+  // широка вкладка: історія завжди видима колонкою, окремий екран історії не потрібен
+  useEffect(() => { if (wide && view === 'history') setView('chat'); }, [wide]);
+  // панель: контекст розділу (папка, набір) підставляється лише в нову розмову — початий діалог не перемикаємо
+  const secKey = secCtx ? secCtx.k + ':' + secCtx.id : '';
+  // (запит із редактора чи «Зробити картки» приходить через pending — тоді контекст розділу не перекриває його)
+  useEffect(() => { if (side && !saved && !pending) setDraft(d => ({ ...d, ctx: secCtx || null })); }, [secKey, side]);
 
   // ===== дані для стартових дій і пікерів =====
   // «Повторити N карток»: N — черга інтервального повторення з page.js (due ≤ зараз + нові в межах ліміту)
@@ -195,7 +203,20 @@ export default function Assistant(props) {
     starts.push({ k: 'week', ic: 'plan', tone: 'home', t: tr("Склади план на тиждень"), s: tr("Розкласти задачі за днями"), go: () => send(tr("Склади план на тиждень з моїх задач")) });
     starts.push({ k: 'topic', ic: 'cards', tone: 'personal', t: tr("Зроби картки за темою…"), s: tr("Напишіть тему в полі нижче"), go: () => { setInp(tr("Зроби картки за темою: ")); taRef.current && taRef.current.focus(); } });
   }
-  const startList = starts.slice(0, 4);
+  // панель: спершу старти від контексту (сторінка, папка, набір), стовпчиком і не більше 3 (ipad-layout-spec 4.3–4.4)
+  const cx = cur.ctx;
+  const ctxStarts = !side || !cx ? [] : cx.k === 'doc' ? [
+    { k: 'c-ex', ic: 'doc', tone: 'study', t: tr("Поясни цю сторінку"), s: ctxLabel(cx), go: () => send(tr("Поясни цю сторінку простими словами.")) },
+    { k: 'c-cards', ic: 'cards', tone: 'personal', t: tr("Зроби картки з цієї сторінки"), s: tr("Питання й відповіді з матеріалу"), go: () => send(tr("Зроби картки з цієї сторінки.")) },
+    { k: 'c-chk', ic: 'check', tone: 'home', t: tr("Перевір мій конспект"), s: tr("Помилки й пропуски"), go: () => send(tr("Перевір мій конспект: чи є помилки або важливі пропуски?")) }]
+    : cx.k === 'folder' ? [
+      { k: 'c-sum', ic: 'folder', tone: 'study', t: tr("Підсумуй папку"), s: cx.title, go: () => send(tr("Підсумуй матеріали цієї папки.")) },
+      { k: 'c-fc', ic: 'cards', tone: 'personal', t: tr("Зроби картки з папки"), s: tr("Питання й відповіді з матеріалу"), go: () => send(tr("Зроби картки з матеріалів цієї папки.")) }]
+    : cx.k === 'deck' ? [
+      { k: 'c-dx', ic: 'cards', tone: 'study', t: tr("Поясни складні картки"), s: cx.title, go: () => send(tr("Поясни найскладніші картки з цього набору простими словами.")) },
+      { k: 'c-dq', ic: 'check', tone: 'personal', t: tr("Перевір мене за набором"), s: tr("Репетитор"), go: () => send(tr("Перевір мене за цим набором: став питання по одному."), { mode: 'learn' }) }]
+    : [];
+  const startList = side ? [...ctxStarts, ...starts.filter(s => !ctxStarts.length || (s.k !== 'ask' && s.k !== 'mk'))].slice(0, 3) : starts.slice(0, 4);
 
   // ===== надсилання =====
   async function loadMaterial(c) {
@@ -335,7 +356,7 @@ export default function Assistant(props) {
     const n = await apply(acts);
     const sum = sumOf(acts, n);
     setPrev(mi, p => ({ ...p, state: 'applied', n, sum }));
-    if (n) setToast({ id: cur.id, mi, sum, t: Date.now() });
+    if (n) { setToast({ id: cur.id, mi, sum, t: Date.now() }); setLive(tr("Готово") + ' · ' + sum + '. ' + tr("Можна скасувати")); }
     setLive(sum);
   };
   const cancelPrev = mi => { setPrev(mi, p => ({ ...p, state: 'cancelled' })); setLive(tr("Скасовано")); };
@@ -407,19 +428,31 @@ export default function Assistant(props) {
 
   // ===== розмітка =====
   const H = side ? 'h2' : 'h1';
-  const header = view === 'history'
+  // перемикач режиму: у панелі — у рядку контексту, у широкій вкладці — у шапці чату (I12); на телефоні — над полем, як було
+  const modeSeg = (chatLbl, cls) => <div className={'a-seg' + (cls ? ' ' + cls : '')} role="group" aria-label={tr("Режим")}>
+    <button aria-pressed={!learn} onClick={() => setMode('chat')}>{chatLbl}</button>
+    <button aria-pressed={learn} onClick={() => setMode('learn')}>{tr("Репетитор")}</button>
+  </div>;
+  const header = side
+    ? <header className="a-hd a-hd-p">
+      {view === 'history'
+        ? <button className="a-ib" onClick={() => { setView('chat'); setTimeout(() => histBtn.current && histBtn.current.focus(), 30); }} aria-label={tr("Назад до розмови")} title={tr("Назад")}><I n="back" /></button>
+        : <button className="a-ib" ref={histBtn} onClick={() => setView('history')} aria-label={tr("Історія розмов")} title={tr("Історія розмов")}><I n="hist" /></button>}
+      <H className="a-ht" tabIndex={view === 'history' ? -1 : undefined} ref={view === 'history' ? histH : undefined}>{view === 'history' ? tr("Історія розмов") : tr("Помічник")}</H>
+      <button className="a-ib" onClick={newChat} aria-label={tr("Нова розмова")} title={tr("Нова розмова")}><I n="newc" /></button>
+      <button className="a-ib" onClick={onClose} aria-label={tr("Закрити панель Помічника")} title={tr("Закрити")}><I n="close" /></button>
+    </header>
+    : view === 'history'
     ? <header className="a-hd a-hd-h">
       <button className="a-ib"  onClick={() => { setView('chat'); setTimeout(() => histBtn.current && histBtn.current.focus(), 30); }} aria-label={tr("Назад до розмови")} title={tr("Назад")}><I n="back" /></button>
       <H className="a-ht" tabIndex={-1} ref={histH}>{tr("Історія розмов")}</H>
       <button className="a-ib bd" onClick={newChat} aria-label={tr("Нова розмова")} title={tr("Нова розмова")}><I n="newc" /></button>
-      {side && <button className="a-ib" onClick={onClose} aria-label={tr("Закрити панель Помічника")} title={tr("Закрити")}><I n="close" /></button>}
     </header>
-    : !saved || side
+    : !saved
       ? <header className="a-hd">
         <H className="a-ht">{tr("Помічник")}</H>
         <button className="a-ib bd" ref={histBtn} onClick={() => setView('history')} aria-label={tr("Історія розмов")} title={tr("Історія розмов")}><I n="hist" /></button>
         <button className="a-ib bd" onClick={newChat} aria-label={tr("Нова розмова")} title={tr("Нова розмова")}><I n="newc" /></button>
-        {side && <button className="a-ib" onClick={onClose} aria-label={tr("Закрити панель Помічника")} title={tr("Закрити")}><I n="close" /></button>}
       </header>
       : <header className="a-hd a-hd-c">
         <button className="a-ib" ref={histBtn} onClick={() => setView('history')} aria-label={tr("Історія розмов")} title={tr("Історія розмов")}><I n="hist" /></button>
@@ -428,9 +461,17 @@ export default function Assistant(props) {
       </header>;
 
   const sorted = [...chats].sort((a, b) => b.upd - a.upd);
+  // пошук в історії — у панелі й широкій вкладці (на телефоні список як був)
+  const canSearch = side || wide, hqn = canSearch ? hq.trim().toLowerCase() : '';
+  const shown = hqn ? sorted.filter(c => String(c.title || '').toLowerCase().includes(hqn)) : sorted;
+  const histSearch = canSearch && sorted.length > 0 && <div className="a-hs">
+    <label className="vh" htmlFor={side ? 'a-hq-side' : 'a-hq'}>{tr("Пошук розмов")}</label>
+    <input id={side ? 'a-hq-side' : 'a-hq'} type="search" value={hq} onChange={e => setHq(e.target.value)} placeholder={tr("Пошук розмов")} enterKeyHint="search" />
+  </div>;
   const historyView = <div className="a-hist">
     {!sorted.length ? <p className="a-empty">{tr("Розмов ще немає. Почніть нову — вона з’явиться тут.")}</p>
-      : <ul className="a-hl" aria-label={tr("Розмови")}>{sorted.map(c => <li key={c.id} className={'a-hi' + (c.id === curId ? ' is-cur' : '')}>
+      : !shown.length ? <p className="a-empty">{tr("Нічого не знайдено")}</p>
+      : <ul className="a-hl" aria-label={tr("Розмови")}>{shown.map(c => <li key={c.id} className={'a-hi' + (c.id === curId ? ' is-cur' : '')}>
         {delAsk === c.id ? <div className="a-hdel" role="group" aria-label={tr("Підтвердження видалення")}>
           <span>{tr("Видалити розмову")} «{c.title}»?</span>
           <div className="a-hdb"><button className="btn2" autoFocus onClick={() => setDelAsk(null)}>{tr("Скасувати")}</button><button className="btn2 danger" onClick={() => delChat(c.id)}>{tr("Видалити")}</button></div>
@@ -472,19 +513,18 @@ export default function Assistant(props) {
   </div>;
 
   const ctx = cur.ctx;
+  const ctxChip = ctx && <span className="a-chip a-cx"><I n={ctx.k === 'deck' ? 'cards' : ctx.k === 'folder' ? 'folder' : 'doc'} s={16} /><span className="a-chipt">{ctxLabel(ctx)}</span><button onClick={() => setCtx(null)} aria-label={tr("Прибрати контекст") + ' ' + ctxLabel(ctx)} title={tr("Прибрати")}>×</button></span>;
+  const chipIn = !side && ctx; // у панелі чип контексту — у власному рядку під шапкою
   const composer = <section className="a-comp" aria-label={tr("Поле запиту")}>
-    {toast && toast.id === cur.id && <div className="a-toast" role="status" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}><I n="check" s={18} /><span>{tr("Готово")} · {toast.sum}</span><button className="a-tl" onClick={undoToast}>{tr("@undo:Скасувати")}</button></div>}
-    {(ctx || att.length > 0) && <div className="a-chips">
-      {ctx && <span className="a-chip"><I n={ctx.k === 'deck' ? 'cards' : ctx.k === 'folder' ? 'folder' : 'doc'} s={14} /><span className="a-chipt">{ctxLabel(ctx)}</span><button onClick={() => setCtx(null)} aria-label={tr("Прибрати контекст") + ' ' + ctxLabel(ctx)} title={tr("Прибрати")}>×</button></span>}
+    {toast && toast.id === cur.id && <div className="a-toast" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}><I n="check" s={18} /><span>{tr("Готово")} · {toast.sum}</span><button className="a-tl" onClick={undoToast}>{tr("@undo:Скасувати")}</button></div>}
+    {(chipIn || att.length > 0) && <div className="a-chips">
+      {chipIn && <span className="a-chip"><I n={ctx.k === 'deck' ? 'cards' : ctx.k === 'folder' ? 'folder' : 'doc'} s={14} /><span className="a-chipt">{ctxLabel(ctx)}</span><button onClick={() => setCtx(null)} aria-label={tr("Прибрати контекст") + ' ' + ctxLabel(ctx)} title={tr("Прибрати")}>×</button></span>}
       {att.map((u, i) => <span className="a-chip ph" key={i}><span className="a-thumb" style={{ backgroundImage: 'url(' + u + ')' }} aria-hidden="true" /><span className="a-chipt">{tr("Фото")} {i + 1}</span><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label={tr("Прибрати фото") + ' ' + (i + 1)} title={tr("Прибрати")}>×</button></span>)}
     </div>}
-    <div className="a-mode">
-      <div className="a-seg" role="group" aria-label={tr("Режим")}>
-        <button aria-pressed={!learn} onClick={() => setMode('chat')}>{tr("Звичайний")}</button>
-        <button aria-pressed={learn} onClick={() => setMode('learn')}>{tr("Репетитор")}</button>
-      </div>
+    {!side && !wide && <div className="a-mode">
+      {modeSeg(tr("Чат"))}
       <span className="a-modec">{learn ? tr("Питає, а не відповідає") : tr("Репетитор") + ' — ' + tr("Питає, а не відповідає").toLowerCase()}</span>
-    </div>
+    </div>}
     <div className={'a-box' + (!online ? ' off' : '')}>
       <div className="a-plusw">
         <button ref={plusRef} className="a-cb" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-haspopup="true" aria-controls="a-menu" aria-label={tr("Додати контекст: матеріал, набір карток або фото")} title={tr("Додати контекст")} disabled={!online}><I n="plus" s={22} /></button>
@@ -509,7 +549,7 @@ export default function Assistant(props) {
     {!online && <p className="a-st-l" id="a-off">{tr("Немає інтернету. Помічник запрацює, щойно з’явиться зв’язок; історія розмов доступна.")}</p>}
   </section>;
 
-  const pickSheet = pick && <div className="ov" onClick={closePick}><div className="sheet menu a-pick" role="dialog" aria-modal="true" aria-labelledby="a-pick-t" onClick={e => e.stopPropagation()}>
+  const pickSheet = pick && <Layer><div className="ov" onClick={closePick}><div className="sheet menu a-pick" role="dialog" aria-modal="true" aria-labelledby="a-pick-t" onClick={e => e.stopPropagation()}>
     <div className="shd"><h2 id="a-pick-t">{pick.step === 'deck' ? tr("Набір карток") : pick.step === 'pages' ? pick.m.title : tr("Матеріал")}</h2>
       <button className="ib" onClick={closePick} aria-label={tr("Закрити")} title={tr("Закрити")}><I n="close" s={22} /></button></div>
     {pick.step === 'mat' && (mats.length ? mats.map((m, i) => <button key={m.k + m.id} autoFocus={i === 0} onClick={() => pickMat(m)}>{m.title}<small>{tr(TYPEN[m.type] || 'Зошит')}{m.upd ? ' · ' + whenStr(m.upd) : ''}</small></button>)
@@ -521,13 +561,113 @@ export default function Assistant(props) {
       <div className="row" style={{ marginTop: 14 }}><button className="btn-a" disabled={!pick.sel.length} onClick={() => { setCtx({ k: 'doc', id: pick.m.id, title: pick.m.title, type: pick.m.type, pages: [...pick.sel].sort((a, b) => a - b) }); closePick(); }}>{tr("Додати")}{pick.sel.length ? ' · ' + tr("с.") + ' ' + pagesStr(pick.sel) : ''}</button>
         <button className="btn2" onClick={() => setPick({ step: 'mat' })}>{tr("Назад")}</button></div>
     </>}
-  </div></div>;
+  </div></div></Layer>;
+
+  const liveEl = <div className="vh" aria-live="polite" role="status">{live}</div>;
+  // вкладка на області l/xl: колонка історії 300 + чат у колонці ≤720 по центру (ipad-layout-spec 4.5, I12, I13)
+  if (wide && !side) return <div className="asst tab wide">
+    <aside className="a-hcol" aria-label={tr("Розмови")}>
+      <div className="a-hch"><h2 className="a-hct2">{tr("Розмови")}</h2>
+        <button className="a-ib" onClick={newChat} aria-label={tr("Нова розмова")} title={tr("Нова розмова")}><I n="newc" /></button></div>
+      {histSearch}
+      <div className="a-hcl">{historyView}</div>
+    </aside>
+    <div className="a-main">
+      <header className="a-hd a-whd"><h1 className="a-wt">{saved ? saved.title : tr("Помічник")}</h1>{modeSeg(tr("Чат"), 'sm')}</header>
+      {liveEl}
+      <div className={'a-body' + (msgs.length ? '' : ' is-start')}><div className="a-col">{msgs.length ? chatView : startView}</div></div>
+      <div className="a-col">{composer}</div>
+    </div>
+    {pickSheet}
+  </div>;
 
   return <div className={'asst ' + (side ? 'side' : 'tab')}>
     {header}
-    <div className="vh" aria-live="polite" role="status">{live}</div>
-    <div className="a-body">{view === 'history' ? historyView : msgs.length ? chatView : startView}</div>
+    {liveEl}
+    {side && view === 'chat' && <div className="a-ctx">{ctxChip}{modeSeg(tr("Чат"), 'sm')}</div>}
+    <div className="a-body">{view === 'history' ? <>{histSearch}{historyView}</> : msgs.length ? chatView : startView}</div>
     {view === 'chat' && composer}
     {pickSheet}
   </div>;
+}
+
+// ===== Права панель Помічника (вікно ≥768), одна на весь застосунок — ipad-layout-spec 4.1, ipad-interactions 6.2 =====
+// mode 'dock' (≥1024): .region і шари .nv звужуються на --ai-w (клас ai-dock на <html>); 'over' (768–1023): поверх контенту,
+// без затемнення, контент лишається робочим (I4). Рух — лише transform панелі: відкриття 300 мс (контент звужується одразу),
+// закриття 200 мс (контент розширюється в кінці). Ширину не анімуємо: інакше редактор перераховує сторінку щокадру.
+// Зміна режиму (поворот, Split View) і перший показ — миттєво. large (≥1280): край тягнеться 360–480, ширина запам'ятовується.
+const AI_W = 'helper-ai-w';
+export function AiPanel({ open, mode, large, onClose, children }) {
+  const [st, setSt] = useState(open ? 'open' : 'gone'); // gone | enter | open | exit
+  const [w, setW] = useState(() => { try { const v = Number(localStorage.getItem(AI_W)); return v >= 360 && v <= 480 ? v : 400; } catch (e) { return 400; } });
+  const [drag, setDrag] = useState(false);
+  // prevOpen, а не прапорець «перший запуск»: StrictMode у dev запускає ефект двічі, а показ при монтуванні — без руху
+  const ref = useRef(null), ret = useRef(null), dr = useRef(null), prevOpen = useRef(open);
+  useEffect(() => {
+    if (prevOpen.current === open) return; prevOpen.current = open;
+    let r1 = 0, r2 = 0, t = 0, t2 = 0;
+    if (open) {
+      ret.current = document.activeElement;
+      setSt('enter');
+      // два кадри: спершу панель за краєм, потім перехід; таймер — якщо кадри пригальмовані (фонова вкладка)
+      r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setSt('open')); });
+      t2 = setTimeout(() => setSt(s => (s === 'enter' ? 'open' : s)), 80);
+      // фокус у поле — після руху (інакше клавіатура iPad виїжджає посеред анімації)
+      t = setTimeout(() => { const el = ref.current; if (el && !el.contains(document.activeElement)) { const ta = el.querySelector('.a-ta'); if (ta && !ta.disabled) ta.focus({ preventScroll: true }); } }, 320);
+    } else {
+      setSt(s => (s === 'gone' ? s : 'exit'));
+      t = setTimeout(() => {
+        setSt('gone');
+        // фокус — на кнопку, що відкрила панель; якщо її вже немає (перезавантаження, інший розділ) — на кнопку «Помічник»
+        const r0 = ret.current; ret.current = null;
+        const a = document.activeElement, lost = !a || a === document.body || (ref.current && ref.current.contains(a));
+        const r = r0 && document.contains(r0) ? r0 : document.querySelector('.nv.ed .ed-ai') || document.querySelector('.hd-ai');
+        if (lost && r && r.focus) r.focus({ preventScroll: true });
+      }, 210);
+    }
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); clearTimeout(t); clearTimeout(t2); };
+  }, [open]);
+  const present = st !== 'gone';
+  const dock = mode === 'dock';
+  useEffect(() => {
+    const h = document.documentElement;
+    h.classList.toggle('ai-dock', present && dock); h.classList.toggle('ai-ov', present && !dock);
+    return () => { h.classList.remove('ai-dock'); h.classList.remove('ai-ov'); };
+  }, [present, dock]);
+  useEffect(() => {
+    const h = document.documentElement;
+    if (large && dock) h.style.setProperty('--ai-w', w + 'px'); else h.style.removeProperty('--ai-w');
+    return () => h.style.removeProperty('--ai-w');
+  }, [large, dock, w]);
+  const save = v => { try { localStorage.setItem(AI_W, String(v)); } catch (e) {} };
+  const clampW = v => Math.max(360, Math.min(480, Math.round(v)));
+  const gDown = e => { e.preventDefault(); try { e.currentTarget.setPointerCapture(e.pointerId); } catch (er) {} dr.current = { raf: 0, w }; setDrag(true); };
+  const gMove = e => {
+    const d = dr.current; if (!d) return;
+    d.w = clampW(window.innerWidth - e.clientX);
+    if (!d.raf) d.raf = requestAnimationFrame(() => { d.raf = 0; if (dr.current === d) setW(d.w); });
+  };
+  const gUp = () => { const d = dr.current; if (!d) return; dr.current = null; if (d.raf) cancelAnimationFrame(d.raf); setW(d.w); save(d.w); setDrag(false); };
+  const gKey = e => {
+    const k = e.key, v = k === 'ArrowLeft' ? w + 20 : k === 'ArrowRight' ? w - 20 : k === 'Home' ? 360 : k === 'End' ? 480 : null;
+    if (v == null) return; e.preventDefault(); const n = clampW(v); setW(n); save(n);
+  };
+  // Поверх (768–1023): Tab циклиться всередині панелі (фокус не йде під неї, a11y #6), Esc закриває, фокус — на кнопку-джерело.
+  // Дотики до контенту ліворуч працюють як раніше; поруч (≥1024) панель не модальна.
+  const onKey = e => {
+    if (e.key === 'Escape' && !dock && !document.querySelector('.ov')) { e.stopPropagation(); onClose(); return; }
+    if (e.key !== 'Tab' || dock || !ref.current) return;
+    const f = [...ref.current.querySelectorAll('button:not([disabled]), [href], input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select, [tabindex]:not([tabindex="-1"])')].filter(x => x.offsetParent !== null && !x.closest('[aria-hidden="true"]'));
+    if (!f.length) return;
+    const i = f.indexOf(document.activeElement);
+    if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+    else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
+  };
+  if (!present) return null;
+  return <aside ref={ref} className={'aip ' + (dock ? 'dock' : 'over') + (drag ? ' drag' : '')} data-st={st} role={dock ? undefined : 'dialog'} aria-label={tr("Помічник")} onKeyDown={onKey}>
+    {large && dock && <div className="aip-grip" role="separator" aria-orientation="vertical" tabIndex={0} aria-label={tr("Ширина панелі Помічника")}
+      aria-valuemin={360} aria-valuemax={480} aria-valuenow={w} onPointerDown={gDown} onPointerMove={gMove} onPointerUp={gUp} onPointerCancel={gUp}
+      onDoubleClick={() => { setW(400); save(400); }} onKeyDown={gKey}><i aria-hidden="true" /></div>}
+    {children}
+  </aside>;
 }

@@ -86,8 +86,8 @@ export function drawStroke(g, s, ws) {
   g.save(); g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = s.c; g.fillStyle = s.c; g.globalAlpha = s.a || 1; g.lineWidth = (s.w || 3) * ws;
   const p = s.p;
   if (s.k === 'text') {
-    g.font = (s.s * ws) + 'px -apple-system, system-ui, sans-serif';
-    s.t.split('\n').forEach((ln, i) => g.fillText(ln, s.x, s.y + i * s.s * ws * 1.25));
+    g.font = (s.s * ws) + 'px ' + TEXT_FONT;
+    textLines(g, s, ws).forEach((ln, i) => g.fillText(ln, s.x, s.y + i * s.s * ws * 1.25));
   } else if (s.k) {
     g.beginPath();
     if (s.k === 'line') { g.moveTo(p[0], p[1]); g.lineTo(p[2], p[3]); }
@@ -111,18 +111,46 @@ export function drawStroke(g, s, ws) {
       else { g.beginPath(); g.arc(p[0], p[1], w / 2, 0, 7); g.fill(); }
     } else if (alpha < 1 && nib !== 'pencil' && g.canvas && typeof document !== 'undefined') {
       // напівпрозоре перо: малюємо непрозоро на тимчасовому полотні, щоб на стиках не було темних плям
+      // тимчасове полотно — розміру буфера g, з тим самим перетворенням (холст редактора масштабований під DPR і зум)
       const off = document.createElement('canvas'); off.width = g.canvas.width; off.height = g.canvas.height;
       const og = off.getContext('2d'); og.globalAlpha = 1;
+      if (g.getTransform) og.setTransform(g.getTransform());
       for (let i = 1; i < n; i++) drawSeg(og, s, ws, i);
-      g.drawImage(off, 0, 0);
+      g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(off, 0, 0); g.restore();
     } else for (let i = 1; i < n; i++) drawSeg(g, s, ws, i);
   }
   g.restore();
 }
 
+// ===== Текст на сторінці =====
+// Об'єкт { k:'text', c, x, y (базова лінія першого рядка), t, s (кегль), w? }. w — ширина переносу в координатах сторінки,
+// необов'язкова: старі записи без w малюються як раніше (рядки лише за \n). Перенос — за словами, довге слово ріжеться.
+export const TEXT_FONT = '-apple-system, system-ui, sans-serif';
+export function textLines(g, s, ws) {
+  const raw = String(s.t || '').split('\n');
+  if (!(s.w > 0) || !g || !g.measureText) return raw;
+  const max = s.w, out = [], fits = t => g.measureText(t).width <= max;
+  // слово довше за рядок — ріжемо по літерах
+  const hard = t => { while (t.length > 1 && !fits(t)) { let i = t.length - 1; while (i > 1 && !fits(t.slice(0, i))) i--; out.push(t.slice(0, i)); t = t.slice(i); } return t; };
+  for (const para of raw) {
+    let ln = '';
+    for (const tok of para.split(/(\s+)/)) {
+      if (!tok) continue;
+      if (fits(ln + tok)) { ln += tok; continue; }
+      if (/^\s+$/.test(tok)) { out.push(ln); ln = ''; continue; }
+      if (ln) out.push(ln.replace(/\s+$/, ''));
+      ln = hard(tok);
+    }
+    out.push(ln);
+  }
+  return out;
+}
+let measureG = null;
+const textG = () => { if (!measureG && typeof document !== 'undefined') measureG = document.createElement('canvas').getContext('2d'); return measureG; };
+
 // Точки для гумки
 export function ptsOf(s, ws) {
-  if (s.k === 'text') { const w = s.t.length * s.s * ws * 0.55; return [s.x, s.y, s.x + w / 2, s.y, s.x + w, s.y, s.x, s.y - s.s * ws * 0.4]; }
+  if (s.k === 'text') { const b = strokeBox(s, ws), my = (b[1] + b[3]) / 2; return [b[0], my, (b[0] + b[2]) / 2, my, b[2], my, b[0], b[1], b[2], b[3]]; }
   const line = (a, b, c, d, o) => { for (let i = 0; i <= 12; i++) o.push(a + (c - a) * i / 12, b + (d - b) * i / 12); return o; };
   if (s.k === 'line' || s.k === 'arrow') return line(s.p[0], s.p[1], s.p[2], s.p[3], []);
   if (s.k === 'rect') { const a = s.p[0], b = s.p[1], c = s.p[2], d = s.p[3], o = []; for (let i = 0; i <= 8; i++) { const t = i / 8; o.push(a + (c - a) * t, b, a + (c - a) * t, d, a, b + (d - b) * t, c, b + (d - b) * t); } return o; }
@@ -133,14 +161,12 @@ export function ptsOf(s, ws) {
 
 // ===== Ласо =====
 // Рамка об'єкта в координатах сторінки: [x0, y0, x1, y1] з урахуванням товщини лінії
-let measureG = null;
 export function strokeBox(s, ws) {
   if (s.k === 'text') {
-    const fs = s.s * ws, lines = String(s.t || '').split('\n');
-    if (!measureG && typeof document !== 'undefined') measureG = document.createElement('canvas').getContext('2d');
-    let w = 0;
-    if (measureG) { measureG.font = fs + 'px -apple-system, system-ui, sans-serif'; for (const ln of lines) w = Math.max(w, measureG.measureText(ln).width); }
-    else w = Math.max(...lines.map(l => l.length)) * fs * 0.55;
+    const fs = s.s * ws, mg = textG();
+    let w = 0, lines;
+    if (mg) { mg.font = fs + 'px ' + TEXT_FONT; lines = textLines(mg, s, ws); for (const ln of lines) w = Math.max(w, mg.measureText(ln).width); }
+    else { lines = String(s.t || '').split('\n'); w = Math.max(...lines.map(l => l.length)) * fs * 0.55; }
     return [s.x, s.y - fs * 0.85, s.x + w, s.y + (lines.length - 1) * fs * 1.25 + fs * 0.25];
   }
   const q = s.k ? ptsOf(s, ws) : s.p;
@@ -161,7 +187,7 @@ const r1 = v => Math.round(v * 10) / 10;
 export function xformStroke(s, f) {
   const k = f.k == null ? 1 : f.k, X = x => r1(f.ox + (x - f.ox) * k + f.dx), Y = y => r1(f.oy + (y - f.oy) * k + f.dy);
   const o = { ...s };
-  if (s.k === 'text') { o.x = X(s.x); o.y = Y(s.y); if (k !== 1) o.s = r1(s.s * k); return o; }
+  if (s.k === 'text') { o.x = X(s.x); o.y = Y(s.y); if (k !== 1) { o.s = r1(s.s * k); if (s.w > 0) o.w = r1(s.w * k); } return o; }
   if (s.p) { const p = new Array(s.p.length); for (let i = 0; i < p.length; i += 2) { p[i] = X(s.p[i]); p[i + 1] = Y(s.p[i + 1]); } o.p = p; }
   if (k !== 1 && s.w) o.w = Math.max(0.5, r1(s.w * k));
   return o;
@@ -191,6 +217,8 @@ const segDist = (px, py, ax, ay, bx, by) => {
 };
 // Чи зачіпає гумка радіуса r у точці (x,y) штрих
 export function hitStroke(s, ws, x, y, r) {
+  // текст: рамка тексту (w у тексті — ширина переносу, а не товщина лінії)
+  if (s.k === 'text') { const b = strokeBox(s, ws); return x >= b[0] - r && x <= b[2] + r && y >= b[1] - r && y <= b[3] + r; }
   const q = ptsOf(s, ws), rr = r + (s.w || 3) * ws / 2;
   if (q.length === 2) return Math.hypot(q[0] - x, q[1] - y) < rr;
   for (let i = 2; i < q.length; i += 2) if (segDist(x, y, q[i - 2], q[i - 1], q[i], q[i + 1]) < rr) return true;
