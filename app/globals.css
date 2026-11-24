@@ -1521,3 +1521,11 @@ kbd{display:inline-block;min-width:24px;padding:2px 6px;border-radius:6px;border
 /* D22: «Усі матеріали» над сіткою дублює пункт сайдбара, коли сайдбар видно */
 @container region (min-width:600px){.m-reclnk{display:none}}
 .mempty .btn2{margin-top:12px}
+/* a11y #24: «сьогодні» в Місяці у світлій темі — заливка --accent-tx + біле число (6.39:1 до клітинки й числа; було 2.00:1) */
+:root[data-theme="light"] .mw .cd.td .cd-n{background:var(--accent-tx);color:#fff}
+@media(prefers-color-scheme:light){:root[data-theme="auto"] .mw .cd.td .cd-n{background:var(--accent-tx);color:#fff}}
+/* a11y #25: пунктир текстового поля — з білим ореолом, видно й над темним чорнилом або сканом (≥4.93:1 до ореолу) */
+.cvtext{box-shadow:0 0 0 1px rgba(255,255,255,.9);background:rgba(255,255,255,.85)}
+/* a11y #26: точка прив'язки до лінійки — #A65F00 з білим ореолом (4.93:1 на білому) */
+.hovp.k-x[data-on="snap"] i{background:#A65F00;box-shadow:0 0 0 1.5px #fff}
+.hovp.k-pen i,.hovp.k-hl i{box-shadow:0 0 0 1px rgba(255,255,255,.9)}

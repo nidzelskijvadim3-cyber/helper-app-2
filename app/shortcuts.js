@@ -50,8 +50,22 @@ export const SC = [
   { id: 'selall', g: 'lasso', k: ['Mod+KeyA'], n: 'Виділити все' },
   { id: 'del', g: 'lasso', k: ['Delete', 'Backspace'], n: 'Видалити виділене' },
   { id: 'unsel', g: 'lasso', k: ['Escape'], n: 'Зняти виділення' },
+  // Сесія повторення (WCAG 2.1.4: однолітерні — під вимикачем)
+  { id: 'reveal', g: 'learn', k: ['Space'], n: 'Показати відповідь', info: true },
+  { id: 'g1', g: 'learn', k: ['Digit1'], n: 'Оцінка «Не пам’ятаю»', one: true },
+  { id: 'g2', g: 'learn', k: ['Digit2'], n: 'Оцінка «Пам’ятаю»', one: true },
+  { id: 'g3', g: 'learn', k: ['Digit3'], n: 'Оцінка «Легко»', one: true },
+  { id: 'rvend', g: 'learn', k: ['Escape'], n: 'Завершити повторення', info: true },
 ];
-export const SC_GROUPS = [['gen', 'Загальні'], ['plan', 'План'], ['ed', 'Редактор'], ['lasso', 'Ласо']];
+export const SC_GROUPS = [['gen', 'Загальні'], ['plan', 'План'], ['learn', 'Навчання'], ['ed', 'Редактор'], ['lasso', 'Ласо']];
+
+// Постійна live-область застосунку (#app-live у page.js): тости й оголошення озвучуються через неї, а не через
+// role=status, що монтується разом із текстом (VoiceOver такі вузли часто пропускає). Повтор того самого тексту теж озвучується.
+export function announce(msg) {
+  if (typeof document === 'undefined' || !msg) return;
+  const el = document.getElementById('app-live'); if (!el) return;
+  const m = String(msg); el.textContent = el.textContent === m ? m + ' ' : m;
+}
 
 // Комбінація події у форматі реєстру: «Alt+Mod+Shift+KeyP» (порядок модифікаторів — як у k)
 export function comboOf(e) {

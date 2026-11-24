@@ -954,7 +954,17 @@ export const DE = {
  "⌘ — Command; на інших клавіатурах — Ctrl.": "⌘ – Command; auf anderen Tastaturen – Strg.",
  "Розпізнати": "Erkennen",
  "Розпізнаю…": "Erkenne…",
- "Створити тут": "Hier erstellen"
+ "Створити тут": "Hier erstellen",
+ "Можна скасувати": "Kann rückgängig gemacht werden",
+ "Назва не може бути порожньою — зміни не збережено.": "Der Titel darf nicht leer sein – Änderungen wurden nicht gespeichert.",
+ "Предмет не може бути порожнім — зміни не збережено.": "Das Fach darf nicht leer sein – Änderungen wurden nicht gespeichert.",
+ "Без дати зміни не зберігаються.": "Ohne Datum werden Änderungen nicht gespeichert.",
+ "Додано сторінку": "Seite hinzugefügt",
+ "Оцінка «Не пам’ятаю»": "Bewertung „Weiß ich nicht“",
+ "Оцінка «Пам’ятаю»": "Bewertung „Weiß ich“",
+ "Оцінка «Легко»": "Bewertung „Leicht“",
+ "Завершити повторення": "Wiederholung beenden",
+ "Локальний": "Lokal"
 };
 // Множина: українська — 3 форми (1 картка, 2 картки, 5 карток), німецька — 2 (переклад форм f1 і f5).
 export function plural(n, f1, f2, f5) {

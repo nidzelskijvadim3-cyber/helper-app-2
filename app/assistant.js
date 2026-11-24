@@ -356,7 +356,7 @@ export default function Assistant(props) {
     const n = await apply(acts);
     const sum = sumOf(acts, n);
     setPrev(mi, p => ({ ...p, state: 'applied', n, sum }));
-    if (n) setToast({ id: cur.id, mi, sum, t: Date.now() });
+    if (n) { setToast({ id: cur.id, mi, sum, t: Date.now() }); setLive(tr("Готово") + ' · ' + sum + '. ' + tr("Можна скасувати")); }
     setLive(sum);
   };
   const cancelPrev = mi => { setPrev(mi, p => ({ ...p, state: 'cancelled' })); setLive(tr("Скасовано")); };
@@ -516,7 +516,7 @@ export default function Assistant(props) {
   const ctxChip = ctx && <span className="a-chip a-cx"><I n={ctx.k === 'deck' ? 'cards' : ctx.k === 'folder' ? 'folder' : 'doc'} s={16} /><span className="a-chipt">{ctxLabel(ctx)}</span><button onClick={() => setCtx(null)} aria-label={tr("Прибрати контекст") + ' ' + ctxLabel(ctx)} title={tr("Прибрати")}>×</button></span>;
   const chipIn = !side && ctx; // у панелі чип контексту — у власному рядку під шапкою
   const composer = <section className="a-comp" aria-label={tr("Поле запиту")}>
-    {toast && toast.id === cur.id && <div className="a-toast" role="status" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}><I n="check" s={18} /><span>{tr("Готово")} · {toast.sum}</span><button className="a-tl" onClick={undoToast}>{tr("@undo:Скасувати")}</button></div>}
+    {toast && toast.id === cur.id && <div className="a-toast" onMouseEnter={() => setToast(t => t && { ...t, hold: true })} onMouseLeave={() => setToast(t => t && { ...t, hold: false })} onFocus={() => setToast(t => t && { ...t, hold: true })} onBlur={() => setToast(t => t && { ...t, hold: false })}><I n="check" s={18} /><span>{tr("Готово")} · {toast.sum}</span><button className="a-tl" onClick={undoToast}>{tr("@undo:Скасувати")}</button></div>}
     {(chipIn || att.length > 0) && <div className="a-chips">
       {chipIn && <span className="a-chip"><I n={ctx.k === 'deck' ? 'cards' : ctx.k === 'folder' ? 'folder' : 'doc'} s={14} /><span className="a-chipt">{ctxLabel(ctx)}</span><button onClick={() => setCtx(null)} aria-label={tr("Прибрати контекст") + ' ' + ctxLabel(ctx)} title={tr("Прибрати")}>×</button></span>}
       {att.map((u, i) => <span className="a-chip ph" key={i}><span className="a-thumb" style={{ backgroundImage: 'url(' + u + ')' }} aria-hidden="true" /><span className="a-chipt">{tr("Фото")} {i + 1}</span><button onClick={() => setAtt(att.filter((_, j) => j !== i))} aria-label={tr("Прибрати фото") + ' ' + (i + 1)} title={tr("Прибрати")}>×</button></span>)}
@@ -652,9 +652,19 @@ export function AiPanel({ open, mode, large, onClose, children }) {
     const k = e.key, v = k === 'ArrowLeft' ? w + 20 : k === 'ArrowRight' ? w - 20 : k === 'Home' ? 360 : k === 'End' ? 480 : null;
     if (v == null) return; e.preventDefault(); const n = clampW(v); setW(n); save(n);
   };
-  const onKey = e => { if (e.key === 'Escape' && !dock && !document.querySelector('.ov')) { e.stopPropagation(); onClose(); } };
+  // Поверх (768–1023): Tab циклиться всередині панелі (фокус не йде під неї, a11y #6), Esc закриває, фокус — на кнопку-джерело.
+  // Дотики до контенту ліворуч працюють як раніше; поруч (≥1024) панель не модальна.
+  const onKey = e => {
+    if (e.key === 'Escape' && !dock && !document.querySelector('.ov')) { e.stopPropagation(); onClose(); return; }
+    if (e.key !== 'Tab' || dock || !ref.current) return;
+    const f = [...ref.current.querySelectorAll('button:not([disabled]), [href], input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select, [tabindex]:not([tabindex="-1"])')].filter(x => x.offsetParent !== null && !x.closest('[aria-hidden="true"]'));
+    if (!f.length) return;
+    const i = f.indexOf(document.activeElement);
+    if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+    else if (!e.shiftKey && (i === f.length - 1 || i < 0)) { e.preventDefault(); f[0].focus(); }
+  };
   if (!present) return null;
-  return <aside ref={ref} className={'aip ' + (dock ? 'dock' : 'over') + (drag ? ' drag' : '')} data-st={st} aria-label={tr("Помічник")} onKeyDown={onKey}>
+  return <aside ref={ref} className={'aip ' + (dock ? 'dock' : 'over') + (drag ? ' drag' : '')} data-st={st} role={dock ? undefined : 'dialog'} aria-label={tr("Помічник")} onKeyDown={onKey}>
     {large && dock && <div className="aip-grip" role="separator" aria-orientation="vertical" tabIndex={0} aria-label={tr("Ширина панелі Помічника")}
       aria-valuemin={360} aria-valuemax={480} aria-valuenow={w} onPointerDown={gDown} onPointerMove={gMove} onPointerUp={gUp} onPointerCancel={gUp}
       onDoubleClick={() => { setW(400); save(400); }} onKeyDown={gKey}><i aria-hidden="true" /></div>}
