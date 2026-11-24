@@ -1247,7 +1247,7 @@ h2.sec{font-family:var(--font-body);line-height:1.3}
 
 /* Місяць на iPad (.mw — лише вікно ≥768): клас s — сітка з крапками, як на телефоні, але без max-width;
    m/l/xl — клітинки з назвами подій у кольорах категорій, «+N», сьогодні — коло на числі, вибраний день — рамка; список дня (.agd) */
-.mw .cal{max-width:none}
+.mw .cal{max-width:none;grid-template-columns:repeat(7,minmax(0,1fr))}
 .mw .cd-top{display:contents}
 @container region (min-width:600px){
   .mw .cal{grid-template-columns:repeat(7,minmax(0,1fr));gap:var(--s-1)}
@@ -1323,4 +1323,108 @@ h2.sec{font-family:var(--font-body);line-height:1.3}
   .th:focus-visible{outline:none}.th:focus-visible .th-im{outline:3px solid var(--accent-tx);outline-offset:3px}
   @media (hover:hover){.th-add:hover .th-im{border-color:var(--tx3);color:var(--tx)}}
   .nv.ed.thl .pgnav,.nv.ed.thl .edtoast{left:var(--thumbs-w)}
+}
+
+/* ===== iPad, етап 4 (ipad-layout-spec 5.3, 6, 9, 10, 12; I7, I15, I19, I20, I24, I25) ===== */
+/* Форми на iPad (вікно ≥768): зверху, шапка «Скасувати — заголовок — Готово», без нижніх кнопок (I15).
+   .fsh — 560 (--sheet-m), .fsh.wide — 720 (--sheet-l, запис із підписами полів), .conf — підтвердження 420 по центру. */
+@media (min-width:768px){
+  .ov.ovt{align-items:flex-start;padding:clamp(24px,8vh,96px) var(--s-5) var(--s-5)}
+  .sheet.fsh{max-width:var(--sheet-m);max-height:100%;padding:0;display:flex;flex-direction:column;overflow:hidden;border-radius:var(--r-20)}
+  .sheet.fsh.wide{max-width:var(--sheet-l)}
+  .sheet.conf{max-width:var(--sheet-s)}
+  .fhd{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;height:var(--hd-h);padding:0 var(--s-2);border-bottom:1px solid var(--bd2)}
+  .fhd h2{margin:0;font-size:var(--fs-sm);font-weight:600;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:360px}
+  .fhd-b{justify-self:start;min-height:44px;padding:0 var(--s-3);border:0;border-radius:var(--r-12);background:none;color:var(--tx);font:500 var(--fs-sm)/1 var(--font-body);cursor:pointer}
+  .fhd-b.pri{justify-self:end;color:var(--accent-tx);font-weight:600}
+  .fhd-b:disabled{opacity:.4;cursor:default}
+  @media (hover:hover){.fhd-b:not(:disabled):hover{background:var(--fill)}}
+  .fbody{flex:1;min-height:0;overflow-y:auto;padding:var(--s-4) var(--s-5) calc(var(--s-5) + env(safe-area-inset-bottom))}
+  .fbody .qrow{margin-bottom:var(--s-3)}
+  .swatch{width:44px;height:44px}
+  .mc-x{width:44px;height:44px;right:-10px;bottom:-10px}
+}
+/* форма запису з видимими підписами (I19): підпис 160 зліва — поле справа */
+.fform{display:flex;flex-direction:column;gap:var(--s-3);margin-top:var(--s-2)}
+.frow{display:grid;grid-template-columns:160px minmax(0,1fr);column-gap:var(--s-4);align-items:start}
+.frow-l{padding-top:12px;font-size:var(--fs-sm);color:var(--tx2);line-height:1.3}
+.frow-f{min-width:0}
+.frow-f input,.frow-f select,.frow-f textarea{min-height:44px;font-size:var(--fs-body)}
+.frow-f .seg{display:inline-flex}.frow-f .seg button{flex:none;padding:8px 16px;min-height:40px}
+.frow-f .hint{margin:6px 0 0}
+.fsuf{display:flex;align-items:center;gap:var(--s-2)}.fsuf input{width:120px}.fsuf span{color:var(--tx2);font-size:var(--fs-sm)}
+.fdel{margin-top:var(--s-6)}
+.btn2.wn{color:var(--wn)}
+
+/* меню-кнопки на iPad — поповер 320 під кнопкою (I20); позицію задає popAt() у docs.js */
+.popback.fixed{position:fixed;z-index:30}
+.sheet.mpop{position:fixed;margin:0;padding:var(--s-2);border:1px solid var(--bd);border-radius:var(--r-16);box-shadow:var(--shadow-pop);overflow-y:auto}
+.sheet.mpop .shd{margin:0 0 var(--s-2);padding:var(--s-1) 0 0 var(--s-2)}
+.sheet.mpop .shd h2{font-size:var(--fs-sm)}
+.sheet.mpop button:not(.ib):not(.lnk){min-height:52px;margin-bottom:var(--s-1);font-size:var(--fs-sm);font-weight:600;background:none}
+.sheet.mpop.mk button:not(.ib){min-height:56px}
+@media (hover:hover){.sheet.mpop button:not(.ib):not(.lnk):hover{background:var(--fill)}}
+.sheet.mpop small{font-weight:400}
+
+/* Матеріали за класом області (6, 6.1): сайдбар 220/250/280, пошук у шапці з m, сітка без обмеження; «Нещодавні» без папок і «Без папки» (I24) */
+.mq{display:none}
+@container region (min-width:600px){
+  .mq{display:flex;align-items:center;gap:var(--s-2);width:240px;height:44px;padding:0 var(--s-1) 0 var(--s-3);border:1px solid transparent;border-radius:var(--r-12);background:var(--fill);color:var(--tx2)}
+  .mq:focus-within{border-color:var(--accent-tx)}
+  .mq input{flex:1;min-width:0;height:42px;padding:0;border:0;background:none;font-size:var(--fs-sm)}
+  .mq input:focus{outline:none}
+  .mq-x{flex:none;width:44px;height:44px;margin-right:-4px;border:0;border-radius:var(--r-12);background:none;color:var(--tx2);display:flex;align-items:center;justify-content:center;cursor:pointer}
+  .m-fold,.m-loose{display:none!important}
+  .mres .msh-t{margin:0 0 var(--s-3)}
+  .mgrid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:var(--s-6) var(--s-5)}
+}
+@container region (min-width:860px){.mq{width:280px}}
+/* поле пошуку в шапці є лише у вікні ≥768 (useWide); у вікні < 768 лишається кнопка-лупа */
+@media (min-width:768px){@container region (min-width:600px){.mq-ic,.msearch{display:none!important}}}
+@container region (min-width:1120px){
+  .mat{grid-template-columns:280px minmax(0,1fr)}
+  .mgrid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+}
+
+/* Налаштування (9, I7): m — одна колонка 640 з розділами підряд; l/xl — розділи 250/280 + деталі ≤ --form-w */
+.setw.one{max-width:640px;margin:0 auto}
+.setw.two{display:grid;grid-template-columns:250px minmax(0,1fr);column-gap:var(--s-10);align-items:start}
+@container region (min-width:1120px){.setw.two{grid-template-columns:280px minmax(0,1fr)}}
+.setn{position:sticky;top:var(--s-5);display:flex;flex-direction:column;gap:2px}
+.setn .top{margin-bottom:var(--s-4)}
+.setn .top .hd-ai{position:static}
+.setn-i{display:flex;align-items:center;gap:var(--s-3);width:100%;min-height:52px;padding:0 var(--s-2);border:0;border-radius:var(--r-12);background:none;color:var(--tx);font:inherit;text-align:left;cursor:pointer}
+.setn-i[aria-current="true"]{background:var(--fill)}
+@media (hover:hover){.setn-i:hover{background:var(--fill)}}
+.setn-ic{flex:none;width:32px;height:32px;border-radius:9px;background:var(--fill);color:var(--tx2);display:flex;align-items:center;justify-content:center}
+.setn-i[aria-current="true"] .setn-ic{background:var(--surface)}
+.setn-n{flex:1;min-width:0;font-size:var(--fs-sm);font-weight:600}
+.setn-v{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-cap);color:var(--tx2)}
+.setd{max-width:var(--form-w);min-width:0}
+.setw.two .setd{padding-top:calc(var(--s-10) + 6px)}
+.setw.one .setd{margin-top:var(--s-8)}
+.setd-t{margin:0;font:700 var(--fs-t2)/1.15 var(--font-display)}
+.setd-s{margin:6px 0 var(--s-4);font-size:var(--fs-sm);color:var(--tx2);max-width:60ch}
+.setd .card{border-radius:var(--r-16)}
+.setd .seg{display:inline-flex}.setd .seg button{flex:none;padding:8px 18px;min-height:44px}
+.setd .btn{width:auto;min-width:200px;margin-left:0;margin-right:0}
+.setd input[type=number]{width:120px}
+.setd .row label{flex:none}
+.setd label.sec{display:block;margin-bottom:8px}
+.setn .top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s-2)}
+.setn .top h1{font-size:var(--fs-t2)}
+
+/* Усі (5.3): l/xl — список --list-w + деталь ≤ --form-w із формою, що зберігається одразу */
+.allv.md{display:grid;grid-template-columns:minmax(0,var(--list-w)) minmax(0,1fr);gap:var(--s-8);align-items:start}
+.md-d{position:sticky;top:var(--s-5);max-width:var(--form-w);padding:var(--s-5);background:var(--panel);border:1px solid var(--bd2);border-radius:var(--r-20)}
+.md-t{margin:0;font:700 var(--fs-t2)/1.15 var(--font-display)}
+.md-s{margin:4px 0 var(--s-4);font-size:var(--fs-cap);color:var(--tx2)}
+.md-e{margin:var(--s-10) 0;text-align:center;font-size:var(--fs-sm);color:var(--tx2)}
+.allv.md .it.it-on{background:var(--fill);border-radius:var(--r-12)}
+.md-d .frow{grid-template-columns:120px minmax(0,1fr)}
+
+/* Типографіка ≥1024 (I25): ніде не менше 13 px */
+@media (min-width:1024px){
+  .sec,.cw,.applied,.lbl,.tl-h,.mh-t,.mi .mm,.grp summary,.aht small,.sg small,.chg,.mc-m,.ft-c,.src-s,.dk-st,.sb-c,.sb-h,.fk-c,.a-hcs,.a-umc,.a-pg,.a-pvs,.a-pvg,.a-pvnote,.a-modec,.a-menu small,.exd-l dt{font-size:13px}
+  .nav .lbl{font-size:12px} /* «Матеріали» 13 px не влазить у 68 (спец. 2.1: тоді 12) */
 }

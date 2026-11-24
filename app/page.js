@@ -46,7 +46,11 @@ const ICONS = {
   trash: <><path d="M5 7h14M10 7V4h4v3" /><path d="M7 7l1 13h8l1-13" /></>,
   close: <path d="M6 6l12 12M18 6L6 18" />,
   flag: <><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>,
-  set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>
+  set: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" /></>,
+  user: <><circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" /></>,
+  sync: <><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" /><path d="M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16" /><path d="M20 20v-4h-4" /></>,
+  data: <><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></>,
+  key: <><circle cx="8" cy="15" r="4" /><path d="M11 12l9-9M17 6l3 3M15 8l2 2" /></>
 };
 // чекбокс задачі: видимий квадрат 22px, зона натискання — label 44×44 (WCAG 2.5.8, HIG 44 pt)
 const Ck = ({ checked, onChange, label }) => <label className="ck"><input type="checkbox" checked={!!checked} onChange={onChange} aria-label={label} /></label>;
@@ -237,6 +241,9 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [sheet, setSheet] = useState(null);
   const [f, setF] = useState(EMPTY);
+  const [allSel, setAllSel] = useState(null); // «Усі» на iPad: вибраний запис і його форма
+  const [af, setAfS] = useState(null);
+  const [setSec, setSetSec] = useState('gen'); // Налаштування на iPad: поточний розділ
   const [show, setShow] = useState(false);
   const [cq, setCq] = useState('');
   const [ca, setCa] = useState('');
@@ -410,26 +417,31 @@ export default function Home() {
     if (k === tab) { if (k === 'today') setSel(''); if (k === 'folders') setFview(null); if (k === 'cards') setDeckV(null); return; }
     setTab(k);
   };
-  const openEdit = i => { if (!i) return; sheetPrev.current = document.activeElement; setF({ kind: isExam(i) ? 'exam' : i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', until: i.until || '', folder: i.folder || '' }); setSheet(i.id); };
-  const saveTask = () => {
-    if (!f.t.trim()) return;
-    const h = parseFloat(f.h);
-    if (f.kind === 'exam') {
-      if (!isDate(f.due)) return;
-      const eb = { kind: 'event', exam: true, t: f.t.trim(), area: 'study', h: h > 0 ? h : 2, due: f.due, time: isTime(f.time) ? f.time : '', pri: 2, note: f.note.trim(), repeat: 'none', folder: f.folder === '' || f.folder == null ? '' : Number(f.folder) };
-      if (sheet === 'new') setItems([...items, { id: Date.now(), ...eb, done: false }]);
-      else setItems(items.map(i => i.id === sheet ? { ...i, ...eb } : i));
-      closeSheet(); return;
+  const formOf = i => ({ kind: isExam(i) ? 'exam' : i.kind || 'task', t: i.t, area: i.area, h: String(i.h), due: i.due || '', time: i.time || '', pri: i.pri || 1, note: i.note || '', repeat: i.repeat || 'none', until: i.until || '', folder: i.folder || '' });
+  const openEdit = i => { if (!i) return; sheetPrev.current = document.activeElement; setF(formOf(i)); setSheet(i.id); };
+  // поля форми → запис (null, якщо форма невалідна); спільне для аркуша й деталі «Усі» на iPad
+  const buildItem = fv => {
+    if (!fv.t.trim()) return null;
+    const h = parseFloat(fv.h);
+    if (fv.kind === 'exam') {
+      if (!isDate(fv.due)) return null;
+      return { kind: 'event', exam: true, t: fv.t.trim(), area: 'study', h: h > 0 ? h : 2, due: fv.due, time: isTime(fv.time) ? fv.time : '', pri: 2, note: fv.note.trim(), repeat: 'none', folder: fv.folder === '' || fv.folder == null ? '' : Number(fv.folder) };
     }
-    const ev = f.kind === 'event';
-    const rep = f.repeat || 'none';
-    const due = f.due || (ev || rep !== 'none' || isTime(f.time) ? selDate : '');
-    if (rep !== 'none' && isDate(f.until) && f.until < due) return; // кінець повтору раніше за початок — кнопка вимкнена, підказка під полем
-    const base = { kind: f.kind, t: f.t.trim(), area: f.area, h: h > 0 ? h : 1, due, time: ev ? (f.time || '09:00') : (isTime(f.time) ? f.time : ''), pri: Number(f.pri) || 1, note: f.note.trim(), repeat: rep, until: normUntil(f.until, rep, due), folder: f.folder === '' || f.folder == null ? '' : Number(f.folder), exam: undefined };
+    const ev = fv.kind === 'event';
+    const rep = fv.repeat || 'none';
+    const due = fv.due || (ev || rep !== 'none' || isTime(fv.time) ? selDate : '');
+    if (rep !== 'none' && isDate(fv.until) && fv.until < due) return null; // кінець повтору раніше за початок — кнопка вимкнена, підказка під полем
+    return { kind: fv.kind, t: fv.t.trim(), area: fv.area, h: h > 0 ? h : 1, due, time: ev ? (fv.time || '09:00') : (isTime(fv.time) ? fv.time : ''), pri: Number(fv.pri) || 1, note: fv.note.trim(), repeat: rep, until: normUntil(fv.until, rep, due), folder: fv.folder === '' || fv.folder == null ? '' : Number(fv.folder), exam: undefined };
+  };
+  const saveTask = () => {
+    const base = buildItem(f); if (!base) return;
     if (sheet === 'new') setItems([...items, { id: Date.now(), ...base, done: false }]);
     else setItems(items.map(i => i.id === sheet ? { ...i, ...base } : i));
     closeSheet();
   };
+  // «Усі» на iPad (l/xl): список + деталь; правка зберігається одразу (ipad-layout-spec 5.3)
+  const pickAll = i => { setAllSel(i.id); setAfS(formOf(i)); };
+  const setAf = v => { setAfS(v); const b = buildItem(v); if (b && allSel != null) setItems(its => its.map(i => i.id === allSel ? { ...i, ...b } : i)); };
   const tog = (id, date) => setItems(items.map(i => {
     if (i.id !== id) return i;
     if (isRep(i)) { const ds = i.doneDates || []; return { ...i, doneDates: ds.includes(date) ? ds.filter(x => x !== date) : [...ds, date] }; }
@@ -688,10 +700,13 @@ export default function Home() {
       <span className="exr-b"><span className="exr-t">{tr("Іспит")}: {i.t}</span><span className="exr-m">{cap1(new Date(i.due + 'T00:00:00').toLocaleDateString(loc(), { weekday: 'short', day: 'numeric', month: 'short' }))}{i.time ? ', ' + i.time : ''} · {exWhen(i)}</span></span>
       <Icon n="chevR" s={18} />
     </button>);
+  // «Усі» на iPad l/xl — список + деталь: рядок вибирає запис замість аркуша правки
+  const mdAll = pv === 'all' && win !== 'c' && (rc === 'l' || rc === 'xl');
+  const editRow = i => (mdAll ? pickAll(i) : openEdit(i));
   const row = i => isExam(i) ? exRow(i) : (
-    <div className={'it' + (i.done ? ' done' : '')} key={i.id}>
+    <div className={'it' + (i.done ? ' done' : '') + (mdAll && allSel === i.id ? ' it-on' : '')} key={i.id}>
       {isEv(i) ? <span className="evd" /> : <Ck label={i.t} checked={isRep(i) ? (i.doneDates || []).includes(today) : !!i.done} onChange={() => tog(i.id, today)} />}
-      <div className="b" role="button" tabIndex={0} onClick={() => openEdit(i)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(i); } }}><div className="t">{i.t}</div>
+      <div className="b" role="button" tabIndex={0} aria-current={mdAll && allSel === i.id ? 'true' : undefined} onClick={() => editRow(i)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); editRow(i); } }}><div className="t">{i.t}</div>
         <div className="meta"><span className={'tag ' + i.area}>{tr(AREA[i.area])}</span>
           {isEv(i) ? <span>{i.due && !isRep(i) ? dm(i.due) + ' ' : ''}{i.time}</span> : <span>{i.h} {tr(" год")}</span>}
           {!isEv(i) && !isRep(i) && i.due && <span className={!i.done && i.due < today ? 'late' : ''}>{tr("до ")}{dm(i.due)}</span>}
@@ -855,6 +870,34 @@ export default function Home() {
     [tr("Повторювані"), repList]
   ];
   const doneSorted = [...doneList].sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || ''));
+
+  // ===== Форма запису на iPad (вікно ≥768): видимі підписи «підпис зліва 160 — поле справа» (ipad-layout-spec 10, I19) =====
+  // fv/setFv — стан форми (аркуш: f; деталь «Усі»: af). Телефон використовує колишню форму без змін.
+  const formRows = (fv, setFv, idp, focus) => {
+    const fe = fv.kind === 'event', fx = fv.kind === 'exam', set = p => setFv({ ...fv, ...p });
+    const d0 = fv.due || selDate, badU = fv.repeat !== 'none' && isDate(fv.until) && fv.until < d0;
+    const R = (id, label, field, hint) => <div className="frow" key={id}><label className="frow-l" htmlFor={idp + id}>{label}</label><div className="frow-f">{field}{hint}</div></div>;
+    return <div className="fform">
+      <div className="frow"><span className="frow-l" id={idp + 'kind'}>{tr("Тип")}</span><div className="frow-f"><div className="seg" role="group" aria-labelledby={idp + 'kind'}>
+        {[['task', tr("Задача")], ['event', tr("Подія")], ['exam', tr("Іспит")]].map(([k, n]) => <button key={k} className={fv.kind === k ? 'on' : ''} aria-pressed={fv.kind === k} onClick={() => set({ kind: k })}>{n}</button>)}</div></div></div>
+      {R('t', fx ? tr("Предмет") : tr("Назва"), <input id={idp + 't'} autoFocus={focus} placeholder={fx ? tr("Наприклад: Анатомія") : fe ? tr("Наприклад: стоматолог") : tr("Що потрібно зробити або вивчити")} value={fv.t} onChange={e => set({ t: e.target.value })} />)}
+      {!fx && R('area', tr("Категорія"), <select id={idp + 'area'} value={fv.area} onChange={e => set({ area: e.target.value })}>{Object.entries(AREA).map(([k, v]) => <option key={k} value={k}>{tr(v)}</option>)}</select>)}
+      {R('due', tr("Дата"), <input id={idp + 'due'} type="date" value={fv.due} onChange={e => set({ due: e.target.value })} />, fx && !isDate(fv.due) ? <p className="hint">{tr("Вкажіть дату іспиту.")}</p> : null)}
+      {R('time', fe ? tr("Час") : tr("Час (необов’язково)"), <input id={idp + 'time'} type="time" value={fv.time} onChange={e => set({ time: e.target.value })} />)}
+      {!fx && R('h', fe ? tr("Тривалість") : tr("Потрібно часу"), <span className="fsuf"><input id={idp + 'h'} type="number" min="0.5" step="0.5" value={fv.h} onChange={e => set({ h: e.target.value })} /><span>{tr(" год").trim()}</span></span>)}
+      {!fe && !fx && R('pri', tr("Важливість"), <select id={idp + 'pri'} value={fv.pri} onChange={e => set({ pri: e.target.value })}><option value={1}>{tr("Звичайна")}</option><option value={2}>{tr("Важлива")}</option></select>)}
+      {!fx && R('rep', tr("Повтор"), <select id={idp + 'rep'} value={fv.repeat} onChange={e => set({ repeat: e.target.value })}>{Object.entries(REP).map(([k, v]) => <option key={k} value={k}>{tr(v)}</option>)}</select>)}
+      {!fx && fv.repeat !== 'none' && R('until', tr("До дати"), <input id={idp + 'until'} type="date" min={d0} value={fv.until || ''} onChange={e => set({ until: e.target.value })} aria-describedby={idp + 'until-h'} aria-invalid={badU || undefined} />,
+        <p className={'hint' + (badU ? ' err' : '')} id={idp + 'until-h'}>{badU ? tr("Дата закінчення раніше за початок повтору.") : tr("Після цієї дати запис не показується й не планується.")}</p>)}
+      {folders.length > 0 && R('fold', tr("Папка"), <select id={idp + 'fold'} value={fv.folder} onChange={e => set({ folder: e.target.value })}><option value="">{tr("Без папки")}</option>{folders.map(fo => <option key={fo.id} value={fo.id}>{folderPath(folders, fo.id)}</option>)}</select>)}
+      {R('note', tr("Нотатка"), <textarea id={idp + 'note'} rows={2} placeholder={fx ? tr("Наприклад: аудиторія, що взяти з собою") : tr("Необов’язково")} value={fv.note} onChange={e => set({ note: e.target.value })} />)}
+    </div>;
+  };
+  // шапка форми на iPad: «Скасувати — заголовок — Готово» (I15): основна дія завжди над клавіатурою
+  const formHead = (id, title, onCancel, doneLabel, onDone, canDone) => <div className="fhd">
+    <button className="fhd-b" onClick={onCancel}>{tr("Скасувати")}</button>
+    <h2 id={id}>{title}</h2>
+    <button className="fhd-b pri" onClick={onDone} disabled={!canDone}>{doneLabel}</button></div>;
 
   // ===== шапка Плану: заголовок, перемикач видів, навігація датами =====
   const curMonth = now.getFullYear() * 12 + now.getMonth();
@@ -1112,11 +1155,26 @@ export default function Home() {
             </section>; })()}
         </div>}
 
-        {pv === 'all' && <div className="allv">
-          {!recs.length && !repList.length && !exams.length && <div className="card"><div className="empty">{tr("Відкритих задач немає.")}</div></div>}
-          {allGroups.map(([title, list, warn]) => list.length > 0 && <div className={'card' + (warn ? ' warn' : '')} key={title}><div className="sec">{title}<span className="cnt">{list.length}</span></div>{list.map(row)}</div>)}
-          {doneSorted.length > 0 && <details className="card grp"><summary><span>{tr("Виконані")}<span className="cnt">{doneSorted.length}</span></span><Icon n="chevD" s={20} /></summary>{doneSorted.map(row)}</details>}
-        </div>}
+        {pv === 'all' && (() => {
+          const lst = <>
+            {!recs.length && !repList.length && !exams.length && <div className="card"><div className="empty">{tr("Відкритих задач немає.")}</div></div>}
+            {allGroups.map(([title, list, warn]) => list.length > 0 && <div className={'card' + (warn ? ' warn' : '')} key={title}><div className="sec">{title}<span className="cnt">{list.length}</span></div>{list.map(row)}</div>)}
+            {doneSorted.length > 0 && <details className="card grp"><summary><span>{tr("Виконані")}<span className="cnt">{doneSorted.length}</span></span><Icon n="chevD" s={20} /></summary>{doneSorted.map(row)}</details>}
+          </>;
+          if (!mdAll) return <div className="allv">{lst}</div>;
+          const cur = allSel != null && af ? items.find(i => i.id === allSel) : null;
+          return <div className="allv md">
+            <div className="md-l">{lst}</div>
+            <section className="md-d" aria-label={tr("Деталі запису")}>
+              {cur ? <>
+                <h2 className="md-t">{af.kind === 'exam' ? tr("Іспит") : af.kind === 'event' ? tr("Подія") : tr("Задача")}</h2>
+                <p className="md-s">{tr("Зміни зберігаються одразу.")}</p>
+                {formRows(af, setAf, 'af-', false)}
+                <div className="fdel"><button className="btn2 wn" onClick={() => { setItems(items.filter(i => i.id !== allSel)); setAllSel(null); setAfS(null); }}>{tr("Видалити")}</button></div>
+              </> : <p className="md-e">{tr("Виберіть задачу зліва")}</p>}
+            </section>
+          </div>;
+        })()}
       </>}
 
       {tab === 'folders' && <Materials folders={folders} notes={notes} fview={fview} setFview={setFview}
@@ -1264,10 +1322,9 @@ export default function Home() {
 
       {tab === 'ai' && assistant(false)}
 
-      {tab === 'set' && <>
-        <div className="top"><h1>{tr("Налаштування")}</h1>{aiBtn}</div>
-        <div className="card"><div className="sec">Мова / Sprache</div><div className="seg">{[['uk', 'Українська'], ['de', 'Deutsch']].map(([k, n]) => <button key={k} className={ui.lang === k ? 'on' : ''} onClick={() => setUi({ ...ui, lang: k })}>{n}</button>)}</div></div>
-        <div className="card"><div className="sec">{tr("Акаунт")}</div>
+      {tab === 'set' && (() => {
+        const cLang = <div className="card"><div className="sec">Мова / Sprache</div><div className="seg">{[['uk', 'Українська'], ['de', 'Deutsch']].map(([k, n]) => <button key={k} className={ui.lang === k ? 'on' : ''} onClick={() => setUi({ ...ui, lang: k })}>{n}</button>)}</div></div>;
+        const cAcc = <div className="card"><div className="sec">{tr("Акаунт")}</div>
           <div className="sub" style={{ marginBottom: 10 }}>{activeAccount() ? tr("Вхід виконано як") + ': ' + activeAccount().name : tr("Локальний профіль (без акаунта)")}</div>
           {(listAccounts().length > 0) && <div className="prow">{listAccounts().map(a => <button key={a.id} className={'chip' + (a.id === getActiveId() ? ' on' : '')} style={{ margin: 0 }} onClick={() => switchAcc(a.id)}>{a.name}</button>)}{getActiveId() && <button className="chip" style={{ margin: 0 }} onClick={() => switchAcc('')}>{tr("Локальний профіль")}</button>}</div>}
           <div className="sec" style={{ marginTop: 14 }}>{tr("Створити акаунт або увійти")}</div>
@@ -1275,38 +1332,61 @@ export default function Home() {
           <input type="password" style={{ marginTop: 8 }} placeholder={tr("Пароль акаунта (від 6 символів)")} value={acf.pass} onChange={e => setAcf({ ...acf, pass: e.target.value })} />
           {acf.err && <div className="sub" style={{ color: 'var(--wn)', marginTop: 8 }}>{acf.err}</div>}
           <button className="btn" style={{ marginTop: 12 }} onClick={enterAcc} disabled={acf.busy}>{acf.busy ? tr("Зачекайте…") : tr("Увійти або створити")}</button>
-          <div className="sub" style={{ marginTop: 10 }}>{tr("Той самий акаунт на іншому пристрої: введіть те саме ім’я та пароль.")}</div></div>
-        <div className="card"><div className="sec">{tr("Синхронізація")}</div>
+          <div className="sub" style={{ marginTop: 10 }}>{tr("Той самий акаунт на іншому пристрої: введіть те саме ім’я та пароль.")}</div></div>;
+        const cSync = <div className="card"><div className="sec">{tr("Синхронізація")}</div>
           <div className="sub" style={{ marginBottom: 10 }}>{sy.on ? tr("Увімкнено") : tr("Вимкнено")}{sy.last ? ', ' + tr("остання синхронізація") + ': ' + new Date(sy.last).toLocaleString(loc(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</div>
           {sy.msg && <div className="sub" style={{ color: 'var(--wn)', marginBottom: 10 }}>{sy.msg}</div>}
           <button className="btn" onClick={() => { if (sy.on) runSync(); else toggleSync(); }} disabled={sy.state === 'syncing'}>{sy.state === 'syncing' ? tr("Синхронізую…") : tr("Синхронізувати зараз")}</button>
-          <button className={'tg' + (sy.on ? ' on' : '')} onClick={toggleSync}><span>{tr("Автосинхронізація")}</span><b>{sy.on ? '✓' : ''}</b></button></div>
-        {/* резервна копія: один JSON-файл (записи, картки, тести, папки, нотатки, розмови, налаштування, документи зі сторінками) */}
-        <section className="card bkc" aria-labelledby="bk-h"><h2 className="sec" id="bk-h">{tr("Дані")}</h2>
+          <button className={'tg' + (sy.on ? ' on' : '')} onClick={toggleSync}><span>{tr("Автосинхронізація")}</span><b>{sy.on ? '✓' : ''}</b></button></div>;
+        /* резервна копія: один JSON-файл (записи, картки, тести, папки, нотатки, розмови, налаштування, документи зі сторінками) */
+        const cData = <section className="card bkc" aria-labelledby="bk-h"><h2 className="sec" id="bk-h">{tr("Дані")}</h2>
           <p className="sub" style={{ margin: '0 0 4px' }}>{bkm.last ? tr("Остання копія") + ': ' + bkWhen : tr("Резервних копій ще не було.")}</p>
           <p className="hint" style={{ margin: '0 0 12px' }}>{sy.on ? tr("Синхронізацію ввімкнено, але копія не завадить: файл можна зберегти в iCloud Drive, Google Drive або на комп’ютер.") : tr("Дані зберігаються лише на цьому пристрої. Копія — файл, з якого можна все відновити на цьому або іншому пристрої.")}</p>
           <div className="bkc-a"><button className="btn-a" onClick={saveBackup} disabled={bkBusy}>{bkBusy ? tr("Зберігаю…") : tr("Зберегти резервну копію")}</button>
             <button className="btn2" onClick={() => { sheetPrev.current = document.activeElement; const el = document.getElementById('bk-file'); if (el) el.click(); }}>{tr("Відновити з копії")}</button>
             <input id="bk-file" type="file" accept="application/json,.json" className="hidefile" tabIndex={-1} aria-hidden="true" onChange={e => { pickBackup(e.target.files && e.target.files[0]); e.target.value = ''; }} /></div>
-        </section>
-        <div className="card"><div className="sec">{tr("Тема")}</div><div className="seg">{[['dark', tr("Темна")], ['light', tr("Світла")], ['auto', tr("Авто")]].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>
-        {/* варіант B: налаштування говорять про навчання; події з часом віднімаються від цих годин (plan.js) */}
-        <div className="card"><label className="sec" htmlFor="set-start">{tr("О котрій зазвичай починаєте навчання")}</label>
+        </section>;
+        const cTheme = <div className="card"><div className="sec">{tr("Тема")}</div><div className="seg">{[['dark', tr("Темна")], ['light', tr("Світла")], ['auto', tr("Авто")]].map(([k, n]) => <button key={k} className={ui.theme === k ? 'on' : ''} onClick={() => setUi({ ...ui, theme: k })}>{n}</button>)}</div></div>;
+        /* варіант B: налаштування говорять про навчання; події з часом віднімаються від цих годин (plan.js) */
+        const cStart = <div className="card"><label className="sec" htmlFor="set-start">{tr("О котрій зазвичай починаєте навчання")}</label>
           <input id="set-start" type="number" min="0" max="23" value={start} aria-describedby="set-start-h" onChange={e => setStart(Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))} />
-          <p className="hint" id="set-start-h" style={{ marginTop: 8 }}>{tr("Година від 0 до 23. З неї План розставляє задачі на шкалі дня.")}</p></div>
-        <div className="card"><h2 className="sec" id="set-cap">{tr("Годин на навчання й справи на день")}</h2>
+          <p className="hint" id="set-start-h" style={{ marginTop: 8 }}>{tr("Година від 0 до 23. З неї План розставляє задачі на шкалі дня.")}</p></div>;
+        const cCap = <div className="card"><h2 className="sec" id="set-cap">{tr("Годин на навчання й справи на день")}</h2>
           <p className="hint" id="set-cap-h" style={{ margin: '0 0 6px' }}>{tr("Події з часом віднімаються від цих годин автоматично.")}</p>
           <div role="group" aria-labelledby="set-cap" aria-describedby="set-cap-h">
           {[1, 2, 3, 4, 5, 6, 0].map(i => <div className="row" style={{ alignItems: 'center' }} key={i}><label htmlFor={'cap-' + i} style={{ width: 36 }}>{tr(DN[i])}</label>
-            <input id={'cap-' + i} type="number" min="0" max="16" step="0.5" value={cap[i]} onChange={e => setCap(cap.map((c, j) => j === i ? Math.max(0, parseFloat(e.target.value) || 0) : c))} /></div>)}</div></div>
-        <div className="card"><label className="sec" htmlFor="set-new">{tr("Нових карток на день")}</label>
+            <input id={'cap-' + i} type="number" min="0" max="16" step="0.5" value={cap[i]} onChange={e => setCap(cap.map((c, j) => j === i ? Math.max(0, parseFloat(e.target.value) || 0) : c))} /></div>)}</div></div>;
+        const cNew = <div className="card"><label className="sec" htmlFor="set-new">{tr("Нових карток на день")}</label>
           <input id="set-new" type="number" min="0" max="200" step="1" value={newLim} aria-describedby="set-new-h" onChange={e => setUi({ ...ui, newPerDay: Math.min(200, Math.max(0, parseInt(e.target.value, 10) || 0)) })} />
-          <p className="hint" id="set-new-h" style={{ marginTop: 8 }}>{tr("Скільки нових карток додавати до щоденного повторення. Картки, які вже вчите, показуються завжди, коли настає їхній час.")}</p></div>
-        <div className="card"><div className="sec" id="pass-title">{tr("Пароль доступу до ШІ та синхронізації")}</div>
+          <p className="hint" id="set-new-h" style={{ marginTop: 8 }}>{tr("Скільки нових карток додавати до щоденного повторення. Картки, які вже вчите, показуються завжди, коли настає їхній час.")}</p></div>;
+        const cPass = <div className="card"><div className="sec" id="pass-title">{tr("Пароль доступу до ШІ та синхронізації")}</div>
           <div className="sub" id="pass-hint" style={{ marginBottom: 10 }}>{tr("Потрібен, якщо власник застосунку встановив пароль. Без нього ШІ та синхронізація не працюватимуть.")}</div>
-          <input type="password" placeholder={tr("Пароль")} aria-labelledby="pass-title" aria-describedby="pass-hint" defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>
-        <button className="btn alt" onClick={() => setTab('today')}>{tr("Назад")}</button>
-      </>}
+          <input type="password" placeholder={tr("Пароль")} aria-labelledby="pass-title" aria-describedby="pass-hint" defaultValue={localStorage.getItem('helper-pass') || ''} onChange={e => localStorage.setItem('helper-pass', e.target.value)} /></div>;
+        const back = <button className="btn alt" onClick={() => setTab('today')}>{tr("Назад")}</button>;
+        const head = <div className="top"><h1>{tr("Налаштування")}</h1>{aiBtn}</div>;
+        // телефон і клас s: як було (картки підряд, «Назад»)
+        if (win === 'c' || rc === 's') return <>{head}{cLang}{cAcc}{cSync}{cData}{cTheme}{cStart}{cCap}{cNew}{cPass}{back}</>;
+        // iPad: розділи (ipad-layout-spec 9, I7). m — одна колонка 640 з розділами підряд; l/xl — список розділів + деталі ≤560
+        const passSet = (() => { try { return !!localStorage.getItem('helper-pass'); } catch (e) { return false; } })();
+        const SECS = [
+          ['gen', tr("Загальні"), 'set', (ui.lang === 'de' ? 'Deutsch' : 'Українська') + ' · ' + tr({ dark: "Темна", light: "Світла", auto: "Авто" }[ui.theme] || "Авто"), tr("Мова інтерфейсу й тема."), <>{cLang}{cTheme}</>],
+          ['acc', tr("Акаунт"), 'user', activeAccount() ? activeAccount().name : tr("Локальний профіль"), tr("Один акаунт на кількох пристроях."), cAcc],
+          ['sync', tr("Синхронізація"), 'sync', sy.on ? tr("Увімкнено") : tr("Вимкнено"), tr("Обмін даними між пристроями цього акаунта."), cSync],
+          ['data', tr("Дані"), 'data', bkm.last ? new Date(bkm.last).toLocaleDateString(loc(), { day: 'numeric', month: 'short' }) : '', tr("Резервна копія у файл і відновлення з неї."), cData],
+          ['learn', tr("Навчання"), 'cards', '', tr("Початок навчання, години на день і нові картки."), <>{cStart}{cCap}{cNew}</>],
+          ['ai', tr("Доступ до ШІ"), 'key', passSet ? tr("Пароль задано") : '', tr("Пароль для Помічника й синхронізації."), cPass]
+        ];
+        if (rc === 'm') return <div className="setw one">{head}{SECS.map(([k, n, , , d, body]) => <section key={k} className="setd" aria-labelledby={'sd-' + k}><h2 className="setd-t" id={'sd-' + k}>{n}</h2><p className="setd-s">{d}</p>{body}</section>)}</div>;
+        const cur = SECS.find(s => s[0] === setSec) || SECS[0];
+        return <div className="setw two">
+          <nav className="setn" aria-label={tr("Розділи налаштувань")}>
+            {head}
+            {SECS.map(([k, n, ic, v]) => <button key={k} className="setn-i" aria-current={cur[0] === k ? 'true' : undefined} onClick={() => setSetSec(k)}>
+              <span className="setn-ic" aria-hidden="true"><Icon n={ic} s={20} /></span><span className="setn-n">{n}</span>{v && <span className="setn-v">{v}</span>}</button>)}
+          </nav>
+          <section className="setd" aria-labelledby="sd-cur"><h2 className="setd-t" id="sd-cur">{cur[1]}</h2><p className="setd-s">{cur[4]}</p>{cur[5]}</section>
+        </div>;
+      })()}
       </div></div>
 
       {win !== 'c' && tab !== 'ai' && <AiPanel open={aiOpen} mode={win === 'm' ? 'over' : 'dock'} large={win === 'l'} onClose={() => setAiOpen(false)}>{assistant(true)}</AiPanel>}
@@ -1315,7 +1395,22 @@ export default function Home() {
       {/* один «+» на екран: План — FAB лише на телефоні (на iPad — рядок швидкого вводу); Матеріали — FAB/«Створити» всередині Materials */}
       {tab === 'today' && <button className="fab phone-only" onClick={() => openNew(false)} aria-label={tr("Додати задачу або подію")} title={tr("Додати задачу або подію")}><Icon n="plus" s={26} /></button>}
 
-      {sheet && <div className="ov" onClick={closeSheet}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onClick={e => e.stopPropagation()}>
+      {sheet && win !== 'c' && (() => {
+        const ttl = sheet === 'new' ? (!more ? tr("Новий запис") : exm ? tr("Новий іспит") : ev ? tr("Нова подія") : tr("Нова задача")) : (exm ? tr("Змінити іспит") : ev ? tr("Змінити подію") : tr("Змінити задачу"));
+        return <div className="ov ovt" onClick={closeSheet}><div className="sheet fsh wide" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onClick={e => e.stopPropagation()}>
+          {formHead('sheet-title', ttl, closeSheet, sheet === 'new' ? tr("Додати") : tr("Готово"), saveTask, !!buildItem(f))}
+          <div className="fbody">
+            {sheet === 'new' && <>
+              {quickInput('qa-sheet', true)}
+              {qaMsg && <div className="sub qmsg" role="status">{qaMsg}</div>}
+              {previewCard(true)}
+              <button className="more" aria-expanded={more} aria-controls="full-form" onClick={() => setMore(!more)}><span>{tr("Більше параметрів")}</span><Icon n="chevD" s={20} /></button>
+            </>}
+            {(sheet !== 'new' || more) && <div id="full-form">{formRows(f, setF, 'sf-', sheet !== 'new' || more)}</div>}
+            {sheet !== 'new' && <div className="fdel"><button className="btn2 wn" onClick={() => del(sheet)}>{exm ? tr("Видалити іспит") : tr("Видалити")}</button></div>}
+          </div>
+        </div></div>; })()}
+      {sheet && win === 'c' && <div className="ov" onClick={closeSheet}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" onClick={e => e.stopPropagation()}>
         <div className="shd"><h2 id="sheet-title">{sheet === 'new' ? (!more ? tr("Новий запис") : exm ? tr("Новий іспит") : ev ? tr("Нова подія") : tr("Нова задача")) : (exm ? tr("Змінити іспит") : ev ? tr("Змінити подію") : tr("Змінити задачу"))}</h2>
           <button className="ib" onClick={closeSheet} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>
         {sheet === 'new' && <>
@@ -1374,8 +1469,12 @@ export default function Home() {
           try { const c = await shrink(file, 256, 0.75); setFform(p => (p ? { ...p, cover: c, busy: false } : p)); }
           catch (e) { setFform(p => (p ? { ...p, busy: false, err: tr("Не вдалося обробити зображення.") } : p)); }
         };
-        return <div className="ov" onClick={() => setFform(null)} onKeyDown={e => { if (e.key === 'Escape') setFform(null); }}><div className={'sheet' + (full ? ' ffe' : '')} role="dialog" aria-modal="true" aria-labelledby="ff-title" onClick={e => e.stopPropagation()}>
-          <div className="shd"><h2 id="ff-title">{ttl}</h2><button className="ib" onClick={() => setFform(null)} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>
+        // iPad: форма — зверху з шапкою «Скасувати — назва — Створити/Зберегти»; видалення — підтвердження 420 по центру
+        const wideF = win !== 'c', headF = wideF && mode !== 'delete';
+        return <div className={'ov' + (headF ? ' ovt' : '')} onClick={() => setFform(null)} onKeyDown={e => { if (e.key === 'Escape') setFform(null); }}><div className={'sheet' + (full ? ' ffe' : '') + (headF ? ' fsh' : '') + (wideF && mode === 'delete' ? ' conf' : '')} role="dialog" aria-modal="true" aria-labelledby="ff-title" onClick={e => e.stopPropagation()}>
+          {headF ? formHead('ff-title', ttl, () => setFform(null), mode === 'new' ? tr("Створити") : tr("Зберегти"), saveFolder, !!fform.name.trim())
+            : <div className="shd"><h2 id="ff-title">{ttl}</h2><button className="ib" onClick={() => setFform(null)} aria-label={tr("Закрити")} title={tr("Закрити")}><Icon n="close" s={22} /></button></div>}
+          <div className={headF ? 'fbody' : undefined} style={headF ? undefined : { display: 'contents' }}>
           {full && <div className="ffe-prev" aria-hidden="true"><FolderGlyph color={fform.color} ico={fform.ico} emoji={fform.icon} cover={fform.cover} size={96} /><span>{fform.name.trim() || tr("Нова папка")}</span></div>}
           {(full || mode === 'name') && <><label className="flab" htmlFor="ff-name">{tr("Назва папки")}</label>
             <input id="ff-name" style={{ marginTop: 6 }} autoFocus={mode !== 'look'} value={fform.name} maxLength={40} onChange={e => setFform({ ...fform, name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') saveFolder(); }} /></>}
@@ -1401,9 +1500,10 @@ export default function Home() {
             <select id="ff-par" style={{ marginTop: 6 }} autoFocus value={fform.parent == null ? '' : fform.parent} onChange={e => setFform({ ...fform, parent: e.target.value === '' ? '' : Number(e.target.value) })}>
               <option value="">{tr("Головний рівень")}</option>{folders.filter(x => x.id !== fform.id && (!fform.id || canMoveFolder(folders, fform.id, x.id))).map(x => <option key={x.id} value={x.id}>{folderPath(folders, x.id)}</option>)}</select></>}
           {mode === 'delete' && <p className="ff-p">{tr("Папку «")}{fform.name}{tr("» буде видалено. Її матеріали, задачі й підпапки не зникнуть: вони перейдуть у ")}{up ? '«' + up.name + '»' : tr("«Матеріали» (без папки)")}.</p>}
-          <div className="row" style={{ marginTop: 16 }}>{mode === 'delete'
+          {!headF && <div className="row" style={{ marginTop: 16 }}>{mode === 'delete'
             ? <><button className="btn danger" autoFocus onClick={delFolder}>{tr("Видалити папку")}</button><button className="btn alt" onClick={() => setFform(null)}>{tr("Скасувати")}</button></>
-            : <button className="btn" onClick={saveFolder} disabled={!fform.name.trim()}>{mode === 'new' ? tr("Створити") : tr("Зберегти")}</button>}</div>
+            : <button className="btn" onClick={saveFolder} disabled={!fform.name.trim()}>{mode === 'new' ? tr("Створити") : tr("Зберегти")}</button>}</div>}
+          </div>
         </div></div>;
       })()}
 

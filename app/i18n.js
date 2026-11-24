@@ -893,7 +893,33 @@ export const DE = {
  "На цей день нічого немає": "Für diesen Tag gibt es nichts",
  "Додати подію": "Termin hinzufügen",
  "події": "Termine",
- "задачі": "Aufgaben"
+ "задачі": "Aufgaben",
+ // ===== iPad, етап 4 =====
+ "Категорія": "Kategorie",
+ "Тривалість": "Dauer",
+ "Потрібно часу": "Zeitbedarf",
+ "Важливість": "Wichtigkeit",
+ "Повтор": "Wiederholung",
+ "До дати": "Bis",
+ "Необов’язково": "Optional",
+ "Видалити іспит": "Prüfung löschen",
+ "Деталі запису": "Details des Eintrags",
+ "Зміни зберігаються одразу.": "Änderungen werden sofort gespeichert.",
+ "Виберіть задачу зліва": "Wähle links eine Aufgabe",
+ "Загальні": "Allgemein",
+ "Мова інтерфейсу й тема.": "Sprache der Oberfläche und Design.",
+ "Один акаунт на кількох пристроях.": "Ein Konto auf mehreren Geräten.",
+ "Обмін даними між пристроями цього акаунта.": "Datenabgleich zwischen den Geräten dieses Kontos.",
+ "Резервна копія у файл і відновлення з неї.": "Sicherung in eine Datei und Wiederherstellung daraus.",
+ "Початок навчання, години на день і нові картки.": "Lernbeginn, Stunden pro Tag und neue Karten.",
+ "Доступ до ШІ": "KI-Zugang",
+ "Пароль задано": "Passwort gesetzt",
+ "Пароль для Помічника й синхронізації.": "Passwort für den Assistenten und die Synchronisierung.",
+ "Розділи налаштувань": "Bereiche der Einstellungen",
+ "Пошук у матеріалах": "In Materialien suchen",
+ "Очистити пошук": "Suche löschen",
+ "Результати": "Ergebnisse",
+ "Нічого не знайдено за": "Nichts gefunden für"
 };
 // Множина: українська — 3 форми (1 картка, 2 картки, 5 карток), німецька — 2 (переклад форм f1 і f5).
 export function plural(n, f1, f2, f5) {

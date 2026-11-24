@@ -14,6 +14,24 @@ export const listDocs = listMeta;
 // Шар поза .region: область контенту — контейнер container queries (container-type), а контейнер може ставати
 // containing block для position:fixed нащадків. Аркуші (.ov), редактор (.nv) і FAB рендеримо в body, щоб вони
 // лишалися прив'язаними до вікна. Вони відкриваються лише після дії користувача, тож на сервері не рендеряться.
+// вікно ≥768 (iPad): поповери замість аркушів-меню, форми з шапкою (ipad-layout-spec 10, I15, I20)
+export function useWide() {
+  const [w, setW] = useState(false);
+  useEffect(() => { const m = window.matchMedia('(min-width:768px)'); const f = () => setW(m.matches); f(); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
+  return w;
+}
+// позиція поповера 320 під кнопкою-джерелом: правий край — по кнопці, не ближче 10 px до країв вікна
+export function popAt(el, w = 320) {
+  if (!el || !el.getBoundingClientRect) return null;
+  const r = el.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+  const left = Math.max(10, Math.min(r.right - w, vw - w - 10)), top = r.bottom + 8;
+  return { left, top, width: w, maxHeight: Math.max(200, vh - top - 12) };
+}
+// меню: на iPad — поповер під кнопкою (at), інакше — аркуш, як було
+export function Menu({ at, onClose, labelledBy, cls, children }) {
+  if (at) return <div className="popback fixed" onClick={onClose}><div className={'sheet menu mpop' + (cls ? ' ' + cls : '')} role="dialog" aria-modal="true" aria-labelledby={labelledBy} style={at} onClick={e => e.stopPropagation()}>{children}</div></div>;
+  return <div className="ov" onClick={onClose}><div className={'sheet menu' + (cls ? ' ' + cls : '')} role="dialog" aria-modal="true" aria-labelledby={labelledBy} onClick={e => e.stopPropagation()}>{children}</div></div>;
+}
 export function Layer({ children }) { return typeof document === 'undefined' ? null : createPortal(children, document.body); }
 const TYPES = { notebook: 'Зошит', board: 'Дошка', photo: 'Фото', scan: 'Скан', pdf: 'PDF', note: 'Нотатка' };
 // фільтр типу в папці (етап 2): «Обране» — окремий перемикач, не тип. PDF — окремий фільтр (документ, а не фото);
@@ -1058,6 +1076,8 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
   const [msg, setMsg] = useState('');
   const [imp, setImp] = useState(null); // імпорт PDF: { ph: 'open' | 'range' | 'run' | 'err', ... }
   const [expId, setExpId] = useState(null); // експорт у PDF із меню матеріалу
+  const wide = useWide();
+  const [menuAt, setMenuAt] = useState(null), [fmAt, setFmAt] = useState(null), [actAt, setActAt] = useState(null); // поповери на iPad
   const scRef = useRef(null), imRef = useRef(null), pdfRef = useRef(null), impAc = useRef(null), impTok = useRef(null), lp = useRef(null), fired = useRef(false), retFocus = useRef(null);
 
   useEffect(() => { try { const v = localStorage.getItem('helper-docview'); if (v === 'list' || v === 'grid') setView(v); } catch (e) {} }, []);
@@ -1091,19 +1111,20 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
   const tOk = (m, f) => f === 'all' || (f === 'img' ? (m.type === 'photo' || m.type === 'scan' || !TYPES[m.type]) : m.type === f);
   const nMat = n => n + ' ' + plural(n, "матеріал", "матеріали", "матеріалів");
 
-  const base = fo ? mats.filter(m => m.folder === fo.id) : fview === 'all' ? mats : fview === 'fav' ? mats.filter(m => m.fav) : [];
+  const base = fo ? mats.filter(m => m.folder === fo.id) : fview === 'all' ? mats : fview === 'fav' ? mats.filter(m => m.fav) : fview === 'loose' ? mats.filter(m => m.folder === '') : [];
   const showTools = base.length >= 6; // фільтри, сортування й вигляд — лише коли є що фільтрувати
   const eFlt = showTools ? flt : 'all', eFav = showTools && favOnly, eView = showTools ? view : 'grid';
   const cnt = {}; TFILT.forEach(([k]) => { cnt[k] = base.filter(m => tOk(m, k)).length; });
   const list = sorted(base.filter(m => tOk(m, eFlt) && (!eFav || m.fav)), showTools ? sort : 'new');
   const recents = sorted(mats, 'new').slice(0, 6);
+  const recents12 = sorted(mats, 'new').slice(0, 12); // iPad: «Нещодавні» — лише останні 12, без папок і «Без папки» (I24)
   const loose = sorted(mats.filter(m => m.folder === ''), 'new');
   const top = folders.filter(f => !fids.has(f.parent));
   const subs = fo ? folders.filter(f => f.parent === fo.id) : [];
   const needle = q.trim().toLowerCase();
   // пошук: назва, текст нотатки й текстовий шар PDF (stext — сторінки через \f)
   const found = needle ? sorted(mats.filter(m => m.title.toLowerCase().includes(needle) || (m.text || '').toLowerCase().includes(needle) || (m.stext && m.stext.toLowerCase().includes(needle))), 'new') : [];
-  const searching = fview == null && search && !!needle;
+  const searching = search && !!needle && (fview == null || wide);
   const hitPage = m => (searching && m.stext ? searchPage(m.stext, needle) : 0);
   const pathIds = new Set(fo ? breadcrumb(folders, fo.id).map(f => f.id) : []);
 
@@ -1181,7 +1202,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
   const openM = m => { if (m.k === 'note') onOpenNote(m.id); else openDoc(m.raw, hitPage(m) || undefined); };
   const metaOf = m => { const hp = hitPage(m); return tr(TYPES[m.type] || 'Зошит') + (m.type === 'pdf' && m.raw.pageCount ? ' · ' + m.raw.pageCount + ' ' + tr("с.") : '') + (hp ? ' · ' + tr("знайдено на с.") + ' ' + hp : ' · ' + when(m.upd)); };
   const labelOf = m => m.title + ', ' + metaOf(m) + (m.fav ? ', ' + tr("в обраному") : '');
-  const openAct = m => { retFocus.current = document.activeElement; setConfirm(false); setAct({ ...m }); };
+  const openAct = (m, el) => { retFocus.current = document.activeElement; setConfirm(false); setActAt(wide && el ? popAt(el) : null); setAct({ ...m }); };
   const press = m => ({
     onContextMenu: e => { e.preventDefault(); openAct(m); },
     onPointerDown: e => { if (e.pointerType === 'touch') { fired.current = false; lp.current = setTimeout(() => { fired.current = true; openAct(m); }, 550); } },
@@ -1197,12 +1218,12 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
   const card = m => (
     <div key={m.key} className="mc" {...press(m)}>
       <button className="mc-o" onClick={tap(m)} aria-label={labelOf(m)}><Cover m={m} /><span className="mc-t">{m.title}</span><span className="mc-m">{metaOf(m)}</span></button>
-      <button className="mc-x" onClick={() => openAct(m)} aria-label={tr("Дії") + ': ' + m.title} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>
+      <button className="mc-x" onClick={e => openAct(m, e.currentTarget)} aria-label={tr("Дії") + ': ' + m.title} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>
     </div>);
   const row = m => (
     <div key={m.key} className="ml" {...press(m)}>
       <button className="ml-o" onClick={tap(m)} aria-label={labelOf(m)}><Cover m={m} /><span className="ml-b"><span className="mc-t">{m.title}</span><span className="mc-m">{metaOf(m)}</span></span></button>
-      <button className="mc-x" onClick={() => openAct(m)} aria-label={tr("Дії") + ': ' + m.title} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>
+      <button className="mc-x" onClick={e => openAct(m, e.currentTarget)} aria-label={tr("Дії") + ': ' + m.title} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>
     </div>);
   const listing = (l, v = 'grid') => (v === 'grid' ? <div className="mgrid">{l.map(card)}</div> : <div className="mlst">{l.map(row)}</div>);
   // компактна плитка папки: значок (колір, іконка, фото), назва до 2 рядків, число матеріалів
@@ -1221,13 +1242,16 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
     </Fragment>));
   function newFolder() { onFolderForm({ name: '', color: FOLDER_COLORS[0][0], cover: '', icon: '', ico: '', parent: fid, mode: 'new' }); }
   const crumbs = fo ? breadcrumb(folders, fo.id).slice(0, -1) : [];
-  const title = fo ? fo.name : fview === 'all' ? tr("Усі матеріали") : fview === 'fav' ? tr("Обране") : null;
+  const title = fo ? fo.name : fview === 'all' ? tr("Усі матеріали") : fview === 'fav' ? tr("Обране") : fview === 'loose' ? tr("Без папки") : null;
+  const nLoose = mats.filter(m => m.folder === '').length;
 
   return (
     <div className="mat">
       <aside className="m-side" aria-label={tr("Папки")}>
         <div className="m-side-t">{tr("Матеріали")}</div>
         <button className="sb" aria-current={fview == null ? 'true' : undefined} onClick={() => setFview(null)}><EIcon n="clock" size={18} />{tr("Нещодавні")}</button>
+        <button className="sb" aria-current={fview === 'all' ? 'true' : undefined} onClick={() => setFview('all')}><EIcon n="grid" size={18} /><span className="sb-n">{tr("Усі матеріали")}</span><span className="sb-c" aria-label={nMat(mats.length)}>{mats.length}</span></button>
+        <button className="sb" aria-current={fview === 'loose' ? 'true' : undefined} onClick={() => setFview('loose')}><EIcon n="pages" size={18} /><span className="sb-n">{tr("Без папки")}</span><span className="sb-c" aria-label={nMat(nLoose)}>{nLoose}</span></button>
         <button className="sb" aria-current={fview === 'fav' ? 'true' : undefined} onClick={() => setFview('fav')}><EIcon n="star" size={18} />{tr("Обране")}</button>
         <div className="sb-h" aria-hidden="true">{tr("Папки")}</div>
         {tree(top, 0)}
@@ -1241,9 +1265,12 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
             <h1>{title != null ? title : <><span className="phone-only">{tr("Матеріали")}</span><span className="wide-only">{tr("Нещодавні")}</span></>}</h1>
           </div>
           <div className="mhd-a">
-            {fview == null && <button className="ibtn" onClick={() => setSearch(!search)} aria-pressed={search} aria-label={tr("Пошук")} title={tr("Пошук")}><EIcon n="search" size={20} /></button>}
-            <button className="btn-a mcreate" onClick={() => { retFocus.current = document.activeElement; setMenu(true); }} aria-haspopup="dialog"><EIcon n="plus" size={18} />{tr("Створити")}</button>
-            {fo && <button className="ibtn" onClick={() => { retFocus.current = document.activeElement; setFmenu(true); }} aria-label={tr("Дії з папкою")} title={tr("Дії з папкою")} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>}
+            {fview == null && <button className="ibtn mq-ic" onClick={() => setSearch(!search)} aria-pressed={search} aria-label={tr("Пошук")} title={tr("Пошук")}><EIcon n="search" size={20} /></button>}
+            {wide && <div className="mq" role="search"><EIcon n="search" size={20} /><label className="vh" htmlFor="mq-h">{tr("Пошук у матеріалах")}</label>
+              <input id="mq-h" type="search" placeholder={tr("Пошук у матеріалах")} value={q} onChange={e => { setQ(e.target.value); setSearch(true); }} onKeyDown={e => { if (e.key === 'Escape') { setQ(''); setSearch(false); } }} />
+              {q && <button className="mq-x" onClick={() => { setQ(''); setSearch(false); }} aria-label={tr("Очистити пошук")}><EIcon n="close" size={18} /></button>}</div>}
+            <button className="btn-a mcreate" onClick={e => { retFocus.current = document.activeElement; setMenuAt(wide ? popAt(e.currentTarget) : null); setMenu(true); }} aria-haspopup="dialog"><EIcon n="plus" size={18} />{tr("Створити")}</button>
+            {fo && <button className="ibtn" onClick={e => { retFocus.current = document.activeElement; setFmAt(wide ? popAt(e.currentTarget) : null); setFmenu(true); }} aria-label={tr("Дії з папкою")} title={tr("Дії з папкою")} aria-haspopup="dialog"><EIcon n="more" size={20} /></button>}
             {aiBtn}
           </div>
         </header>
@@ -1255,25 +1282,26 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
           <button className="btn2" onClick={() => { setSearch(false); setQ(''); }}>{tr("Скасувати")}</button>
         </div>}
 
-        {fview == null && (needle ? <section className="msec" aria-label={tr("Результати пошуку")}>{found.length ? listing(found) : <p className="mempty">{tr("Нічого не знайдено.")}</p>}</section> : <>
+        {searching && wide && <section className="msec mres" aria-labelledby="m-res"><h2 className="msh-t" id="m-res">{tr("Результати")}: {found.length}</h2>{found.length ? listing(found, 'list') : <p className="mempty">{tr("Нічого не знайдено за")} «{q.trim()}»</p>}</section>}
+        {fview == null && !(searching && wide) && (needle && !wide ? <section className="msec" aria-label={tr("Результати пошуку")}>{found.length ? listing(found) : <p className="mempty">{tr("Нічого не знайдено.")}</p>}</section> : <>
           {!mats.length && !folders.length && <div className="mempty"><p>{tr("Тут будуть ваші зошити, дошки, нотатки й фото.")}</p><p className="sub">{tr("Створіть перший матеріал або папку.")}</p></div>}
           {recents.length > 0 && <section className="msec" aria-labelledby="m-rec">
             <div className="msh phone-only"><h2 className="msh-t" id="m-rec">{tr("Нещодавні")}</h2><button className="lnk" onClick={() => setFview('all')}>{tr("Усі")}</button></div>
             <div className="mrow phone-only">{recents.map(card)}</div>
-            <div className="wide-only"><div className="msh"><span className="flex1" /><button className="lnk" onClick={() => setFview('all')}>{tr("Усі матеріали")}</button></div>{listing(recents)}</div>
+            <div className="wide-only"><div className="msh"><span className="flex1" /><button className="lnk" onClick={() => setFview('all')}>{tr("Усі матеріали")}</button></div>{listing(recents12)}</div>
           </section>}
-          {folders.length > 0 && <section className="msec" aria-labelledby="m-fold">
+          {folders.length > 0 && <section className="msec m-fold" aria-labelledby="m-fold">
             <div className="msh"><h2 className="msh-t" id="m-fold">{tr("Папки")}</h2></div>
             <div className="fkgrid">{top.map(tile)}{newTile()}</div>
           </section>}
           {!folders.length && mats.length > 0 && <button className="fnew" onClick={newFolder}><EIcon n="plus" size={16} />{tr("Нова папка")}</button>}
-          {loose.length > 0 && folders.length > 0 && <section className="msec" aria-labelledby="m-loose">
+          {loose.length > 0 && folders.length > 0 && <section className="msec m-loose" aria-labelledby="m-loose">
             <div className="msh"><h2 className="msh-t" id="m-loose">{tr("Без папки")}</h2></div>
             {listing(loose)}
           </section>}
         </>)}
 
-        {title != null && <>
+        {title != null && !(searching && wide) && <>
           {subs.length > 0 && <div className="fkgrid msub" role="group" aria-label={tr("Підпапки")}>{subs.map(tile)}</div>}
           {showTools && <div className="mtools">
             <div className="mt-types" role="group" aria-label={tr("Тип матеріалу")}>
@@ -1308,7 +1336,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
       <input ref={imRef} type="file" accept="image/*,application/pdf,.pdf" className="hidefile" onChange={e => { fromFile(e.target.files && e.target.files[0], 'photo'); e.target.value = ''; }} />
       <input ref={pdfRef} type="file" accept="application/pdf,.pdf" className="hidefile" data-testid="pdf-input" onChange={e => { fromPdf(e.target.files && e.target.files[0]); e.target.value = ''; }} />
 
-      {menu && <div className="ov" onClick={() => setMenu(false)}><div className="sheet menu" role="dialog" aria-modal="true" aria-labelledby="mk-title" onClick={e => e.stopPropagation()}>
+      {menu && <Menu at={menuAt} onClose={() => setMenu(false)} labelledBy="mk-title" cls={menuAt ? 'mk' : ''}>
         <div className="shd"><h2 id="mk-title">{fo ? tr("Створити в «") + fo.name + '»' : tr("Створити")}</h2><IB n="close" label={tr("Закрити")} onClick={() => setMenu(false)} /></div>
         <button autoFocus onClick={() => { setMenu(false); setNb({ title: '', cover: COVERS[0], tpl: 'lined' }); }}>{tr("Зошит")}<small>{tr("Обкладинка, сторінки з лінійкою, клітинкою чи крапками")}</small></button>
         <button onClick={() => start(newDoc('board', dflt('board'), fid, 'blank'))}>{tr("Дошка")}<small>{tr("Велике вільне полотно")}</small></button>
@@ -1317,15 +1345,17 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
         <button onClick={() => pdfRef.current && pdfRef.current.click()}>{tr("Імпорт PDF")}<small>{tr("Конспект, підручник, методичка: до 50 сторінок і 50 МБ")}</small></button>
         <button onClick={() => scRef.current && scRef.current.click()}>{tr("Сканувати")}<small>{tr("Фото з вирівнюванням яскравості, як скан")}</small></button>
         <button onClick={() => { setMenu(false); newFolder(); }}>{fo ? tr("Підпапка") : tr("Папка")}<small>{fo ? tr("Нова папка всередині цієї") : tr("Для предмета або теми")}</small></button>
-      </div></div>}
+      </Menu>}
 
-      {fmenu && fo && <div className="ov" onClick={() => setFmenu(false)}><div className="sheet menu" role="dialog" aria-modal="true" aria-labelledby="fm-title" onClick={e => e.stopPropagation()}>
+      {fmenu && fo && <Menu at={fmAt} onClose={() => setFmenu(false)} labelledBy="fm-title">
         <div className="shd"><h2 id="fm-title">{fo.name}</h2><IB n="close" label={tr("Закрити")} onClick={() => setFmenu(false)} /></div>
         {[['look', "Змінити вигляд"], ['name', "Перейменувати"], ['move', "Перемістити"], ['delete', "Видалити"]].map(([mode, n], i) => <button key={mode} autoFocus={i === 0} className={mode === 'delete' ? 'danger-t' : ''} onClick={() => { setFmenu(false); onFolderForm({ ...fo, mode }); }}>{tr(n)}</button>)}
-      </div></div>}
+      </Menu>}
 
-      {nb && <div className="ov" onClick={() => setNb(null)}><div className="sheet" role="dialog" aria-modal="true" aria-labelledby="nb-title" onClick={e => e.stopPropagation()}>
-        <div className="shd"><h2 id="nb-title">{tr("Новий зошит")}</h2><IB n="close" label={tr("Закрити")} onClick={() => setNb(null)} /></div>
+      {nb && <div className={'ov' + (wide ? ' ovt' : '')} onClick={() => setNb(null)}><div className={'sheet' + (wide ? ' fsh' : '')} role="dialog" aria-modal="true" aria-labelledby="nb-title" onClick={e => e.stopPropagation()}>
+        {wide ? <div className="fhd"><button className="fhd-b" onClick={() => setNb(null)}>{tr("Скасувати")}</button><h2 id="nb-title">{tr("Новий зошит")}</h2><button className="fhd-b pri" onClick={createNb}>{tr("Створити")}</button></div>
+          : <div className="shd"><h2 id="nb-title">{tr("Новий зошит")}</h2><IB n="close" label={tr("Закрити")} onClick={() => setNb(null)} /></div>}
+        <div className={wide ? 'fbody' : undefined} style={wide ? undefined : { display: 'contents' }}>
         <label className="flab" htmlFor="nb-name">{tr("Назва (необов’язково)")}</label>
         <input id="nb-name" style={{ marginTop: 6 }} autoFocus value={nb.title} onChange={e => setNb({ ...nb, title: e.target.value })} enterKeyHint="done"
           onKeyDown={e => { if (e.key === 'Enter' && !e.repeat && !e.nativeEvent.isComposing) { e.preventDefault(); createNb(); } }} />
@@ -1333,10 +1363,11 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
         <div className="sw" role="group" aria-labelledby="nb-cov" style={{ marginTop: 8 }}>{PALETTE_C.map(([c, k, n]) => <button key={c} className={'swatch' + (nb.cover === c ? ' on' : '')} style={{ background: SOLID[k] }} onClick={() => setNb({ ...nb, cover: c })} aria-pressed={nb.cover === c} aria-label={tr(n)} />)}</div>
         <div className="flab" id="nb-pap" style={{ marginTop: 14 }}>{tr("Папір")}</div>
         <div className="seg" role="group" aria-labelledby="nb-pap" style={{ marginTop: 8 }}>{[['blank', tr("Чиста")], ['lined', tr("У лінійку")], ['grid', tr("Клітинка")], ['dots', tr("Крапки")]].map(([k, n]) => <button key={k} className={nb.tpl === k ? 'on' : ''} aria-pressed={nb.tpl === k} onClick={() => setNb({ ...nb, tpl: k })}>{n}</button>)}</div>
-        <div className="row" style={{ marginTop: 16 }}><button className="btn" onClick={createNb}>{tr("Створити")}</button></div>
+        {!wide && <div className="row" style={{ marginTop: 16 }}><button className="btn" onClick={createNb}>{tr("Створити")}</button></div>}
+        </div>
       </div></div>}
 
-      {act && <div className="ov" onClick={closeAct}><div className="sheet menu" role="dialog" aria-modal="true" aria-labelledby="act-title" onClick={e => e.stopPropagation()}>
+      {act && <Menu at={actAt} onClose={closeAct} labelledBy="act-title">
         <div className="shd"><h2 id="act-title">{tr(TYPES[act.type] || 'Зошит')}</h2><IB n="close" label={tr("Закрити")} onClick={closeAct} /></div>
         {act.k === 'doc' ? <><label className="vh" htmlFor="act-name">{tr("Назва")}</label><input id="act-name" value={act.title} onChange={e => setAct({ ...act, title: e.target.value })} style={{ marginBottom: 10 }} /></> : <p className="act-nt">{act.title}</p>}
         <button autoFocus onClick={() => { const x = act; closeAct(); openM(x); }}>{tr("Відкрити")}</button>
@@ -1361,7 +1392,7 @@ export default function Materials({ folders, notes, fview, setFview, onOpenNote,
           setAct(null); setConfirm(false);
         }}>{confirm ? tr("Підтвердити видалення") : tr("Видалити")}</button>
         <button onClick={closeAct}>{tr("Готово")}</button>
-      </div></div>}
+      </Menu>}
 
       {imp && <ImportSheet imp={imp} setImp={setImp} onRun={(f, t) => { const x = imp; runPdf(x.pdf, f, t, x.total, x.base); }} onClose={closeImp} onRetry={() => { setImp(null); pdfRef.current && pdfRef.current.click(); }} />}
       {expId != null && <ExportSheet load={() => getDoc(expId)} onClose={() => setExpId(null)} />}
