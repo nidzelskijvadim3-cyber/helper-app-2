@@ -886,7 +886,14 @@ export const DE = {
  "Поясни складні картки": "Erkläre schwierige Karten",
  "Поясни найскладніші картки з цього набору простими словами.": "Erkläre die schwierigsten Karten dieses Stapels in einfachen Worten.",
  "Перевір мене за набором": "Frag mich zum Stapel ab",
- "Перевір мене за цим набором: став питання по одному.": "Frag mich zu diesem Stapel ab: Stelle die Fragen einzeln."
+ "Перевір мене за цим набором: став питання по одному.": "Frag mich zu diesem Stapel ab: Stelle die Fragen einzeln.",
+ // ===== iPad, етап 3 =====
+ "Прогрес": "Fortschritt",
+ "Відкрити день": "Tag öffnen",
+ "На цей день нічого немає": "Für diesen Tag gibt es nichts",
+ "Додати подію": "Termin hinzufügen",
+ "події": "Termine",
+ "задачі": "Aufgaben"
 };
 // Множина: українська — 3 форми (1 картка, 2 картки, 5 карток), німецька — 2 (переклад форм f1 і f5).
 export function plural(n, f1, f2, f5) {

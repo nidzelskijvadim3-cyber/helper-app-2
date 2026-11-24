@@ -1203,3 +1203,124 @@ h2.sec{font-family:var(--font-body);line-height:1.3}
 .exp-a{display:flex;flex-direction:column;gap:8px;margin-top:14px}
 .exp-a .btn-a,.exp-a .btn2{width:100%;min-height:48px}
 .sheet .seg button{min-height:44px}
+
+/* ===== iPad, етап 3 (ipad-layout-spec 5.2, 7.5, 8.2–8.3; I5, I6, I9) =====
+   Сесія повторення й тест: вікно ≥768 — шапка 56 «Завершити — назва — Помічник», смуга прогресу 4 px, колонка --session-w по центру
+   (у ширині шару .nv, що звужується поруч із панеллю Помічника). На телефоні .nvcol прозорий (display:contents). */
+.nvcol{display:contents}
+.nvpg{display:none}
+@media (min-width:768px){
+  .nv.nvw{padding:env(safe-area-inset-top) 0 calc(var(--s-4) + env(safe-area-inset-bottom))}
+  .nv.nvw .nvbar{flex:none;height:var(--hd-h);margin:0;padding:0 var(--s-5);gap:var(--s-3)}
+  .nv.nvw .nvbar .chip{min-height:44px}
+  .nv.nvw .nvbar>.sub{flex:1;min-width:0;text-align:center;font-size:var(--fs-sm);font-weight:600;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .nvpg{display:block;flex:none;width:min(var(--session-w),100% - 2 * var(--s-5));height:4px;margin:0 auto;border-radius:2px;background:var(--fill);overflow:hidden}
+  .nvpg i{display:block;height:100%;border-radius:2px;background:var(--ok);transition:width var(--dur-2) ease}
+  .nv.nvw .nvcol,.nv.tst .quiz{display:flex;flex-direction:column;flex:1;min-height:0;width:min(var(--session-w),100% - 2 * var(--s-5));margin:0 auto;padding-top:clamp(24px,6vh,64px);overflow-y:auto}
+  /* картка: питання --fs-t2 по центру, відповідь під розділювачем --fs-body зліва */
+  .nv.nvw button.flip{flex:none;min-height:320px;max-height:60vh;overflow-y:auto;margin:0;padding:var(--s-8);justify-content:center;gap:var(--s-4);border-radius:var(--r-20)}
+  .nv.nvw .flip .fq{font:700 var(--fs-t2)/1.15 var(--font-display);letter-spacing:-.3px;overflow-wrap:anywhere}
+  .nv.nvw .flip .fdiv{display:block;height:1px;background:var(--bd);margin:var(--s-2) 0}
+  .nv.nvw .flip .fa{font-size:var(--fs-body);line-height:1.5;text-align:left;white-space:pre-wrap;overflow-wrap:anywhere;max-width:60ch;margin:0 auto;align-self:stretch}
+  .nv.nvw .flip .sub{font-size:var(--fs-cap)}
+  .nv.nvw .rvs-a{margin:var(--s-6) 0 0}
+  .nv.nvw .rvs-a .btn-a.big{width:320px;max-width:100%;min-height:56px;margin:0 auto}
+  .nv.nvw .rvs-a.row{gap:var(--s-3);justify-content:center}.nv.nvw .rvs-a.row .btn{flex:0 1 200px;margin:0}
+  .nv.nvw .rvs-g{grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s-3);margin:var(--s-6) 0 0}
+  .nv.nvw .rg{min-height:72px}
+  .nv.nvw .rg-t{font-size:var(--fs-sm)}.nv.nvw .rg-s{font-size:var(--fs-cap)}
+  .nv.nvw .rvs-k{font-size:var(--fs-cap);margin:var(--s-3) 0 0}
+  .nv.nvw .rv-done .btn{width:320px;max-width:100%;min-height:56px}
+  .nv.nvw .rv-done h2{font:700 var(--fs-t2)/1.15 var(--font-display)}
+  /* тест: варіанти на всю колонку, буква в колі 28, вибраний — кільце */
+  .nv.tst .qq{font:600 var(--fs-t3)/1.35 var(--font-display);margin:0 0 var(--s-6)}
+  .nv.tst .opt{display:flex;align-items:center;gap:var(--s-3);min-height:56px;padding:var(--s-3) var(--s-4);margin-bottom:var(--s-2);background:var(--surface);border:1px solid var(--bd);color:var(--tx);font-size:var(--fs-body);line-height:1.35;cursor:pointer}
+  .nv.tst .opt.on{background:var(--surface);color:var(--tx);box-shadow:inset 0 0 0 2px var(--accent-tx);border-color:transparent}
+  .nv.tst .opt-k{flex:none;width:28px;height:28px;border-radius:50%;background:var(--fill);display:flex;align-items:center;justify-content:center;font-size:var(--fs-cap);font-weight:600}
+  .nv.tst .opt.on .opt-k{background:var(--accent);color:var(--on-accent)}
+  .nv.tst .opt-t{flex:1;min-width:0;overflow-wrap:anywhere}
+  .nv.tst .qnav{justify-content:center;gap:var(--s-3);margin-top:var(--s-6)!important}
+  .nv.tst .qnav .btn{flex:0 1 320px;min-height:56px;margin:0}
+  .nv.tst .qnav .btn.alt{flex:0 1 160px}
+  .nv.tst textarea{font-size:var(--fs-body)}
+}
+
+/* Місяць на iPad (.mw — лише вікно ≥768): клас s — сітка з крапками, як на телефоні, але без max-width;
+   m/l/xl — клітинки з назвами подій у кольорах категорій, «+N», сьогодні — коло на числі, вибраний день — рамка; список дня (.agd) */
+.mw .cal{max-width:none}
+.mw .cd-top{display:contents}
+@container region (min-width:600px){
+  .mw .cal{grid-template-columns:repeat(7,minmax(0,1fr));gap:var(--s-1)}
+  .mw .cw{text-align:left;padding:0 6px 6px;font-size:var(--fs-cap);font-weight:500;color:var(--tx2)}
+  .mw .cd{aspect-ratio:auto;min-height:88px;min-width:0;align-items:stretch;justify-content:flex-start;gap:3px;padding:6px;background:var(--surface);border:1px solid var(--bd2);border-radius:var(--r-12);font-size:var(--fs-sm);text-align:left;overflow:hidden}
+  .mw .cd.td{background:var(--surface);color:var(--tx);font-weight:400}
+  .mw .cd.ex:not(.sel){box-shadow:none}
+  .mw .cd.sel{box-shadow:inset 0 0 0 2px var(--accent-tx)}
+  .mw .cd-top{display:flex;align-items:center;gap:4px;margin-bottom:1px}
+  .mw .cd-n{flex:none;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:600;font-variant-numeric:tabular-nums}
+  .mw .cd.td .cd-n{background:var(--accent);color:var(--on-accent);font-weight:700}
+  .mw .cd .exm,.mw .cd.td .exm{position:static;color:var(--wn)}
+  .cd-ev{flex:none;height:22px;display:flex;align-items:center;gap:4px;min-width:0;padding:0 6px 0 7px;border-left:3px solid;border-radius:6px;font-size:var(--fs-cap);font-weight:500;white-space:nowrap;overflow:hidden}
+  .cd-ev span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .cd-ev b{flex:none;font-weight:600;font-variant-numeric:tabular-nums}
+  .cd-ev.exam{background:transparent;color:var(--tx);border-color:var(--wn);font-weight:600}
+  .cd-tk{flex:none;height:22px;display:flex;align-items:center;gap:6px;min-width:0;padding:0 6px;font-size:var(--fs-cap);color:var(--tx2);white-space:nowrap;overflow:hidden}
+  .cd-tk span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .cd-tk .sq{flex:none;width:8px;height:8px;border-radius:2px;background:var(--c-study)}
+  .cd-more{font-size:var(--fs-cap);font-weight:600;color:var(--tx2);padding:0 6px}
+}
+.cd-ev.study{background:var(--c-study-bg);color:var(--c-study-sub);border-color:var(--c-study)}
+.cd-ev.health{background:var(--c-health-bg);color:var(--c-health-sub);border-color:var(--c-health)}
+.cd-ev.work{background:var(--c-work-bg);color:var(--c-work-sub);border-color:var(--c-work)}
+.cd-ev.personal{background:var(--c-personal-bg);color:var(--c-personal-sub);border-color:var(--c-personal)}
+.cd-ev.home{background:var(--c-home-bg);color:var(--c-home-sub);border-color:var(--c-home)}
+.cd-tk .sq.health,.agr-bar.health{background:var(--c-health)}.cd-tk .sq.work,.agr-bar.work{background:var(--c-work)}.cd-tk .sq.personal,.agr-bar.personal{background:var(--c-personal)}.cd-tk .sq.home,.agr-bar.home{background:var(--c-home)}
+.agr-bar.exam{background:var(--wn)}
+@container region (min-width:860px){.mw .cd{min-height:104px}}
+@container region (min-width:1120px){
+  .mw{display:grid;grid-template-columns:minmax(0,1fr) var(--agenda-w);gap:var(--s-8);align-items:start}
+  .mw .cd{min-height:120px}
+  .mw .agd{position:sticky;top:var(--s-5);margin-top:0}
+}
+.agd{margin-top:var(--s-6);padding:var(--s-5);background:var(--panel);border:1px solid var(--bd2);border-radius:var(--r-20)}
+.agd-h{display:flex;align-items:flex-start;gap:var(--s-3);margin-bottom:var(--s-4)}
+.agd-tt{flex:1;min-width:0}
+.agd-h h2{margin:0;font:600 var(--fs-t3)/1.25 var(--font-display)}
+.agd-s{margin:2px 0 0;font-size:var(--fs-cap);color:var(--tx2)}
+.agd-h .btn2{flex:none}
+.agd-l{list-style:none;margin:0;padding:0}
+.agd-l li{border-top:1px solid var(--bd2);break-inside:avoid}
+.agr{display:flex;align-items:center;gap:var(--s-3);flex:1;width:100%;min-width:0;min-height:64px;padding:var(--s-2) 0;border:0;background:none;color:var(--tx);font:inherit;text-align:left;cursor:pointer}
+.agr-tm{flex:none;width:56px;font-size:var(--fs-sm);font-weight:600;font-variant-numeric:tabular-nums}
+.agr-bar{flex:none;width:3px;align-self:stretch;border-radius:2px;background:var(--c-study)}
+.agr-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.agr-n{font-size:var(--fs-sm);font-weight:600;overflow-wrap:anywhere}
+.agr-n svg{vertical-align:-2px;color:var(--wn)}
+.agr-m{font-size:var(--fs-cap);color:var(--tx2)}
+.agt{display:flex;align-items:center;gap:var(--s-1)}
+.agt .agr{min-height:52px}
+.agt.done .agr-n{text-decoration:line-through;color:var(--tx2)}
+.agd-e{display:flex;flex-direction:column;align-items:flex-start;gap:var(--s-3)}
+.agd-e p{margin:0;font-size:var(--fs-sm);color:var(--tx2)}
+.agd-e .btn2{gap:6px}
+@container region (min-width:860px) and (max-width:1119px){.mw .agd-l{columns:2;column-gap:var(--s-8)}}
+
+/* Колонка мініатюр редактора (7.5, I9): ширина редактора ≥900 — колонка --thumbs-w поруч із холстом (.thl зсуває .pgnav і тост);
+   560–899 — та сама колонка поверх холста (.thc.over). На телефоні .edmain прозорий, мініатюри — нижня стрічка .strip. */
+.edmain{display:contents}
+@container editor (min-width:560px){
+  .edmain{display:flex;flex:1;min-height:0;position:relative}
+  .edmain>.edbox{flex:1;min-width:0}
+  .thc{flex:none;width:var(--thumbs-w);overflow-y:auto;overscroll-behavior:contain;background:var(--panel);border-right:1px solid var(--bd2)}
+  .thc.over{position:absolute;left:0;top:0;bottom:0;z-index:4;box-shadow:var(--shadow-pop)}
+  .thc ol{list-style:none;margin:0;padding:var(--s-4) 18px calc(var(--s-4) + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:var(--s-4)}
+  .th{display:flex;flex-direction:column;align-items:center;gap:6px;width:100%;padding:0;border:0;background:none;color:var(--tx2);font:inherit;cursor:pointer}
+  .th-im{display:flex;align-items:center;justify-content:center;width:96px;aspect-ratio:3 / 4;border-radius:6px;background:#fff center/cover no-repeat;box-shadow:var(--shadow-page)}
+  .th.on .th-im{outline:2px solid var(--accent-tx);outline-offset:3px}
+  .th-n{font-size:var(--fs-cap);font-variant-numeric:tabular-nums}
+  .th.on .th-n{color:var(--accent-tx);font-weight:600}
+  .th-add .th-im{background:none;box-shadow:none;border:1.5px dashed var(--bd);color:var(--tx2)}
+  .th:focus-visible{outline:none}.th:focus-visible .th-im{outline:3px solid var(--accent-tx);outline-offset:3px}
+  @media (hover:hover){.th-add:hover .th-im{border-color:var(--tx3);color:var(--tx)}}
+  .nv.ed.thl .pgnav,.nv.ed.thl .edtoast{left:var(--thumbs-w)}
+}

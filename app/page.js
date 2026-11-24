@@ -404,7 +404,7 @@ export default function Home() {
   const newNote = flowMode => { openNote('new'); setFlow(flowMode); };
   const delNote = () => { setNotes(notes.filter(n => n.id !== nview)); setNview(null); setNtext(''); setFlow(false); };
   // expanded=false: sheet відкривається з полем швидкого вводу зверху і згорнутою повною формою (FAB на телефоні)
-  const openNew = (expanded = true) => { sheetPrev.current = document.activeElement; setF({ ...EMPTY, due: selDate !== today ? selDate : '', folder: tab === 'folders' && typeof fview === 'number' ? fview : '' }); setMore(expanded !== false); setSheet('new'); };
+  const openNew = (expanded = true, kind) => { sheetPrev.current = document.activeElement; setF({ ...EMPTY, ...(kind ? { kind } : null), due: selDate !== today ? selDate : '', folder: tab === 'folders' && typeof fview === 'number' ? fview : '' }); setMore(expanded !== false); setSheet('new'); };
   const setPlanView = v => { setPv(v); try { localStorage.setItem(PV_KEY, v); } catch (e) {} };
   const goTab = k => {
     if (k === tab) { if (k === 'today') setSel(''); if (k === 'folders') setFview(null); if (k === 'cards') setDeckV(null); return; }
@@ -771,6 +771,16 @@ export default function Home() {
   const planDays = {}; plan.days.forEach(d => { if (d.blocks.length) planDays[d.date] = true; });
   const hasDot = d => planDays[d] || evOn(d).length > 0 || open.some(i => i.due === d);
   const hasEx = d => exOn(d).length > 0;
+  // Місяць на iPad: скільки назв уміщається в клітинку за класом області (s — крапки, як на телефоні)
+  const wideCal = win !== 'c';
+  const mCnt = rc === 'xl' ? 3 : rc === 'l' ? 2 : rc === 'm' ? 1 : 0;
+  // задачі дня: разові з терміном цього дня + повторювані, що припадають на нього
+  const dayTasksOn = d => items.filter(i => !isEv(i) && (isRep(i) ? occurs(i, d) : i.due === d)).sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+  const dayEntries = d => [
+    ...exOn(d).map(e => ({ k: 'exam', id: 'x' + e.id, t: e.t, time: e.time || '' })),
+    ...evOn(d).map(e => ({ k: 'ev', id: 'e' + e.id, t: e.t, time: e.time || '', area: e.area })),
+    ...dayTasksOn(d).filter(i => !(isRep(i) ? (i.doneDates || []).includes(d) : i.done)).map(i => ({ k: 'task', id: 't' + i.id, t: i.t, area: i.area }))
+  ];
   const monthRaw = new Date(cy, cmo, 1).toLocaleDateString(loc(), { month: 'long', year: 'numeric' });
   const monthName = monthRaw.charAt(0).toUpperCase() + monthRaw.slice(1); // «Листопад 2026 р.»: велика лише перша літера
   const tt = tests.find(t => t.id === tview);
@@ -1045,7 +1055,7 @@ export default function Home() {
           })()}
         </>}
 
-        {pv === 'month' && <div className="monthv">
+        {pv === 'month' && !wideCal && <div className="monthv">
           <div className="cal">
             {[tr("Пн"), tr("Вт"), tr("Ср"), tr("Чт"), tr("Пт"), tr("Сб"), tr("Нд")].map(w => <div className="cw" key={w} aria-hidden="true">{w}</div>)}
             {cells.map((d, i) => d
@@ -1055,6 +1065,51 @@ export default function Home() {
               : <div key={i} />)}
           </div>
           <p className="sub" style={{ marginTop: 14 }}>{tr("Торкніться дня, щоб відкрити його план.")}</p>
+        </div>}
+
+        {/* iPad (вікно ≥768): назви подій у клітинці (m — 1, l — 2, xl — 3) + «+N», сьогодні — коло на числі, вибраний день — рамка;
+            тап вибирає день, список дня праворуч (xl) або знизу; «Відкрити день» / подвійний тап — перехід у «День» (ipad-layout-spec 5.2, I6) */}
+        {pv === 'month' && wideCal && <div className="monthv mw">
+          <div className="cal" role="grid" aria-label={monthName}>
+            {[tr("Пн"), tr("Вт"), tr("Ср"), tr("Чт"), tr("Пт"), tr("Сб"), tr("Нд")].map(w => <div className="cw" key={w} aria-hidden="true">{w}</div>)}
+            {cells.map((d, i) => {
+              if (!d) return <div key={i} className="cd-pad" />;
+              const ents = dayEntries(d), on = d === selDate, n = Math.min(mCnt, ents.length);
+              const shown = ents.length > mCnt ? Math.max(0, mCnt - 1) : n; // «+N» займає останній рядок, щоб висота клітинки не росла
+              return <button key={i} className={'cd' + (d === today ? ' td' : '') + (on ? ' sel' : '') + (hasEx(d) ? ' ex' : '')} aria-current={d === today ? 'date' : undefined} aria-pressed={on}
+                aria-label={new Date(d + 'T00:00:00').toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' }) + (ents.length ? ': ' + ents.map(e => (e.time ? e.time + ' ' : '') + e.t).join(', ') : hasDot(d) ? ', ' + tr("є записи") : '')}
+                onClick={() => setSel(d === today ? '' : d)} onDoubleClick={() => { setSel(d === today ? '' : d); setPlanView('day'); }}>
+                <span className="cd-top"><span className="cd-n">{+d.slice(8)}</span>{hasEx(d) && <span className="exm" aria-hidden="true"><Icon n="flag" s={12} /></span>}</span>
+                {mCnt === 0 && hasDot(d) && <i className="dot" aria-hidden="true" />}
+                {ents.slice(0, shown).map(e => e.k === 'task'
+                  ? <span key={e.id} className="cd-tk" aria-hidden="true"><i className={'sq ' + e.area} /><span>{e.t}</span></span>
+                  : <span key={e.id} className={'cd-ev ' + (e.k === 'exam' ? 'exam' : e.area)} aria-hidden="true">{e.time && <b>{e.time}</b>}<span>{e.t}</span></span>)}
+                {mCnt > 0 && ents.length > shown && <span className="cd-more" aria-hidden="true">+{ents.length - shown}</span>}
+              </button>;
+            })}
+          </div>
+          {(() => {
+            const evs = evOn(selDate), exs = exOn(selDate), tks = dayTasksOn(selDate);
+            const nEv = evs.length + exs.length;
+            const sum = [nEv ? nEv + ' ' + plural(nEv, "подія", "події", "подій") : '', tks.length ? tks.length + ' ' + plural(tks.length, "задача", "задачі", "задач") : ''].filter(Boolean).join(' · ');
+            return <section className="agd" aria-labelledby="agd-t">
+              <div className="agd-h">
+                <div className="agd-tt"><h2 id="agd-t">{cap1(selObj.toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' }))}</h2>{sum && <p className="agd-s">{sum}</p>}</div>
+                <button className="btn2" onClick={() => setPlanView('day')}>{tr("Відкрити день")}</button>
+              </div>
+              {!nEv && !tks.length ? <div className="agd-e"><p>{tr("На цей день нічого немає")}</p><button className="btn2" onClick={() => openNew(true, 'event')}><Icon n="plus" s={18} />{tr("Додати подію")}</button></div>
+                : <ul className="agd-l">
+                  {exs.map(e => <li key={'x' + e.id}><button className="agr" onClick={() => setExV(e.id)}>
+                    <span className="agr-tm">{e.time || '—'}</span><i className="agr-bar exam" aria-hidden="true" />
+                    <span className="agr-b"><span className="agr-n"><Icon n="flag" s={14} /> {tr("Іспит")}: {e.t}</span><span className="agr-m">{exWhen(e)}</span></span></button></li>)}
+                  {evs.map(e => <li key={'e' + e.id}><button className="agr" onClick={() => openEdit(e)}>
+                    <span className="agr-tm">{e.time || '—'}</span><i className={'agr-bar ' + e.area} aria-hidden="true" />
+                    <span className="agr-b"><span className="agr-n">{e.t}</span><span className="agr-m">{tr(AREA[e.area])}{Number(e.h) ? ' · ' + r1(Number(e.h)) + tr(" год") : ''}{isRep(e) ? ' · ' + tr(REPS[e.repeat]) : ''}</span></span></button></li>)}
+                  {tks.map(i => { const dn = isRep(i) ? (i.doneDates || []).includes(selDate) : !!i.done; return <li key={'t' + i.id} className={'agt' + (dn ? ' done' : '')}>
+                    <Ck label={i.t} checked={dn} onChange={() => tog(i.id, selDate)} />
+                    <button className="agr" onClick={() => openEdit(i)}><span className="agr-b"><span className="agr-n">{i.t}</span><span className="agr-m">{tr(AREA[i.area])}{i.time ? ' · ' + i.time : ''}</span></span></button></li>; })}
+                </ul>}
+            </section>; })()}
         </div>}
 
         {pv === 'all' && <div className="allv">
@@ -1371,6 +1426,7 @@ export default function Home() {
         const go = d => { setRev(r => ({ ...r, i: Math.max(0, Math.min(all.length - 1, r.i + d)) })); setShow(false); };
         revKey.current = e => {
           if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+          if (e.target && e.target.closest && e.target.closest('.aip')) return; // фокус у панелі Помічника — клавіші сесії не діють
           if (e.key === 'Escape') { end(); return; }
           if (!c) return;
           if (e.key === ' ' && !(e.target && e.target.tagName === 'BUTTON' && !(e.target.classList && e.target.classList.contains('flip')))) { e.preventDefault(); if (!e.repeat) reveal(); return; }
@@ -1379,14 +1435,20 @@ export default function Home() {
         };
         const isNewC = c && normCard(c, tNow).state === 0;
         const title = (rev.deck == null ? tr("Повторення") : deckName(rev.deck)) + (browse ? ' · ' + tr("перегляд") : '');
-        return <div className="nv rvs" role="dialog" aria-modal="true" aria-labelledby="rvs-t">
-          <div className="nvbar"><button className="chip" onClick={end}>{tr("Завершити")}</button><span className="sub" id="rvs-t">{title}{c ? ' · ' + (browse ? (rev.i + 1) + tr(" з ") + all.length : tr("залишилось") + ' ' + qd.length) : ''}</span><span style={{ width: 44 }} /></div>
+        // iPad (вікно ≥768): шапка «Завершити — назва — Помічник», смуга прогресу, колонка 680 по центру (ipad-layout-spec 8.2).
+        // Панель Помічника в сесії — звичайна (поруч / поверх), тому шар не модальний, поки вона відкрита.
+        const wideS = win !== 'c', pgDone = browse ? rev.i + 1 : rev.n, pgAll = browse ? all.length : rev.n + qd.length;
+        return <div className={'nv rvs' + (wideS ? ' nvw' : '')} role="dialog" aria-modal={wideS && aiOpen ? undefined : 'true'} aria-labelledby="rvs-t">
+          <div className="nvbar"><button className="chip" onClick={end}>{tr("Завершити")}</button><span className="sub" id="rvs-t">{title}{c ? ' · ' + (browse ? (rev.i + 1) + tr(" з ") + all.length : tr("залишилось") + ' ' + qd.length) : ''}</span>{wideS ? aiBtn : <span style={{ width: 44 }} />}</div>
+          {wideS && pgAll > 0 && <div className="nvpg" role="progressbar" aria-label={tr("Прогрес")} aria-valuemin={0} aria-valuemax={pgAll} aria-valuenow={pgDone}><i style={{ width: (100 * pgDone / pgAll) + '%' }} /></div>}
           <div className="vh" aria-live="polite" role="status">{rev.said || ''}</div>
+          <div className="nvcol">
           {c ? <>
             <button className="flip" autoFocus key={c.id + (browse ? ':' + rev.i : '')} onClick={reveal} onKeyUp={e => { if (e.key === ' ') e.preventDefault(); }} aria-describedby="rvs-hint">
               <span className="sub">{show ? tr("Відповідь") : (c.deck ? c.deck : tr("Питання"))}{!browse && isNewC && !show ? ' · ' + tr("нова") : ''}</span>
-              <span className="fq" aria-live="polite">{show ? c.a : c.q}</span>
-              {show && <span className="fqq">{c.q}</span>}
+              {wideS ? <><span className="fq">{c.q}</span>{show && <><span className="fdiv" aria-hidden="true" /><span className="fa" aria-live="polite">{c.a}</span></>}</>
+                : <><span className="fq" aria-live="polite">{show ? c.a : c.q}</span>
+                {show && <span className="fqq">{c.q}</span>}</>}
               <span className="sub" id="rvs-hint">{show ? (browse ? tr("Торкніться, щоб знову побачити питання") : tr("Оцініть, чи пам’ятали відповідь")) : tr("Торкніться або натисніть пробіл, щоб побачити відповідь")}</span>
             </button>
             {!browse && !show && <div className="rvs-a"><button className="btn-a big" onClick={reveal}>{tr("Показати відповідь")}</button></div>}
@@ -1400,6 +1462,7 @@ export default function Home() {
           </> : <div className="rv-done"><h2>{tr("На сьогодні все.")}</h2>
             <p className="sub">{rev.n ? tr("Повторено") + ': ' + nCards(rev.n) + '. ' : ''}{nextStr(nextUp(cards, { deck: rev.deck, now: tNow, limit: newLim }))}</p>
             <button className="btn" autoFocus onClick={end}>{tr("Готово")}</button></div>}
+          </div>
         </div>;
       })()}
       {nview != null && <div className="nv">
@@ -1416,14 +1479,15 @@ export default function Home() {
           <button className="chip" onClick={delNote}>{tr("Видалити нотатку")}</button></>}
       </div>}
 
-      {tt && <div className="nv">
-        <div className="nvbar"><button className="chip" onClick={() => setTview(null)}>{tr("Закрити")}</button><span className="sub">{tt.done ? tr("Результат") : (qi + 1) + tr(" з ") + tt.qs.length}</span><span /></div>
+      {tt && <div className={'nv' + (win !== 'c' ? ' nvw tst' : '')}>
+        <div className="nvbar"><button className="chip" onClick={() => setTview(null)}>{tr("Закрити")}</button><span className="sub">{tt.done ? tr("Результат") : (qi + 1) + tr(" з ") + tt.qs.length}</span>{win !== 'c' ? aiBtn : <span />}</div>
+        {win !== 'c' && !tt.done && <div className="nvpg" role="progressbar" aria-label={tr("Прогрес")} aria-valuemin={0} aria-valuemax={tt.qs.length} aria-valuenow={qi + 1}><i style={{ width: (100 * (qi + 1) / tt.qs.length) + '%' }} /></div>}
         {!tt.done ? (() => { const q = tt.qs[qi]; return (
           <div className="quiz">
             <div className="qq">{q.q}</div>
-            {q.type === 'choice' ? q.options.map((o, j) => <button key={j} className={'opt' + (tt.ans[qi] === j ? ' on' : '')} onClick={() => setAns(tt, qi, j)}>{o}</button>)
+            {q.type === 'choice' ? q.options.map((o, j) => <button key={j} className={'opt' + (tt.ans[qi] === j ? ' on' : '')} aria-pressed={win !== 'c' ? tt.ans[qi] === j : undefined} onClick={() => setAns(tt, qi, j)}>{win !== 'c' ? <><span className="opt-k" aria-hidden="true">{String.fromCharCode(65 + j)}</span><span className="opt-t">{o}</span></> : o}</button>)
               : <textarea rows={6} value={tt.ans[qi] || ''} onChange={e => setAns(tt, qi, e.target.value)} placeholder={tr("Ваша відповідь")} />}
-            <div className="row" style={{ marginTop: 16 }}>{qi > 0 && <button className="btn alt" onClick={() => setQi(qi - 1)}>{tr("Назад")}</button>}
+            <div className={'row' + (win !== 'c' ? ' qnav' : '')} style={{ marginTop: 16 }}>{qi > 0 && <button className="btn alt" onClick={() => setQi(qi - 1)}>{tr("Назад")}</button>}
               {qi < tt.qs.length - 1 ? <button className="btn" onClick={() => setQi(qi + 1)}>{tr("Далі")}</button> : <button className="btn" onClick={() => patchTest(tt.id, { done: true })}>{tr("Завершити")}</button>}</div>
           </div>); })() : (
           <div className="quiz">

@@ -198,13 +198,15 @@ function EIcon({ n, size = 22 }) { return <svg viewBox="0 0 24 24" width={size} 
 function IB({ n, label, on, onClick, disabled, pressed }) { return <button className={'ib' + (on ? ' on' : '')} onClick={onClick} aria-label={label} title={label} disabled={disabled} aria-pressed={pressed}><EIcon n={n} /></button>; }
 // Мініатюри стрічки сторінок: кеш за об'єктом сторінки (сторінка незмінна, доки її не змінили), щоб у PDF на 50 сторінок
 // кожен штрих не перемальовував усі мініатюри заново.
+// w — ширина мініатюри в пікселях: 90 для нижньої стрічки телефона, 192 для колонки мініатюр iPad (96 CSS px × 2).
 const STRIP = new WeakMap();
-async function stripThumb(p) {
-  const hit = STRIP.get(p); if (hit) return hit;
+async function stripThumb(p, w = 90) {
+  let hits = STRIP.get(p); if (!hits) { hits = {}; STRIP.set(p, hits); }
+  if (hits[w]) return hits[w];
   const im = p.img ? await loadImg(p.img).catch(() => null) : null;
-  const c = document.createElement('canvas'); c.width = 90; c.height = Math.round(90 * p.h / p.w);
-  const g = c.getContext('2d'); g.scale(90 / p.w, 90 / p.w); renderPage(g, p, im);
-  const url = c.toDataURL('image/jpeg', 0.5); STRIP.set(p, url); return url;
+  const c = document.createElement('canvas'); c.width = w; c.height = Math.round(w * p.h / p.w);
+  const g = c.getContext('2d'); g.scale(w / p.w, w / p.w); renderPage(g, p, im);
+  const url = c.toDataURL('image/jpeg', w > 90 ? 0.6 : 0.5); hits[w] = url; return url;
 }
 async function makeThumb(d) {
   const p = d.pages[0]; if (!p) return '';
@@ -236,6 +238,19 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   const [tick, setTick] = useState(0);
   const [tin, setTin] = useState(null);
   const [strip, setStrip] = useState(false);
+  // Колонка мініатюр (ipad-layout-spec 7.5, I9): ширина редактора ≥900 — колонка 132 зліва, стан запам'ятовується;
+  // 560–899 — та сама колонка поверх холста, закривається дотиком до холста; <560 — нижня стрічка (strip), як було.
+  const edRef = useRef(null);
+  const [edW, setEdW] = useState(() => (typeof window === 'undefined' ? 0 : window.innerWidth));
+  const [thCol, setThCol] = useState(() => lsGet('helper-thumbs') !== '0');
+  const [thOver, setThOver] = useState(false);
+  const tmode = edW >= 900 ? 'col' : edW >= 560 ? 'over' : 'strip';
+  const thVis = tmode === 'col' ? thCol : tmode === 'over' ? thOver : strip;
+  const togThumbs = () => {
+    if (tmode === 'col') { const v = !thCol; setThCol(v); lsSet('helper-thumbs', v ? '1' : '0'); }
+    else if (tmode === 'over') setThOver(!thOver);
+    else setStrip(!strip);
+  };
   const [pop, setPop] = useState(null);
   const [popPos, setPopPos] = useState(null);
   const barRef = useRef(null), holdT = useRef(null), stxt = useRef(null), popSrc = useRef(null), downBtn = useRef(null);
@@ -334,14 +349,27 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
   };
   useEffect(() => { const t = setTimeout(() => { flush().catch(() => {}); }, 1500); return () => clearTimeout(t); }, [d]);
   useEffect(() => {
-    if (!strip) return; let off = false;
+    if (!thVis) return; let off = false;
+    const w = tmode === 'strip' ? 90 : 192;
     (async () => {
       const out = [];
-      for (const p of d.pages) { if (off) return; out.push(await stripThumb(p)); }
+      for (const p of d.pages) { if (off) return; out.push(await stripThumb(p, w)); }
       if (!off) setThumbs(out);
     })();
     return () => { off = true; };
-  }, [strip, d.pages]);
+  }, [thVis, tmode === 'strip', d.pages]);
+  useEffect(() => {
+    const el = edRef.current; if (!el) return;
+    const f = () => setEdW(el.clientWidth);
+    f(); const ro = new ResizeObserver(f); ro.observe(el); return () => ro.disconnect();
+  }, []);
+  // поточна мініатюра — у видимій частині колонки
+  const thRef = useRef(null);
+  useEffect(() => {
+    const el = thRef.current && thRef.current.querySelector('.th.on'); if (!el) return;
+    const c = thRef.current, r = el.getBoundingClientRect(), cr = c.getBoundingClientRect();
+    if (r.top < cr.top || r.bottom > cr.bottom) c.scrollTop += r.top - cr.top - (cr.height - r.height) / 2;
+  }, [pi, thVis, tmode]);
 
   const pos = e => { const cv = cvRef.current, r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
   const commit = s => { hist.current.push({ pi, strokes: page.strokes }); if (hist.current.length > 40) hist.current.shift(); redo.current = []; setPage({ ...page, strokes: [...page.strokes, s] }); };
@@ -705,7 +733,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
 
   // кнопки ряду документа (порядок у DOM задає wideBar)
   const bCheck = <IB n="check" label={tr("Готово")} onClick={close} />;
-  const bPages = <IB n="pages" label={tr("Сторінки")} on={strip} onClick={() => setStrip(!strip)} />;
+  const bPages = <IB n="pages" label={tr("Сторінки")} on={thVis} pressed={tmode === 'strip' ? undefined : thVis} onClick={togThumbs} />;
   const bUndo = <IB n="undo" label={tr("@undo:Скасувати")} onClick={() => swap(hist, redo)} />;
   const bRedo = <IB n="redo" label={tr("Вперед")} onClick={() => swap(redo, hist)} />;
   const bTitle = <input className="edtitle" value={d.title} onChange={e => setD({ ...d, title: e.target.value })} aria-label={tr("Назва")} />;
@@ -718,7 +746,7 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
     <span className="ed-ai-l">{tr("Помічник")}</span></button>;
 
   return (
-    <div className="nv ed">
+    <div className={'nv ed' + (tmode === 'col' && thCol ? ' thl' : '')} ref={edRef}>
       {/* Ряд 1 — документ, ряд 2 — інструменти + стиль по центру (≥560 px ширини редактора, ipad-layout-spec 7.2–7.3).
           На телефоні (<560) — один ряд документа, як було. */}
       <div className="edbar" ref={barRef} onPointerDownCapture={notePopSrc}>
@@ -738,7 +766,16 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
           {curRow && <div className="edcur" role="group" aria-label={tr("Колір і товщина")}>{curRow}</div>}
         </div>
       </div>
-      <div className={'edbox' + (page.img ? ' img' : '')} ref={boxRef}>
+      {/* .edmain: на телефоні прозорий (display:contents); ≥560 — рядок «колонка мініатюр + холст» */}
+      <div className="edmain">
+      {tmode !== 'strip' && thVis && <nav className={'thc' + (tmode === 'over' ? ' over' : '')} ref={thRef} aria-label={tr("Сторінки")}>
+        <ol>
+          {d.pages.map((p, i) => <li key={i}><button className={'th' + (i === pi ? ' on' : '')} aria-current={i === pi ? 'page' : undefined} onClick={() => goPage(i)} aria-label={tr("Сторінка") + ' ' + (i + 1)}>
+            <span className="th-im" style={{ aspectRatio: p.w + ' / ' + p.h, backgroundImage: thumbs[i] ? 'url(' + thumbs[i] + ')' : undefined }} /><span className="th-n" aria-hidden="true">{i + 1}</span></button></li>)}
+          <li><button className="th th-add" onClick={addPage} aria-label={tr("Додати сторінку")}><span className="th-im"><EIcon n="plus" size={24} /></span><span className="th-n" aria-hidden="true">{tr("Сторінка")}</span></button></li>
+        </ol>
+      </nav>}
+      <div className={'edbox' + (page.img ? ' img' : '')} ref={boxRef} onPointerDownCapture={tmode === 'over' && thOver ? e => { e.stopPropagation(); e.preventDefault(); setThOver(false); } : undefined}>
         <div className="cvwrap" style={{ width: fit.w * zoom, height: fit.h * zoom }}>
           <canvas ref={cvRef} width={page.w} height={page.h} style={{ width: '100%', height: '100%', touchAction: tool === 'hand' ? 'auto' : 'none' }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />
           {ruler.on && (() => { const sc = (fit.w * zoom) / page.w; return (
@@ -787,8 +824,9 @@ function Editor({ doc, onSave, onClose, onAsk, aiOn, onAiClose, startPage, jump 
           </div>}
         </div>
       </div>
+      </div>
       <span className="vh" role="status" aria-live="polite">{live}</span>
-      {strip && <div className="strip">{thumbs.map((th, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + th + ')' }} aria-label={tr("Сторінка") + ' ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
+      {tmode === 'strip' && strip && <div className="strip">{thumbs.map((th, i) => <button key={i} className={i === pi ? 'on' : ''} onClick={() => goPage(i)} style={{ backgroundImage: 'url(' + th + ')' }} aria-label={tr("Сторінка") + ' ' + (i + 1)}><span>{i + 1}</span></button>)}</div>}
       <div className="pgnav">
         <IB n="left" label={tr("Попередня сторінка")} onClick={() => goPage(pi - 1)} disabled={pi === 0} />
         <span className="pgn">{pi + 1} / {d.pages.length}</span>
